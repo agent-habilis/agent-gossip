@@ -659,8 +659,9 @@ impl InProcNode {
         note: &str,
         progress: Progress,
     ) {
-        let status = TaskStatusParams::new(task_id.clone(), TaskState::Working)
-            .with_note(note.to_owned())
+        let status =
+            TaskStatusParams::new(task_id.clone(), TaskState::Working).with_note(note.to_owned());
+        let status = status
             .with_progress(progress)
             .with_waiting_on(who.to_owned());
         self.session

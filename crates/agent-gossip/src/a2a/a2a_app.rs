@@ -764,6 +764,9 @@ impl A2aApp {
                 peer,
                 task_state,
                 now: Instant::now(),
+                // A bare `Task` is a `GetTask` probe, which says nothing about the worker's
+                // agent; only the reply to a message we sent is a follow-up.
+                restarts_clock: result.get("task").is_some(),
             },
         );
         // The worker echoes the label of the brief, so the alarm can name the task.
@@ -1995,6 +1998,7 @@ mod tests {
                     peer: &Nickname::from("filler"),
                     task_state: TaskState::Working,
                     now: Instant::now(),
+                    restarts_clock: true,
                 },
             );
         }
@@ -2081,6 +2085,7 @@ mod tests {
                     peer: &peer,
                     task_state: TaskState::Working,
                     now,
+                    restarts_clock: true,
                 },
             );
         }
@@ -2133,6 +2138,7 @@ mod tests {
                     peer: &peer,
                     task_state: TaskState::Working,
                     now: Instant::now(),
+                    restarts_clock: true,
                 },
             );
         }
@@ -2171,6 +2177,7 @@ mod tests {
                     peer: &peer,
                     task_state: TaskState::Working,
                     now,
+                    restarts_clock: true,
                 },
             );
         }

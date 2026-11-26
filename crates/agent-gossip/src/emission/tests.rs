@@ -451,11 +451,42 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
     )));
     assert_eq!(waiting["event"], "task", "the event field is task");
     assert_eq!(
-        waiting["waiting"], "asks its user",
-        "the waiting field is asks its user"
+        waiting["waiting_on"], "asks its user",
+        "the waiting_on field is asks its user"
     );
     let plain = line(None);
-    assert!(plain.get("waiting").is_none(), "got: {plain}");
+    assert!(plain.get("waiting_on").is_none(), "got: {plain}");
+    assert!(plain.get("progress").is_none(), "got: {plain}");
+}
+
+/// A check-in's progress rides the task event as a top-level integer, next to the tag.
+#[test]
+fn task_event_carries_the_progress_of_a_check_in() {
+    use super::OutputEvent;
+    let message = status_frame(
+        "calm-otter",
+        "drift-oak",
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::Working,
+            note: Some("tests pass"),
+            metadata: Some(status_update_params::status_metadata(
+                Some("user"),
+                Some("60".parse().expect("60 is a valid progress")),
+                7,
+            )),
+        },
+    );
+    let json = simple_event::event_json(&OutputEvent::Task {
+        message: Box::new(message),
+        is_self: false,
+        to_name: Some(nick("drift-oak")),
+        quarter_moved: false,
+    })
+    .expect("task event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["progress"], 60, "the progress is a percentage");
+    assert_eq!(parsed["waiting_on"], "user", "the tag rides along");
 }
 
 /// The record keeps the reason from a `working` leg only, so the event key

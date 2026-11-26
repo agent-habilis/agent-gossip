@@ -198,10 +198,13 @@ struct TaskLine<'source> {
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<&'source str>,
-    /// Why the worker waits on its own user, from the leg's `mesh:waiting`.
+    /// Whom the worker waits on (a peer or `user`), from the leg's `mesh:waiting`.
     /// Absent on every other leg, so the leg that clears it carries no key.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub waiting: Option<String>,
+    pub waiting_on: Option<String>,
+    /// How far the work is, 0 to 100, from a check-in. Absent on a leg with none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<u8>,
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -357,7 +360,8 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         not_picked_up,
         reader,
     } = *fields;
-    let name = label.map_or_else(|| task_id.as_str().chars().take(8).collect(), str::to_owned);
+    let short_id: String = task_id.as_str().chars().take(8).collect();
+    let name = label.map_or(short_id, str::to_owned);
     let mut parts = vec![format!(
         "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {} min",
         age_secs / 60
@@ -391,12 +395,12 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
 
 /// The values of a `task_overdue` event, borrowed from its source.
 #[derive(Clone, Copy)]
-pub(super) struct TaskOverdueFields<'a> {
-    pub(super) task_id: &'a TaskId,
-    pub(super) peer: &'a Nickname,
-    pub(super) label: Option<&'a str>,
+pub(super) struct TaskOverdueFields<'source> {
+    pub(super) task_id: &'source TaskId,
+    pub(super) peer: &'source Nickname,
+    pub(super) label: Option<&'source str>,
     pub(super) age_secs: u64,
-    pub(super) waiting_on: Option<&'a str>,
+    pub(super) waiting_on: Option<&'source str>,
     pub(super) not_picked_up: bool,
     pub(super) reader: Option<status_update_params::ReaderBeat>,
 }
@@ -658,11 +662,19 @@ pub(super) fn format_task_json(
     let to_text = to_label(to, addressee_name);
     let to_pubkey = to.to_string();
     let pubkey = Some(message.key().to_string());
-    // Only a `working` leg carries the reason, as in the record.
-    let waiting = status_update_params::status_payload(message)
+    // Only a `working` leg carries the tag and the progress, as in the record.
+    let checkin = status_update_params::status_payload(message)
         .ok()
-        .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
-        .and_then(|payload| status_update_params::status_waiting(&payload));
+        .filter(|payload| payload.status.state == crate::a2a::TaskState::Working);
+    let waiting_on = checkin
+        .as_ref()
+        .and_then(status_update_params::status_waiting);
+    let fraction = checkin
+        .as_ref()
+        .and_then(status_update_params::leg_fraction);
+    let progress: Option<u8> = fraction
+        .and_then(status_update_params::Progress::from_fraction)
+        .map(status_update_params::Progress::percent);
     let display = task_display(TaskDisplayParams {
         author,
         to: &to_text,
@@ -687,7 +699,8 @@ pub(super) fn format_task_json(
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
-            waiting,
+            waiting_on,
+            progress,
             display,
             body,
             payload,
@@ -726,7 +739,8 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             kind: "message",
             state: leg.state.map(crate::a2a::TaskState::friendly_name),
             label: leg.label,
-            waiting: None,
+            waiting_on: None,
+            progress: None,
             display: task_display(TaskDisplayParams {
                 author: leg.author,
                 to: leg.peer,

@@ -184,7 +184,7 @@ pub(crate) const TASK_STATUS_TEXT_MAX_CHARS: usize = 280;
 
 /// Leg ids remembered per task to tell a replayed leg from a new one. A task
 /// carries tens of real legs; beats are not counted.
-pub(crate) const TASK_SURFACED_LEGS_CAP: usize = 64;
+pub(crate) const TASK_LEGS_SEEN_CAP: usize = 64;
 
 /// Chat keys remembered to tell a replayed chat line from a new one. A replay
 /// reaches the app only after the engine's dedup FIFO has seen `SEEN_IDS_CAP`

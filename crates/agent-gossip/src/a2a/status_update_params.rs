@@ -497,7 +497,7 @@ pub fn status_metadata(
         meta[META_WAITING] = reason.into();
     }
     if let Some(progress) = progress {
-        let (done, total) = progress.as_fraction();
+        let (done, total) = progress.fraction();
         meta[META_DONE] = done.into();
         meta[META_TOTAL] = total.into();
     }
@@ -582,7 +582,7 @@ pub struct Progress(u8);
 impl Progress {
     /// The percentage as a `done/total` fraction out of 100.
     #[must_use]
-    pub fn as_fraction(self) -> (u64, u64) {
+    pub fn fraction(self) -> (u64, u64) {
         (u64::from(self.0), 100)
     }
 
@@ -942,16 +942,18 @@ mod tests {
     #[test]
     fn a_progress_is_a_whole_percentage() {
         for text in ["0", "55", "100"] {
-            assert!(text.parse::<Progress>().is_ok(), "{text} is a percentage");
+            let parsed: Result<Progress, String> = text.parse();
+            assert!(parsed.is_ok(), "{text} is inside the 0 to 100 range");
         }
         for text in ["101", "-1", "5.5", "50%", "", " 5", "fast"] {
+            let parsed: Result<Progress, String> = text.parse();
             assert!(
-                text.parse::<Progress>().is_err(),
-                "{text:?} is not a percentage"
+                parsed.is_err(),
+                "{text:?} is outside what a progress accepts"
             );
         }
         assert_eq!(
-            Progress::try_from(100).map(Progress::as_fraction),
+            Progress::try_from(100).map(Progress::fraction),
             Ok((100, 100)),
             "a progress goes on the wire as a fraction out of 100"
         );
@@ -979,7 +981,7 @@ mod tests {
             assert_eq!(
                 progress.quarter(),
                 quarter,
-                "{percent}% is in quarter {quarter}"
+                "quarters round down from {percent}%"
             );
         }
         assert_eq!(

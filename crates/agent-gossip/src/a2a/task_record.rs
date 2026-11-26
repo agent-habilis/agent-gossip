@@ -31,7 +31,7 @@ use super::status_update_params::{Progress, ReaderBeat};
 use super::{META_REASON, TaskId, TaskState, status_update_params, wire};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::tuning::{
-    TASK_SURFACED_LEGS_CAP, task_checkin_secs, task_keepalive_secs, task_skill_silence_max_secs,
+    TASK_LEGS_SEEN_CAP, task_checkin_secs, task_keepalive_secs, task_skill_silence_max_secs,
     task_timeout_secs,
 };
 use crate::a2a::{broadcast_params, tuning};
@@ -98,17 +98,17 @@ pub(crate) struct TaskRecord {
     /// the shared clock our own beats would keep a task alive after the peer
     /// daemon died.
     pub last_peer_activity: Instant,
-    /// Local-clock instant of the last leg an agent sent, on either side.
-    /// Beats never touch it (an RPC snapshot in `adopt_initiator` does), so it
-    /// measures how long both agents have left the task alone, and a forgotten
-    /// task stops being beaten.
+    /// The check-in clock: the local-clock instant of the last leg an agent sent, on either side.
+    /// Beats never touch it, and neither does a `GetTask` snapshot, so it measures how long both
+    /// agents have left the task alone. It times the reminder and the alarm, and a forgotten task
+    /// stops being beaten.
     pub last_skill_activity: Instant,
     /// Whether the counterparty has beaten this task at least once. A 0.8/0.9
     /// peer beats only while it owes the next move, so until it has, its
     /// silence cannot be read as death.
     pub peer_beats: bool,
     /// Ids of the peer's legs already ingested for this task (at most
-    /// `TASK_SURFACED_LEGS_CAP`, the oldest dropped first). The engine forgets
+    /// `TASK_LEGS_SEEN_CAP`, the oldest dropped first). The engine forgets
     /// a frame id after a bounded count, and a relay can then deliver the same
     /// leg again, so the app remembers what it has seen. Only a first-seen leg
     /// moves the check-in clock. Beats are never recorded: at one every 30 s
@@ -341,12 +341,18 @@ struct CheckinFields {
 
 /// Whether an inbound check-in puts the progress in another quarter than the
 /// one the record holds. The first progress after none does not count, and a
-/// beat never does: it only replays the last progress.
+/// beat never does: it only replays the last progress. A beat that arrives before the check-in
+/// it replays moves `last_fraction` first, and that wake is lost; the cost is accepted.
 pub(crate) fn quarter_moved(rec: Option<&TaskRecord>, frame: &Authored) -> bool {
     let Ok(payload) = status_update_params::status_payload(frame) else {
         return false;
     };
     if payload.status.state != TaskState::Working || status_update_params::is_beat(&payload) {
+        return false;
+    }
+    // A late, older check-in changes nothing in the record, so it wakes nobody.
+    let order = status_update_params::status_order(&payload);
+    if rec.is_some_and(|rec| !is_newer_than_waiting(rec, frame.timestamp, order)) {
         return false;
     }
     let quarter = |fraction| Progress::from_fraction(fraction).map(Progress::quarter);
@@ -370,6 +376,25 @@ pub(crate) fn mark_seen(
     }
     rec.legs_seen.insert(leg_id.to_owned());
     true
+}
+
+/// The seq of the newest `task_message` event in the ring above `after`, once the tap is drained.
+/// The ring can end with another event, such as the loss marker, so the newest seq is not
+/// necessarily the one a caller just emitted.
+pub(crate) fn newest_task_message_seq(app: &mut A2aApp, after: Option<u64>) -> Option<u64> {
+    use crate::emission::OutputEvent;
+
+    app.drain_surfaced_ring();
+    app.surfaced
+        .poll_since(None)
+        .events
+        .iter()
+        .rev()
+        .find(|item| {
+            matches!(item.event, OutputEvent::TaskMessage { .. })
+                && after.is_none_or(|after| item.seq > after)
+        })
+        .map(|item| item.seq)
 }
 
 /// The oldest and the newest seq the surfaced ring holds, once its tap is drained.
@@ -460,14 +485,18 @@ pub(crate) fn due_checkins(
                 let age = checkin_age(rec, now);
                 if rec.peer_checkins && age >= interval * 2 {
                     rec.last_notice = Some(now);
+                    let reader = rec.peer_beat.and_then(|beat| beat.reader);
+                    let not_picked_up = rec.state == TaskState::Submitted;
+                    let label = rec.label.clone();
+                    let waiting_on = rec.waiting_on.clone();
                     overdue.push(Overdue {
                         task_id: task_id.clone(),
                         peer: rec.peer.clone(),
-                        label: rec.label.clone(),
+                        label,
                         age_secs: age.as_secs(),
-                        waiting_on: rec.waiting_on.clone(),
-                        not_picked_up: rec.state == TaskState::Submitted,
-                        reader: rec.peer_beat.and_then(|beat| beat.reader),
+                        waiting_on,
+                        not_picked_up,
+                        reader,
                     });
                 }
             }
@@ -565,9 +594,10 @@ pub(crate) fn is_replay(
     if closed.get(task_id).is_some() {
         return true;
     }
-    tasks
-        .get(task_id)
-        .is_some_and(|rec| rec.state.is_terminal() || rec.legs_seen.contains(leg_id.as_str()))
+    let Some(rec) = tasks.get(task_id) else {
+        return false;
+    };
+    rec.state.is_terminal() || rec.legs_seen.contains(leg_id.as_str())
 }
 
 /// Whether the registry has room for one more task offered by a peer.
@@ -616,6 +646,9 @@ pub(crate) struct AdoptInitiatorParams<'caller> {
     pub(crate) peer: &'caller Nickname,
     pub(crate) task_state: TaskState,
     pub(crate) now: Instant,
+    /// Whether the reply restarts the check-in clock: a follow-up's reply does, a bare `GetTask`
+    /// probe does not, or a sender that probes more often than 2·X would never see an alarm.
+    pub(crate) restarts_clock: bool,
 }
 
 /// Upsert the **initiator**-side record for a task whose authoritative `Task`
@@ -632,6 +665,7 @@ pub(crate) fn adopt_initiator(
         peer,
         task_state,
         now,
+        restarts_clock,
     } = params;
     // A refused adoption leaves no record here; the worker still holds its own.
     if !tasks.contains_key(task_id) && admit_new_task(tasks, peer_key) != Admission::Ok {
@@ -652,7 +686,7 @@ pub(crate) fn adopt_initiator(
                 last_peer_activity: now,
                 last_skill_activity: now,
                 peer_beats: false,
-                legs_seen: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
+                legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
                 last_fraction: None,
                 waiting_on: None,
                 waiting_mark: None,
@@ -694,7 +728,9 @@ pub(crate) fn adopt_initiator(
             }
             rec.last_activity = now;
             rec.last_peer_activity = now;
-            rec.last_skill_activity = now;
+            if restarts_clock {
+                rec.last_skill_activity = now;
+            }
             if task_state.is_terminal() {
                 rec.state = task_state;
                 rec.review = false;
@@ -753,7 +789,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_peer_activity: now,
                 last_skill_activity: now,
                 peer_beats: false,
-                legs_seen: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
+                legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
                 last_fraction: None,
                 waiting_on: None,
                 waiting_mark: None,
@@ -1221,7 +1257,8 @@ mod tests {
     use habilis_network::protocol::{AuthorKey, Identity, Message, Nickname, UnixSecs};
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
-    use crate::a2a::tuning::{TASK_STATUS_TEXT_MAX_CHARS, TASK_SURFACED_LEGS_CAP};
+    use crate::a2a::status_update_params::Progress;
+    use crate::a2a::tuning::{TASK_LEGS_SEEN_CAP, TASK_STATUS_TEXT_MAX_CHARS};
     use crate::a2a::{
         TaskId, extensions, rpc_error, status_update_params, task_record, tuning, wire,
     };
@@ -1509,7 +1546,7 @@ mod tests {
         use habilis_network::protocol::{AppFrameParams, MeshId, MessageBody};
 
         let mesh = MeshId::from("test");
-        let progress = percent.parse().expect("the test passes a valid percentage");
+        let progress: Progress = percent.parse().expect("the test passes a valid percentage");
         let payload = status_update_params::status_update(
             &mesh,
             status_update_params::StatusUpdateParams {
@@ -1571,7 +1608,11 @@ mod tests {
                 .len()
         };
         assert_eq!(due(&mut tasks, JUST_BEFORE_X), 0, "nothing is due before X");
-        assert_eq!(due(&mut tasks, CHECKIN), 1, "the reminder is due at X");
+        assert_eq!(
+            due(&mut tasks, CHECKIN),
+            1,
+            "X after the last activity the worker owes a check-in"
+        );
         assert_eq!(
             due(&mut tasks, CHECKIN + Duration::from_secs(1)),
             0,
@@ -1644,7 +1685,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].last_skill_activity,
             start,
-            "a beat is not a check-in"
+            "a beat proves the daemon lives, not the agent"
         );
     }
 
@@ -1803,7 +1844,7 @@ mod tests {
     fn the_seen_legs_are_bounded() {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
-        let cap = TASK_SURFACED_LEGS_CAP;
+        let cap = TASK_LEGS_SEEN_CAP;
         for index in 0..cap * 10 {
             super::mark_seen(&mut tasks, &tid(), &format!("leg-{index}"));
         }
@@ -1876,10 +1917,18 @@ mod tests {
         assert_eq!(
             rec.status_text.as_deref(),
             Some("waits for review"),
-            "the text"
+            "the text of the check-in is kept"
         );
-        assert_eq!(rec.last_fraction, Some((30, 100)), "the progress");
-        assert_eq!(rec.waiting_on.as_deref(), Some("user"), "the tag");
+        assert_eq!(
+            rec.last_fraction,
+            Some((30, 100)),
+            "the progress of the check-in is kept as a fraction"
+        );
+        assert_eq!(
+            rec.waiting_on.as_deref(),
+            Some("user"),
+            "the tag names whom the worker waits on"
+        );
         let mut plain = checkin_leg("review done", "40", None);
         plain.timestamp = first + Duration::from_secs(5);
         ingest_inbound(&mut tasks, &plain);
@@ -1948,6 +1997,49 @@ mod tests {
         assert!(
             !super::quarter_moved(tasks.get(&tid()), &authored_by("calm-otter", &beat)),
             "a beat never wakes"
+        );
+    }
+
+    /// A `GetTask` probe refreshes the reaper clocks but not the check-in clock, so a sender
+    /// that probes more often than 2·X still gets its alarm; the reply to a follow-up restarts it.
+    #[test]
+    fn a_get_task_adoption_does_not_delay_the_alarm() {
+        let start = Instant::now();
+        let mut tasks = task_we_opened_with_checkins(start);
+        let probe = later(start, CHECKIN);
+        let adopt = |registry: &mut HashMap<TaskId, TaskRecord>, now, restarts_clock| {
+            super::adopt_initiator(
+                registry,
+                super::AdoptInitiatorParams {
+                    task_id: &tid(),
+                    peer_key: &peer_key("calm-otter"),
+                    peer: &Nickname::from("calm-otter"),
+                    task_state: TaskState::Working,
+                    now,
+                    restarts_clock,
+                },
+            );
+        };
+        adopt(&mut tasks, probe, false);
+        assert_eq!(
+            tasks[&tid()].last_peer_activity,
+            probe,
+            "the probe still refreshes the reaper clock"
+        );
+        assert_eq!(
+            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2))
+                .0
+                .len(),
+            1,
+            "the alarm is due 2·X after the last check-in, whatever the probes"
+        );
+        let mut answered = task_we_opened_with_checkins(start);
+        adopt(&mut answered, probe, true);
+        assert!(
+            super::due_checkins(&mut answered, CHECKIN, later(start, CHECKIN * 2))
+                .0
+                .is_empty(),
+            "the reply to a follow-up restarts the clock"
         );
     }
 
@@ -2669,6 +2761,7 @@ mod tests {
                     peer: &peer,
                     task_state: TaskState::Working,
                     now,
+                    restarts_clock: true,
                 },
             );
         }
@@ -2796,6 +2889,7 @@ mod tests {
                     peer: &Nickname::from(peer),
                     task_state: state,
                     now: when,
+                    restarts_clock: true,
                 },
             );
         };
@@ -3480,6 +3574,7 @@ mod tests {
                 peer: &Nickname::from("calm-otter"),
                 task_state: TaskState::Failed,
                 now: now + Duration::from_mins(5),
+                restarts_clock: true,
             },
         );
         assert_eq!(

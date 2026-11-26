@@ -1022,14 +1022,26 @@ fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError>
     }
 }
 
-fn ingest_remote_message(
+/// The task, whether the leg is new and the label of the brief, as [`apply_remote_leg`] applied it.
+struct RemoteLeg {
+    task_id: crate::a2a::TaskId,
+    first_seen: bool,
+    label: Option<String>,
+}
+
+/// Check that `requester` may drive the task a `message/send` names, and apply the leg to the
+/// registry: a brief opens the record, a follow-up restarts the check-in clock. A relay can
+/// replay a follow-up, and only its first copy moves the clock.
+///
+/// # Errors
+/// A follow-up for an unknown task or from a peer that is not its party, or a brief over quota.
+fn apply_remote_leg(
     payload: &crate::a2a::Message,
     (requester_key, requester): (&AuthorKey, &Nickname),
     app: &mut A2aApp,
-    context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
+    now: Instant,
+) -> Result<RemoteLeg, RpcError> {
     use crate::a2a::task_record::{LegInfo, LegKind};
-    let now = Instant::now();
     let (task_id, kind) = match &payload.task_id {
         Some(task_id) => (task_id.clone(), LegKind::Text),
         None => (crate::a2a::TaskId::random(), LegKind::Offer),
@@ -1083,6 +1095,24 @@ fn ingest_remote_message(
             rec.label.clone_from(&label);
         }
     }
+    Ok(RemoteLeg {
+        task_id,
+        first_seen,
+        label,
+    })
+}
+
+fn ingest_remote_message(
+    payload: &crate::a2a::Message,
+    (requester_key, requester): (&AuthorKey, &Nickname),
+    app: &mut A2aApp,
+    context: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, RpcError> {
+    let RemoteLeg {
+        task_id,
+        first_seen,
+        label,
+    } = apply_remote_leg(payload, (requester_key, requester), app, Instant::now())?;
     // Surface the incoming message to our skill (a `task` event, kind:message).
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
@@ -1102,16 +1132,15 @@ fn ingest_remote_message(
         message: Some(payload),
         is_self: false,
     });
-    // The worker re-reads an unanswered follow-up by its ring seq, so the
-    // reminder names it. The event gets its seq when the tap drains.
-    if kind == LegKind::Text
-        && first_seen
-        && let Some((_, newest)) = task_record::ring_bounds(app)
-        && seq_before.is_none_or(|before| newest > before)
+    // The worker re-reads an unanswered brief or follow-up by its ring seq, so
+    // the reminder names it. The event gets its seq when the tap drains. A brief
+    // counts too: a worker that never saw it still owes the task a check-in.
+    if first_seen
+        && let Some(seq) = task_record::newest_task_message_seq(app, seq_before)
         && let Some(rec) = app.tasks.get_mut(&task_id)
         && rec.role == task_record::TaskRole::Receiver
     {
-        rec.followup_seq = Some(newest);
+        rec.followup_seq = Some(seq);
     }
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
     // yields `{"task": <Task>}`.
@@ -1383,7 +1412,7 @@ mod classify_tests {
         let check_in = working_with(Some("built it"), None);
         assert!(
             !wakes(&task_event(check_in, false)),
-            "a check-in does not wake"
+            "a routine check-in is data, not news"
         );
         let bare = working_with(None, None);
         assert!(
@@ -1444,6 +1473,39 @@ mod classify_tests {
         assert!(
             !wakes(&overdue(Some("user"))),
             "waiting on the user does not wake"
+        );
+    }
+
+    /// The RPC path of a follow-up: a relay can replay it, and only the first copy restarts the
+    /// check-in clock. The test goes through the same function the daemon calls.
+    #[test]
+    fn a_replayed_rpc_follow_up_does_not_move_the_clock() {
+        use std::time::{Duration, Instant};
+
+        use crate::a2a::{Message, Role};
+
+        let mut app = A2aApp::new();
+        let requester_key = key("initiator");
+        let requester = Nickname::from("initiator");
+        let start = Instant::now();
+        let brief = Message::text(Role::User, "build it");
+        let opened = super::apply_remote_leg(&brief, (&requester_key, &requester), &mut app, start)
+            .expect("a brief opens the task");
+        let mut follow_up = Message::text(Role::User, "also the docs");
+        follow_up.task_id = Some(opened.task_id.clone());
+        let first = start + Duration::from_secs(10);
+        let replay = start + Duration::from_secs(100);
+        let leg =
+            super::apply_remote_leg(&follow_up, (&requester_key, &requester), &mut app, first)
+                .expect("the follow-up names an open task");
+        assert!(leg.first_seen, "the first copy is new");
+        let replayed =
+            super::apply_remote_leg(&follow_up, (&requester_key, &requester), &mut app, replay)
+                .expect("a replay is still a valid leg");
+        assert!(!replayed.first_seen, "the second copy is a replay");
+        assert_eq!(
+            app.tasks[&opened.task_id].last_skill_activity, first,
+            "the replay left the clock where the first copy set it"
         );
     }
 
