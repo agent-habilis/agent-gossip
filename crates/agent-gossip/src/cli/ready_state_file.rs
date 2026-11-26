@@ -34,6 +34,7 @@ pub(super) async fn wait_for_ready(
     // (`Instant + Duration` panics on overflow); clamp to a far-future
     // deadline instead.
     let now = tokio::time::Instant::now();
+    let began = start_failure::now_secs();
     let deadline = now
         .checked_add(std::time::Duration::from_secs(timeout_secs))
         .unwrap_or_else(|| now + tuning::READY_MAX);
@@ -59,7 +60,7 @@ pub(super) async fn wait_for_ready(
         }
         // A start that failed will never serve: say why now, not at the deadline. A daemon that is
         // killed or panics leaves no such error, and the wait runs to its limit as before.
-        if let Some(reason) = start_failure::read(state_file) {
+        if let Some(reason) = start_failure::read(state_file, began) {
             anyhow::bail!(
                 "the daemon at {} ended before it was ready: {reason}",
                 state_file.display()

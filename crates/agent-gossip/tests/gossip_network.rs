@@ -559,6 +559,65 @@ fn ready_reports_a_refused_detached_start_at_once() {
     );
 }
 
+/// A retry on the state file of a start that failed is not judged by the old error. The skills
+/// start the daemon and `ready` together on one path, so `ready` can look before the new daemon has
+/// written anything, and the file still holds the error of the start before.
+#[test]
+fn ready_is_not_misled_by_the_error_of_an_earlier_start_on_the_same_path() {
+    let dir = std::env::temp_dir().join(format!("ready-retry-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("the temp dir is writable");
+    let state_file = dir.join("session.json");
+    let mut refused = common::test_cmd();
+    refused.args([
+        "create",
+        "--max-connections",
+        "4",
+        "--nickname",
+        "retry-a",
+        "--state-file",
+    ]);
+    refused.arg(&state_file);
+    let first: std::process::Output = output_within(&mut refused, QUERY_LIMIT);
+    assert!(
+        !first.status.success(),
+        "the first start must be refused by the cap: {first:?}"
+    );
+    // Longer than the grace that `ready` allows before its own start.
+    std::thread::sleep(Duration::from_secs(4));
+
+    let mut ready = common::test_cmd();
+    ready.args(["ready", "--timeout-secs", "60", "--state-file"]);
+    ready
+        .arg(&state_file)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let waiting = ready.spawn().expect("ready starts");
+    std::thread::sleep(Duration::from_millis(300));
+    let log = tmp_log("retry-b");
+    let file = File::create(&log).expect("the test temp dir is writable");
+    let mut start = common::test_cmd();
+    start.args([
+        "create",
+        "--name",
+        "retry-b",
+        "--lookup",
+        "loopback",
+        "--state-file",
+    ]);
+    start.arg(&state_file);
+    let log_out = Stdio::from(file.try_clone().expect("the log file handle can be cloned"));
+    start.stdout(log_out).stderr(Stdio::from(file));
+    let child: Child = start.spawn().expect("the second start spawns");
+    let _daemon = DiscoverableDaemon(child);
+    let out = waiting.wait_with_output().expect("ready ends");
+    assert!(
+        out.status.success(),
+        "ready must wait for the daemon of the retry and end 0, and it gave {out:?}\ndaemon log:\n{}",
+        fs::read_to_string(&log).unwrap_or_default()
+    );
+}
+
 /// `ask` with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {

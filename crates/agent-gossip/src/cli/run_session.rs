@@ -18,11 +18,6 @@ use crate::emission::{Output, OutputMode};
 /// already-resolved [`SetupKind`], author,
 /// and advertise directory (see [`habilis_network::runtime::Resolved`]).
 pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
-    // Before the launcher spawns the daemon: the error of an earlier start of this session must not
-    // be read by the `ready` of this one.
-    if let Some(state_file) = &shared.state_file {
-        start_failure::clear(state_file);
-    }
     detach_if_owned(&shared)?;
     let state_file = shared.state_file.clone();
     let result = serve(resolved, shared).await;
