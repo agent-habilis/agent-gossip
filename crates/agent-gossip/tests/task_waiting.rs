@@ -1,5 +1,6 @@
-//! Integration tests for the waiting flag of a task.
+//! Integration tests for the waiting-on tag of a task.
 
+use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
@@ -39,20 +40,27 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
         "bob saw the brief"
     );
 
-    bob.task_waiting(&task_id, "asks its user which branch")
-        .await;
+    bob.task_waiting_on(
+        &task_id,
+        "user",
+        "asks its user which branch",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
     assert!(
         alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "initiator never saw the working leg"
     );
     let metadata = served_metadata(&alice, "t-wait-bob", &task_id).await;
-    assert_eq!(
-        metadata["mesh:waiting"], "asks its user which branch",
-        "got: {metadata}"
-    );
+    assert_eq!(metadata["mesh:waiting"], "user", "got: {metadata}");
 
-    bob.task_status(&task_id, TaskState::Working, Some("back at it"))
-        .await;
+    bob.task_status(
+        &task_id,
+        TaskState::Working,
+        Some("back at it"),
+        Progress::try_from(50).ok(),
+    )
+    .await;
     let cleared = served_metadata(&alice, "t-wait-bob", &task_id).await;
     assert!(
         cleared.get("mesh:waiting").is_none(),

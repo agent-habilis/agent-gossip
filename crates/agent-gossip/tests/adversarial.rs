@@ -20,6 +20,7 @@
 
 use std::time::{Duration, Instant};
 
+use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
 use agent_gossip::harness::test_key::{self, CraftedMsg, SliceParams};
 use agent_gossip::{Channel, OutputEvent};
@@ -693,7 +694,14 @@ async fn a_bystanders_task_status_is_dropped() {
         "worker never received the brief"
     );
     let tid: TaskId = task_id.parse().expect("task id parses");
-    worker.task_status(&tid, TaskState::Working, None).await;
+    worker
+        .task_status(
+            &tid,
+            TaskState::Working,
+            Some("on it"),
+            Progress::try_from(50).ok(),
+        )
+        .await;
     assert!(
         initiator.wait_task_state(TaskState::Working, T).await,
         "initiator never saw the task accepted"

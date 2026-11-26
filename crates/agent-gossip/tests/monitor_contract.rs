@@ -1273,7 +1273,7 @@ async fn test_task_idle_timeout_after_owner_dies() {
         MSG_TIMEOUT,
     );
     assert!(saw_offer >= 1, "joiner never surfaced the task message");
-    common::cli_task_status(&mesh, "tk-bob", &tid, "working");
+    common::cli_task_status(&mesh, "tk-bob", &tid, "working", Some("on it"), Some("50"));
 
     // Both alive well past the 3s timeout: the joiner's keepalive must keep
     // the task alive — no spurious `task_timeout` on the creator.
@@ -1374,7 +1374,7 @@ async fn test_completed_task_is_never_reaped() {
     );
     assert!(saw_offer >= 1, "worker never surfaced the task message");
 
-    common::cli_task_status(&mesh, "tk-done", &tid, "working");
+    common::cli_task_status(&mesh, "tk-done", &tid, "working", Some("on it"), Some("50"));
     common::cli_task_artifact(&mesh, "tk-done", &tid, "three");
 
     // The initiator approves *into the task* — the `--task-id` is what makes this
@@ -1389,7 +1389,7 @@ async fn test_completed_task_is_never_reaped() {
     );
 
     // The worker, as the task's server, authors the terminal state.
-    common::cli_task_status(&mesh, "tk-done", &tid, "completed");
+    common::cli_task_status(&mesh, "tk-done", &tid, "completed", None, None);
 
     // Now wait out a window that comfortably exceeds every pre-fix deadline —
     // the old 2 s keepalive cap + timeout (3s) + a sweep tick (1s), with headroom.
@@ -1476,8 +1476,22 @@ async fn test_silent_tasks_survive_while_daemons_live() {
         saw_offers >= 3,
         "worker never surfaced all three task messages"
     );
-    common::cli_task_status(&mesh, worker_nick, &long_command, "working");
-    common::cli_task_status(&mesh, worker_nick, &review, "working");
+    common::cli_task_status(
+        &mesh,
+        worker_nick,
+        &long_command,
+        "working",
+        Some("on it"),
+        Some("50"),
+    );
+    common::cli_task_status(
+        &mesh,
+        worker_nick,
+        &review,
+        "working",
+        Some("on it"),
+        Some("50"),
+    );
     common::cli_task_artifact(&mesh, worker_nick, &review, "the result");
 
     // Three idle timeouts with no skill leg from either side.
@@ -1538,11 +1552,12 @@ async fn test_silent_tasks_survive_while_daemons_live() {
     }
 }
 
-/// A peer's repeated `working` with no text changes nothing: the task is
-/// already `working`. Pre-fix each one surfaced to the initiator and woke its
-/// bell, which is what a 0.8/0.9 worker's manual beat loop still sends.
+/// Each check-in of a peer is data for the initiator: it goes on the ring, so
+/// poll serves all of them, but it does not wake the bell. The daemon dropped
+/// the old dedupe of a repeated `working` once a `working` leg became the
+/// proof that the task is worked on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_a_repeated_working_does_not_reach_the_initiator() {
+async fn test_every_checkin_reaches_the_initiator_poll() {
     let worker_nick = "tk-repeat";
     let (creator, mesh) = JsonNode::create_with_flags(&[]);
     let worker = JsonNode::join_with_flags(&mesh, worker_nick, &[]);
@@ -1582,7 +1597,14 @@ async fn test_a_repeated_working_does_not_reach_the_initiator() {
     );
     assert!(saw_offer >= 1, "worker never surfaced the task message");
     for _ in 0..3 {
-        common::cli_task_status(&mesh, worker_nick, &tid, "working");
+        common::cli_task_status(
+            &mesh,
+            worker_nick,
+            &tid,
+            "working",
+            Some("on it"),
+            Some("50"),
+        );
     }
     common::cli_task_artifact(&mesh, worker_nick, &tid, "done");
 
@@ -1617,8 +1639,8 @@ async fn test_a_repeated_working_does_not_reach_the_initiator() {
         })
         .count();
     assert_eq!(
-        working, 1,
-        "only the accept reaches the initiator: {polled:?}"
+        working, 3,
+        "each check-in must reach the initiator's poll: {polled:?}"
     );
 }
 
@@ -1682,13 +1704,20 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
         MSG_TIMEOUT,
     );
     assert!(saw_offer >= 1, "worker never surfaced the task message");
-    common::cli_task_status(&mesh, worker_nick, &tid, "working");
+    common::cli_task_status(
+        &mesh,
+        worker_nick,
+        &tid,
+        "working",
+        Some("on it"),
+        Some("50"),
+    );
     common::cli_task_artifact(&mesh, worker_nick, &tid, "three");
     let _ = common::cli_task_followup(
         &common::FollowupParams::new(&mesh, &creator.nickname, worker_nick, &tid)
             .with_text("approved"),
     );
-    common::cli_task_status(&mesh, worker_nick, &tid, "completed");
+    common::cli_task_status(&mesh, worker_nick, &tid, "completed", None, None);
     let saw_completed: usize = wait_until(
         || {
             let events = creator.json_events();
@@ -1713,6 +1742,7 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
                 worker_nick,
             ])
             .args(["--task-id", &tid, "--state", "working", "--text", text])
+            .args(["--progress", "50"])
             .output()
             .expect("a2a status failed to spawn");
         assert!(out.status.success(), "late status refused: {out:?}");

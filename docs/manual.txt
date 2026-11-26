@@ -41,7 +41,7 @@ SYNOPSIS
 
        agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
-                  [--waiting REASON]
+                  [--progress PERCENT] [--waiting-on WHO]
 
        agent-gossip a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -444,7 +444,8 @@ COMMANDS
               from a peer that does not send one.
 
        a2a status --gossip GOSSIP --nickname NAME --task-id UUID
-                  --state STATE [--text TEXT] [--waiting REASON]
+                  --state STATE [--text TEXT] [--progress PERCENT]
+                  [--waiting-on WHO]
               As the WORKER on a task you're serving, emit a TaskStatusUpdate
               (the A2A streaming plane): STATE is working (accept/resume),
               input-required (a question, or "please review" after an
@@ -452,14 +453,22 @@ COMMANDS
               failed, or canceled. --text becomes the status message. Pushed
               fire-and-forget to the other party.
 
-              --waiting REASON (only with --state working) tells the
-              initiator that the agent waits for its own user. It sets the
-              key mesh:waiting on the task, which GetTask shows in the task
-              metadata. While the key is set, the initiator's daemon does
-              not send task_stalled for the task. The next status leg without
-              --waiting clears the key, so when the user has answered, send
-              a plain `--state working`. A new CLI against an older daemon
-              drops --waiting with no error.
+              A working status is a check-in: the worker proves that the
+              task is worked on. It needs a non-empty --text (what changed)
+              and --progress PERCENT (a whole number from 0 to 100); a bare
+              working is refused. Accept with --text "accepted: <plan>"
+              --progress 0. --progress is refused with any other state.
+              The worker sends a check-in at least every 5 minutes. A
+              question, an artifact or a terminal state also counts; the
+              daemon beat never does.
+
+              --waiting-on WHO (only with --state working) tells the
+              initiator whom the task waits on: a peer nickname, or `user`
+              for the agent's own user. It sets the key mesh:waiting on the
+              task, which GetTask shows in the task metadata. The tag does
+              not stop the clock. The next check-in without --waiting-on
+              clears it. A task that waits on `user` is shown to the
+              initiator but does not wake it.
 
        a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -541,7 +550,7 @@ COMMANDS
               shape the live JSON stream emits — chat, presence
               joined/left, task legs, state/meta document echoes, AND the
               transient events (ping_report, peer_timeout/return,
-              task_timeout, task_stalled) — each carrying its pre-built display
+              task_timeout, task_overdue, checkin_due) — each carrying its pre-built display
               string, its is_visible print decision, its self flag, and a
               leading seq. So a poller and a stream reader parse one shape
               and can echo display verbatim either way (see "JSON EVENTS").
@@ -655,7 +664,8 @@ COMMANDS
               minutes with no leg or keepalive from the other daemon — its
               session ended or crashed. Silence from a live agent (a pending
               accept, a review, a long build) never times a task out, so a
-              skill does not re-emit `working` to keep it alive. Two limits:
+              skill does not re-emit `working` to keep it alive; the proof
+              that the agent works is the check-in (see a2a status). Two limits:
               a task neither agent touches for 24 hours stops being beaten,
               and the other daemon cancels it about 2 minutes later; a peer
               on an older version, which beats only while it owes the next
@@ -664,14 +674,16 @@ COMMANDS
 
               The keepalive proves that the worker's daemon is up, not that
               its agent works. So the worker's keepalive also carries
-              mesh:bell (whether the agent has a bell armed) and
-              mesh:last_poll (seconds since its last foreground poll). When
-              the task is working, the worker did not send --waiting, the bell
-              is not armed, and the last poll is 30 minutes old or more
-              (hidden flag --task-stall-check-secs), the initiator's daemon
-              emits task_stalled, once for each interval. A worker with no
-              bell, for example in a long build, can match this rule while it
-              works. Nothing is canceled: the initiator decides.
+              mesh:bell (whether the agent has a bell armed), mesh:last_poll
+              (seconds since its last foreground poll) and the age of its
+              last check-in. The sender owns the check that its task is
+              worked on, with one timer: the check-in interval X (5 minutes).
+              X after its last activity on the task, the worker's daemon
+              emits checkin_due, then every X, which rings the bell of the
+              worker. 2·X after the last activity, the initiator's daemon
+              emits task_overdue, then every X. Nothing is canceled: the
+              initiator decides. A worker on an older version sends no
+              check-in age, so it never raises task_overdue.
 
        ORCHESTRATION
               A skill-level convention layered on tasks: one agent (the
@@ -1426,13 +1438,12 @@ JSON EVENTS
               is meant to reuse verbatim so both parties name it the same way.
               Absent when the initiator sent none.
 
-              A "status-update" leg that the worker sent with --waiting
+              A "status-update" leg that the worker sent with --waiting-on
               additionally carries "waiting" — a top-level string with the
-              reason (control characters removed, at most 120 characters).
-              The key is absent, not null, on every other status-update. A
-              repeat of the same reason is not surfaced again. The later
-              plain working leg that clears the wait is surfaced once, with
-              no "waiting" key.
+              tag (control characters removed, at most 120 characters).
+              The key is absent, not null, on every other status-update.
+              A check-in from a peer goes on the ring without waking the
+              bell; a question, an artifact and a terminal state wake it.
 
               Content legs also land in the poll / fetch_messages buffer (raw
               records with "type":"task") for the two parties only. See TASKS
@@ -1441,7 +1452,8 @@ JSON EVENTS
        task_progress
               The worker's liveness + percent beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
-              record. done/total are omitted when progress is indeterminate.
+              record. It carries the progress and the text of the last
+              check-in, and done/total are omitted before the first one.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
@@ -1459,18 +1471,36 @@ JSON EVENTS
                  {"event":"task_timeout","task_id":"<uuid>",
                   "reason":"timeout"|"peer-left"}
 
-       task_stalled
-              The initiator's daemon saw that the worker's agent has no armed
-              bell and has not polled for check_secs or more (30 minutes by
-              default), while the task is working and the worker did not send
-              --waiting. It states a fact and cancels nothing. The daemon
-              emits it once for each interval and for each task. The event is
-              visible: print its display line. A worker on an older version
-              sends no bell data, so it never raises this event.
+       task_overdue
+              The initiator's daemon saw that the worker sent no check-in for
+              2·X (10 minutes by default) after its last activity, and then
+              sees it again every X. It states a fact and cancels nothing.
+              Each part of the display after the age appears only when set:
+              the tag the worker gave in --waiting-on, `not picked up` when
+              the worker never accepted, and what the last beat said about
+              the bell and the last poll. The event is visible: print its
+              display line. It rings the bell, except when the worker waits
+              on `user`: then it goes on the ring without a wake. A worker
+              on an older version sends no check-in age, so it never raises
+              this event.
 
-                 {"event":"task_stalled","task_id":"<uuid>","peer":"word-word",
-                  "last_poll_secs_ago":2100,"check_secs":1800,
-                  "display":"💬️ task stalled · `<peer>` has not polled for 35 min"}
+                 {"event":"task_overdue","task_id":"<uuid>","peer":"word-word",
+                  "label":"review the diff","age_secs":660,
+                  "waiting_on":"user","not_picked_up":false,
+                  "display":"💬️ task overdue · `<peer>` · review the diff · no check-in for 11 min"}
+
+       checkin_due
+              The worker's daemon saw that the task owes a check-in: X after
+              the last activity, then every X. It is never shown, and it
+              rings the bell of the worker. followup_seq is the ring seq of
+              the initiator's last follow-up that the worker has not
+              answered: read it again with poll --after <seq-1>. When
+              followup_aged_out is true that follow-up left the ring, and the
+              worker asks the initiator (GetTask or a follow-up). Answer with
+              a check-in.
+
+                 {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
+                  "followup_seq":41,"followup_aged_out":false}
 
        state  The gossip's shared state changed (see the state command). Carries
               the view of the state AFTER the change: one slice for each member,

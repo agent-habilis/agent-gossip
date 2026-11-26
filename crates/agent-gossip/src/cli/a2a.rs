@@ -11,6 +11,7 @@ use super::args::lookup::LookupArgs;
 use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
 use crate::a2a::ipc_command::IpcCommand;
+use crate::a2a::status_update_params::Progress;
 use crate::a2a::{TaskId, TaskState};
 use crate::tunnel::bridge;
 
@@ -93,7 +94,8 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             task_id,
             state,
             note,
-            waiting,
+            progress,
+            waiting_on,
         } => {
             status(StatusArgs {
                 mesh: gossip,
@@ -101,7 +103,8 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
                 task_id,
                 state,
                 note,
-                waiting,
+                progress,
+                waiting_on,
             })
             .await
         }
@@ -285,7 +288,8 @@ struct StatusArgs {
     task_id: TaskId,
     state: TaskState,
     note: Option<String>,
-    waiting: Option<String>,
+    progress: Option<Progress>,
+    waiting_on: Option<String>,
 }
 
 async fn status(args: StatusArgs) -> Result<()> {
@@ -295,16 +299,23 @@ async fn status(args: StatusArgs) -> Result<()> {
         task_id,
         state,
         note,
-        waiting,
+        progress,
+        waiting_on,
     } = args;
-    crate::a2a::broadcast_params::WorkerLeg::parse(state, waiting.as_deref())
-        .map_err(|_| anyhow::anyhow!("--waiting requires --state working"))?;
+    crate::a2a::broadcast_params::WorkerLeg::parse(
+        state,
+        note.as_deref(),
+        progress,
+        waiting_on.as_deref(),
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
     let command = IpcCommand::A2aStatus {
         mesh,
         task_id,
         state,
         note,
-        waiting,
+        progress,
+        waiting_on,
     };
     let response = super::send::send(&command, &nickname).await?;
     let id = finish_send(&response, "task status")?;

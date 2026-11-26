@@ -3,6 +3,7 @@ use habilis_network::protocol::{MeshId, MeshName, Nickname};
 
 use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
+use crate::a2a::status_update_params::Progress;
 use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
 #[derive(Subcommand, Debug)]
@@ -228,14 +229,19 @@ pub(crate) enum A2aAction {
         /// The new A2A state.
         #[arg(long, value_parser = parse_state)]
         state: crate::a2a::TaskState,
-        /// Optional message text (becomes the status message — a question, a
-        /// completion summary, a failure reason).
+        /// Message text (becomes the status message — a question, a completion
+        /// summary, a failure reason). Required with `--state working`: what
+        /// changed since the last check-in.
         #[arg(long = "text", alias = "note")]
         note: Option<String>,
-        /// Mark the task as waiting on your own user, with the reason. Only
-        /// valid with `--state working`; the next status clears it.
+        /// Percent done, a whole number from 0 to 100. Required with
+        /// `--state working`, rejected with any other state.
         #[arg(long)]
-        waiting: Option<String>,
+        progress: Option<Progress>,
+        /// Who the task waits on, a peer nickname or `user`. Only valid with
+        /// `--state working`; the next check-in clears it.
+        #[arg(long)]
+        waiting_on: Option<String>,
     },
 
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're

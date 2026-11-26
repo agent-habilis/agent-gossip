@@ -11,6 +11,7 @@
 
 use std::time::Instant;
 
+use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::{Channel, TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
@@ -100,8 +101,13 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
         bob.wait_task_message(MSG_TIMEOUT).await,
         "the worker never saw the directed task brief"
     );
-    bob.task_status(&task_id, TaskState::Working, Some("on it"))
-        .await;
+    bob.task_status(
+        &task_id,
+        TaskState::Working,
+        Some("on it"),
+        Progress::try_from(50).ok(),
+    )
+    .await;
     assert!(
         alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "the initiator never saw the worker's streamed `working` status"
@@ -116,7 +122,7 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
     alice
         .task_message(&bob.nickname, &task_id, "approved")
         .await;
-    bob.task_status(&task_id, TaskState::Completed, Some("done"))
+    bob.task_status(&task_id, TaskState::Completed, Some("done"), None)
         .await;
     assert!(
         alice

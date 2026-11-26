@@ -8,12 +8,17 @@ pub(crate) struct TaskStatusArgs {
     /// The A2A task state: "working", "input-required" (a question, or
     /// "please review" after an artifact), "completed", "failed", "canceled".
     pub(crate) state: String,
-    /// Optional note — the status message (a question, a completion summary,
-    /// a failure reason), or a `done/total` progress fraction like "35/100".
+    /// The status message: a question, a completion summary, a failure
+    /// reason. Required with state "working" (what changed since the last
+    /// check-in).
     #[serde(default)]
     pub(crate) note: Option<String>,
-    /// Set this before you ask your own user something, with the reason. Only
-    /// valid with state "working"; the next status clears it.
+    /// Percent done, a whole number from 0 to 100. Required with state
+    /// "working", rejected with any other state.
     #[serde(default)]
-    pub(crate) waiting: Option<String>,
+    pub(crate) progress: Option<u8>,
+    /// Who the task waits on, a peer nickname or "user". Only valid with
+    /// state "working"; the next check-in clears it.
+    #[serde(default)]
+    pub(crate) waiting_on: Option<String>,
 }

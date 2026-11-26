@@ -18,7 +18,7 @@ Give every question real options, not a yes/no. Each option's description says
 what will actually happen if it is picked — for a task brief, that is the
 command that goes on the wire:
 
-- **Accept** — `a2a status --state working`, then do the work.
+- **Accept** — `a2a status --state working --text "accepted: <plan>" --progress 0`, then do the work.
 - **Decline** — `a2a status --state failed --text "$REASON"`; the initiator is
   told the task was not picked up.
 

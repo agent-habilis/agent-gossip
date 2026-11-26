@@ -27,6 +27,7 @@ use super::{
 };
 use crate::a2a::ipc_command::MetaView;
 use crate::a2a::reader_asks;
+use crate::a2a::status_update_params::Progress;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
@@ -386,7 +387,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept/resume, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\" to end it. A directed task is created by `a2a_call` message/send (the worker mints the id and returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason). Before you ask your own user something, send \"working\" with `waiting` set to the reason, so the initiator can tell a wait from a stall; the next status clears it."
+        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept, resume and check in, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\" to end it. A directed task is created by `a2a_call` message/send (the worker mints the id and returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason). Every \"working\" status is a check-in and needs a non-empty `note` (what changed) and a `progress` (0 to 100); accept with note \"accepted: <plan>\" and progress 0. Send one at least every check-in interval, and answer each `checkin_due` reminder with one. Before you ask your own user something, send a check-in with `waiting_on` set to \"user\" (or to a peer other than the sender); the next check-in clears it. `progress` and `waiting_on` are refused with any other state."
     )]
     async fn task_status(
         &self,
@@ -396,15 +397,30 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
         let state = parse_task_state(&args.state)?;
-        crate::a2a::broadcast_params::WorkerLeg::parse(state, args.waiting.as_deref())
-            .map_err(|_| McpError::invalid_params("waiting requires state \"working\"", None))?;
+        let progress = args
+            .progress
+            .map(Progress::try_from)
+            .transpose()
+            .map_err(|error| McpError::invalid_params(error, None))?;
+        crate::a2a::broadcast_params::WorkerLeg::parse(
+            state,
+            args.note.as_deref(),
+            progress,
+            args.waiting_on.as_deref(),
+        )
+        .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        let mut params = TaskStatusParams::new(task_id, state);
+        if let Some(note) = args.note {
+            params = params.with_note(note);
+        }
+        if let Some(progress) = progress {
+            params = params.with_progress(progress);
+        }
+        if let Some(who) = args.waiting_on {
+            params = params.with_waiting_on(who);
+        }
         match session
-            .task_status(TaskStatusParams {
-                task_id,
-                state,
-                note: args.note,
-                waiting: args.waiting,
-            })
+            .task_status(params)
             .await
         {
             Ok((id, message)) => ok_json(SendResult { id, message }),
