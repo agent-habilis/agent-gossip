@@ -823,10 +823,12 @@ async fn handle_a2a_req(
     let requester_key = message.key();
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
+    let mut failure_log = broadcast_params::FailureLog::Warn;
     let outcome: Result<serde_json::Value, RpcError> =
         match serde_json::from_str::<serde_json::Value>(message.body.as_str()) {
             Ok(envelope) => {
                 let method = envelope["method"].as_str().unwrap_or_default();
+                failure_log = broadcast_params::FailureLog::of(method);
                 match served::classify(method, &envelope["params"], &requester_key, app) {
                     Served::Op(op) => {
                         let out = app.output.clone();
@@ -923,14 +925,21 @@ async fn handle_a2a_req(
             author: context.author,
             kind,
             body,
-            failure_log: broadcast_params::FailureLog::Warn,
+            failure_log,
         },
         state,
         context.sender,
     )
     .await
     {
-        tracing::warn!(%error, "a2a rpc response send failed");
+        match failure_log {
+            broadcast_params::FailureLog::Debug => {
+                tracing::debug!(%error, "a2a rpc response send failed");
+            }
+            broadcast_params::FailureLog::Warn => {
+                tracing::warn!(%error, "a2a rpc response send failed");
+            }
+        }
     }
 }
 

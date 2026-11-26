@@ -198,10 +198,21 @@ pub(crate) fn when_sent(
 
 /// How loudly a send that did not end as delivered is logged. A query that the next call repeats
 /// (the reader ask of `peers`) fails with no harm to the user, so it is logged at debug.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FailureLog {
     Warn,
     Debug,
+}
+
+impl FailureLog {
+    /// The level for a request of `method` and for the reply that answers it.
+    pub(crate) fn of(method: &str) -> Self {
+        if method == served::READER_GET {
+            Self::Debug
+        } else {
+            Self::Warn
+        }
+    }
 }
 
 /// For a caller with no one to tell: a failure of a send on a task is only logged.
@@ -1958,6 +1969,7 @@ pub(crate) async fn broadcast_a2a_call(
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
+    let failure_log = FailureLog::of(method);
     // Directed request over the shared RPC sender: unicast per frame,
     // transparently splitting a large sealed body into shard frames.
     if let Err(error) = send_directed_rpc(
@@ -1966,21 +1978,20 @@ pub(crate) async fn broadcast_a2a_call(
             author,
             kind,
             body,
-            failure_log: if method == served::READER_GET {
-                FailureLog::Debug
-            } else {
-                FailureLog::Warn
-            },
+            failure_log,
         },
         state,
         sender,
     )
     .await
     {
-        if method == served::READER_GET {
-            tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
-        } else {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+        match failure_log {
+            FailureLog::Debug => {
+                tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
+            }
+            FailureLog::Warn => {
+                tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+            }
         }
     }
 }
@@ -3208,5 +3219,27 @@ mod failure_log_tests {
             log.contains("directed send did not end as delivered"),
             "a send with a person waiting for it is a warning: {log:?}"
         );
+    }
+
+    #[test]
+    fn only_the_reader_ask_is_logged_at_debug() {
+        assert_eq!(
+            FailureLog::of("mesh/reader.get"),
+            FailureLog::Debug,
+            "the ask of `peers` is repeated by the next call, and no user waits for it"
+        );
+        for method in [
+            "message/send",
+            "tasks/get",
+            "tasks/cancel",
+            "shard/repair",
+            "",
+        ] {
+            assert_eq!(
+                FailureLog::of(method),
+                FailureLog::Warn,
+                "a send of {method:?} has a person or a task behind it"
+            );
+        }
     }
 }
