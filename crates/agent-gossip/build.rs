@@ -82,8 +82,9 @@ fn skills_dir() -> PathBuf {
     Path::new(&manifest_dir).join("../../skills")
 }
 
-/// Expand every `skills/gossip-*/SKILL.md` template into `dest`, one
-/// self-contained `SKILL.md` per skill. `shared/` is never emitted.
+/// Expand every `skills/gossip-*/SKILL.md` template into `dest`: one `SKILL.md`
+/// per skill, and the `references/*.md` files that the template names.
+/// `shared/` is never emitted.
 fn render_skills(src: &Path, dest: &Path) {
     if dest.exists() {
         std::fs::remove_dir_all(dest)
@@ -105,14 +106,75 @@ fn render_skills(src: &Path, dest: &Path) {
             .expect("skill dir has a name")
             .to_string_lossy()
             .into_owned();
-        let rendered = slot_template::expand(&skill_dir.join("SKILL.md"), &[], &mut loader)
+        let template_path = skill_dir.join("SKILL.md");
+        let template = std::fs::read_to_string(&template_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", template_path.display()));
+        let (template, references) = take_references(&template, &skill);
+        let mut load_template = |path: &Path| {
+            if path.file_name().is_some_and(|name| name == "SKILL.md") {
+                Ok(template.clone())
+            } else {
+                loader(path)
+            }
+        };
+        let rendered = slot_template::expand(&template_path, &[], &mut load_template)
             .unwrap_or_else(|error| panic!("skills/{skill}/SKILL.md: {error}"));
         let out = dest.join(&skill);
         std::fs::create_dir_all(&out)
             .unwrap_or_else(|error| panic!("mkdir {}: {error}", out.display()));
         std::fs::write(out.join("SKILL.md"), rendered)
             .unwrap_or_else(|error| panic!("write {}/SKILL.md: {error}", out.display()));
+        for reference in references {
+            let body = slot_template::expand(&skill_dir.join(&reference.path), &[], &mut loader)
+                .unwrap_or_else(|error| {
+                    panic!("skills/{skill} reference {}: {error}", reference.name)
+                });
+            let folder = out.join("references");
+            std::fs::create_dir_all(&folder)
+                .unwrap_or_else(|error| panic!("mkdir {}: {error}", folder.display()));
+            let target = folder.join(format!("{}.md", reference.name));
+            std::fs::write(&target, body)
+                .unwrap_or_else(|error| panic!("write {}: {error}", target.display()));
+        }
     }
+}
+
+/// A file that a skill reads on demand, as the template names it with one own-line
+/// `<!-- reference name="..." path="..." -->`. The renderer writes it to
+/// `references/<name>.md` beside the `SKILL.md`.
+struct Reference {
+    name: String,
+    path: String,
+}
+
+/// Cut the `reference` directive lines out of a skill template, so they never
+/// reach the rendered `SKILL.md`, and return them in order.
+fn take_references(template: &str, skill: &str) -> (String, Vec<Reference>) {
+    let mut kept = String::with_capacity(template.len());
+    let mut references: Vec<Reference> = Vec::new();
+    for line in template.split_inclusive('\n') {
+        let opened = line.trim().strip_prefix("<!-- reference ");
+        let Some(interior) = opened.and_then(|rest| rest.strip_suffix("-->")) else {
+            kept.push_str(line);
+            continue;
+        };
+        references.push(Reference {
+            name: attribute(interior, "name", skill),
+            path: attribute(interior, "path", skill),
+        });
+    }
+    (kept, references)
+}
+
+fn attribute(interior: &str, key: &str, skill: &str) -> String {
+    let opening = format!("{key}=\"");
+    let split = interior.split_once(opening.as_str());
+    let (_, after_opening) =
+        split.unwrap_or_else(|| panic!("skills/{skill}/SKILL.md: a reference lacks {key}"));
+    let (value, _) = after_opening
+        .split_once('"')
+        .unwrap_or_else(|| panic!("skills/{skill}/SKILL.md: {key} of a reference is not closed"));
+    value.to_owned()
 }
 
 /// Hash the generated tree and publish it as `AGENT_GOSSIP_EMBED_FINGERPRINT`.

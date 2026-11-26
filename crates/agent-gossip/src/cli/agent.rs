@@ -375,12 +375,11 @@ mod tests {
 
     use super::{Agent, OWNED_SKILL_DIRS, SKILLS};
 
-    /// The embedded tree is the *generated* one: exactly one `SKILL.md` per
-    /// skill dir, no `shared/`, no partials, and no leftover runtime reads or
-    /// unrendered slots — the whole point of the build-time renderer is that
-    /// an agent never spends a round trip reading a second file.
+    /// The embedded tree is the *generated* one: a `SKILL.md` per skill dir and
+    /// at most a `references/` folder of markdown files beside it. No `shared/`,
+    /// no partials, and no leftover directives or runtime reads of the sources.
     #[test]
-    fn embedded_skills_are_single_file() {
+    fn embedded_skills_are_a_skill_file_plus_references() {
         for skill in OWNED_SKILL_DIRS {
             let dir = SKILLS
                 .get_dir(skill)
@@ -388,23 +387,42 @@ mod tests {
             let files: Vec<_> = dir.files().collect();
             let file_paths: Vec<&Path> = files.iter().map(|file| file.path()).collect();
             assert_eq!(
-                files.len(),
-                1,
-                "{skill}: exactly one embedded file, found {file_paths:?}"
+                file_paths,
+                [Path::new(&format!("{skill}/SKILL.md"))],
+                "{skill}: the skill dir holds the SKILL.md and nothing else loose"
             );
-            assert!(dir.dirs().next().is_none(), "{skill}: no embedded subdirs");
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let subdirs: Vec<&Path> = dir.dirs().map(Dir::path).collect();
             assert!(
-                !body.contains("Read `../shared/") && !body.contains("Read `workflow.md`"),
-                "{skill}: generated skill must not instruct runtime file reads"
+                subdirs.iter().all(|path| path.ends_with("references")),
+                "{skill}: only a references folder may sit beside the SKILL.md: {subdirs:?}"
             );
-            assert!(
-                !body.contains("<!-- include") && !body.contains("<!-- slot"),
-                "{skill}: generated skill carries an unrendered directive"
-            );
+            for file in skill_files(skill) {
+                let body = file
+                    .contents_utf8()
+                    .unwrap_or_else(|| panic!("{:?} is embedded utf-8", file.path()));
+                assert!(
+                    !body.contains("Read `../shared/") && !body.contains("Read `workflow.md`"),
+                    "{:?}: a generated file must not point at the sources",
+                    file.path()
+                );
+                assert!(
+                    !body.contains("<!-- include")
+                        && !body.contains("<!-- slot")
+                        && !body.contains("<!-- reference"),
+                    "{:?}: a generated file carries an unrendered directive",
+                    file.path()
+                );
+            }
+            if let Some(references) = dir.get_dir(format!("{skill}/references")) {
+                let is_markdown = |file: &&include_dir::File<'_>| {
+                    file.path().extension().is_some_and(|ext| ext == "md")
+                };
+                let no_subdirs = references.dirs().next().is_none();
+                assert!(
+                    no_subdirs && references.files().all(is_markdown),
+                    "{skill}: references holds markdown files only"
+                );
+            }
         }
         assert!(
             SKILLS.get_dir("shared").is_none(),
@@ -419,6 +437,53 @@ mod tests {
             SKILLS.dirs().count(),
             OWNED_SKILL_DIRS.len(),
             "embedded skill tree and OWNED_SKILL_DIRS disagree: {dir_paths:?}"
+        );
+    }
+
+    /// A reference no `SKILL.md` names is never read, and a name that no file
+    /// answers sends the agent to a path that is not there.
+    #[test]
+    fn every_reference_is_named_by_its_skill_and_exists() {
+        for skill in OWNED_SKILL_DIRS {
+            let mentions = skill_body(skill).split("references/").skip(1);
+            let names = mentions.filter_map(|rest| rest.split_once(".md"));
+            let is_name = |name: &&str| name.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-');
+            let named: Vec<&str> = names.map(|(name, _)| name).filter(is_name).collect();
+            let files = skill_files(skill);
+            let present: Vec<String> = files.iter().skip(1).map(|file| stem_of(file)).collect();
+            for name in &named {
+                assert!(
+                    present.iter().any(|have| have == name),
+                    "{skill}: the SKILL.md names references/{name}.md, which is not rendered"
+                );
+            }
+            for have in &present {
+                assert!(
+                    named.iter().any(|name| name == have),
+                    "{skill}: references/{have}.md is rendered but the SKILL.md never names it"
+                );
+            }
+        }
+    }
+
+    /// agy loads only the first 24000 bytes of a skill body, so the text after
+    /// that is never read: a rule past the cut does not exist for the agent.
+    /// Every harness gets the same rendered tree, so the limit binds them all.
+    #[test]
+    #[ignore = "red until the event rules move to references"]
+    fn every_skill_body_fits_the_agy_load_limit() {
+        const LOAD_LIMIT: usize = 24_000;
+        let mut over: Vec<String> = Vec::new();
+        for skill in OWNED_SKILL_DIRS {
+            let body = without_frontmatter(skill_body(skill));
+            if body.len() >= LOAD_LIMIT {
+                over.push(format!("{skill}: {} bytes", body.len()));
+            }
+        }
+        assert!(
+            over.is_empty(),
+            "skill bodies over {LOAD_LIMIT} bytes:\n{}",
+            over.join("\n")
         );
     }
 
@@ -478,11 +543,55 @@ mod tests {
         );
     }
 
-    fn rendered(skill: &str) -> &'static str {
-        SKILLS
+    /// The `SKILL.md` first, then every file under `references/` by name.
+    fn skill_files(skill: &str) -> Vec<&'static include_dir::File<'static>> {
+        let dir = SKILLS
+            .get_dir(skill)
+            .unwrap_or_else(|| panic!("{skill} is embedded"));
+        let main = dir
             .get_file(format!("{skill}/SKILL.md"))
-            .and_then(include_dir::File::contents_utf8)
+            .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded"));
+        let folder = dir.get_dir(format!("{skill}/references"));
+        let mut references: Vec<_> = folder
+            .map(|found| found.files().collect())
+            .unwrap_or_default();
+        references.sort_by_key(|file| file.path());
+        let mut files = vec![main];
+        files.extend(references);
+        files
+    }
+
+    fn stem_of(file: &include_dir::File<'_>) -> String {
+        let stem = file.path().file_stem().unwrap_or_default();
+        stem.to_string_lossy().into_owned()
+    }
+
+    /// The `SKILL.md` alone: what an agent has before it reads a reference.
+    fn skill_body(skill: &str) -> &'static str {
+        skill_files(skill)[0]
+            .contents_utf8()
             .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
+    }
+
+    /// The `SKILL.md` and its references joined: what an agent has read by the
+    /// end of a run, so a rule counts wherever the skill put it.
+    fn rendered(skill: &str) -> &'static str {
+        let mut whole = String::new();
+        for file in skill_files(skill) {
+            whole.push_str(
+                file.contents_utf8()
+                    .unwrap_or_else(|| panic!("{:?} is embedded utf-8", file.path())),
+            );
+            whole.push('\n');
+        }
+        Box::leak(whole.into_boxed_str())
+    }
+
+    fn without_frontmatter(file: &str) -> &str {
+        let after_open = file.strip_prefix("---\n").unwrap_or(file);
+        after_open
+            .split_once("\n---\n")
+            .map_or(file, |(_, body)| body)
     }
 
     fn frontmatter(body: &str) -> &str {
@@ -699,10 +808,7 @@ mod tests {
     #[test]
     fn generated_daemon_starters_never_mention_monitor() {
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             assert!(
                 !body.contains("Monitor"),
                 "{skill}: generated skill must not route through a Monitor/watch tool"
@@ -1019,10 +1125,7 @@ mod tests {
     #[test]
     fn printed_skill_commands_are_code() {
         for skill in OWNED_SKILL_DIRS {
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             for line in body.lines().filter(|line| line.starts_with('💬')) {
                 let bare_command = line
                     .split('`')
