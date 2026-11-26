@@ -339,6 +339,9 @@ reattach, or a compaction. Ignore `metadata`: no read path returns it.
 
 #### Task widget — other harnesses
 
+Antigravity (agy) has no todo tool. On Antigravity take the fallback above at
+once, and say so once at delegation time.
+
 Use the native todo/plan tool if one is loaded, driving the lifecycle above.
 Otherwise take the fallback.
 

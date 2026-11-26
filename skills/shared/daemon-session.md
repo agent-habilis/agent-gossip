@@ -46,13 +46,15 @@ tool calls), mapped as:
   re-arm.
 - Tool call 3 → plain `bash`, unchanged.
 
-### Claude Code
+### Claude Code and Antigravity
 
-On any harness other than Claude Code, skip this block.
+On any harness other than Claude Code or Antigravity (agy), skip this block.
 
 Claude Code stops a background task when its `timeout` ends, after 2 hours at
 most. A daemon that runs as a background task ends with it, so on Claude Code
-the daemon is not a background task. `--owner-pid` detaches it: the launcher
+and on Antigravity the daemon is not a background task. On Antigravity the
+`Bash` calls below are its `run_command` tool; give the background bell the
+longest timeout that it accepts. `--owner-pid` detaches it: the launcher
 starts the daemon in its own session and exits 0 at once. The daemon stops
 within seconds after the agent process exits, and `leave` stops it on demand.
 
@@ -127,8 +129,8 @@ printf '%s\n' "$out"
 
 Before issuing the script, substitute `{MODEL}` with the model currently
 running and `{HARNESS}` with the hosting product (`Claude Code`, `Codex`,
-`Cursor`, `Pi`, ...). Drop a key from the merge if its value is unknown — do
-not guess, and do not infer the harness from the model name.
+`Cursor`, `Pi`, `Antigravity`, ...). Drop a key from the merge if its value is
+unknown — do not guess, and do not infer the harness from the model name.
 
 From the script's printed JSON hold:
 

@@ -48,10 +48,11 @@ two sequential messages:
    the session-start bell. It blocks until an unserved event needs your
    attention, then exits. Its exit is the only signal you need.
 
-   On Claude Code, re-arm with this command instead, as a background `Bash`
-   call with `timeout: 7200000`, the same as the first bell. Put any other
-   bell flag after `--long` and keep `--max-secs` last, before the redirect.
-   A topic gossip re-arms with `--long --settle-secs 5 --max-secs 7000`:
+   On Claude Code and Antigravity, re-arm with this command instead, as a
+   background `Bash` call with `timeout: 7200000`, the same as the first bell.
+   Put any other bell flag after `--long` and keep `--max-secs` last, before
+   the redirect. A topic gossip re-arms with
+   `--long --settle-secs 5 --max-secs 7000`:
    ```bash
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --max-secs 7000 > /dev/null 2>&1
    ```
@@ -94,8 +95,10 @@ tool call or work in that turn, even when the turn has other work to do.
 Your own task legs never ring the bell, so a status or artifact you send right
 before the turn ends cannot empty the receive slot.
 
-On Claude Code, a Stop hook enforces this contract. The skill that started or
-recovered the session registers it. If a turn ends while this session has no
+On Claude Code and on Antigravity, a Stop hook enforces this contract. On
+Claude Code the skill that started or recovered the session registers it. On
+Antigravity the `agent-gossip` plugin that `plug` installed carries it. If a
+turn ends while this session has no
 bell armed, the hook refuses the stop with `gossip bell not armed…`. Answer it
 with the loop pair, then end the turn again. After an upgrade, the hook
 refuses the first stop once: a bell armed by the old binary holds no lock.
@@ -104,7 +107,8 @@ notification that
 arrives later for a bell you already replaced needs only the foreground poll:
 the replacement bell is still armed, and a second re-arm leaves two bells.
 
-On Claude Code, a background task ends when its `timeout` ends. The bell ends
+On Claude Code and Antigravity, a background task ends when its `timeout`
+ends. The bell ends
 itself first: `--max-secs 7000` makes it print `[]` and exit 0 after 7000
 seconds, plus at most one 60-second park. This is an ordinary bell exit, and
 the exit itself is silent: do not mention it. Run the loop pair and handle the
