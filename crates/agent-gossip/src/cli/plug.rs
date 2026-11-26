@@ -136,7 +136,7 @@ fn install(agent: Agent, home: &Path) -> Result<()> {
                 // `remove_owned` just deleted every copy that is ours, so one
                 // that is still here belongs to the user.
                 warn(&format!(
-                    "not overwriting {}: it differs from the file plug writes",
+                    "not overwriting {}: it holds more than the file plug writes",
                     home_path(&target)
                 ));
                 continue;
@@ -487,6 +487,100 @@ mod tests {
         let removed = remove(Agent::Antigravity, &home).expect("the home is writable");
         assert!(removed, "unplug acts on a lone Stop hook");
         assert!(!root.exists(), "an empty plugin folder is removed");
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+    }
+
+    /// Ownership goes by marker, not by exact bytes: a user who has an older
+    /// `hooks.json` or `plugin.json` of ours must get the new one, or every
+    /// change to the hook text would strand them. A file that names agent-gossip
+    /// and holds nothing else is ours. A file with a second hook, or a key
+    /// that `plug` does not write, is the user's.
+    #[test]
+    fn antigravity_plug_upgrades_an_older_plugin_file_and_unplug_removes_it() {
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-agy-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        let root = home.join(".gemini/config/plugins/agent-gossip");
+        std::fs::create_dir_all(&root).expect("the test temp directory is writable");
+        let older = [
+            (
+                "hooks.json",
+                r#"{"agent-gossip":{"Stop":[{"type":"command","command":"agent-gossip bell-check --session-pid \"$PPID\" || true","timeout":30}]}}"#,
+            ),
+            (
+                "plugin.json",
+                r#"{"name":"agent-gossip","description":"An older description."}"#,
+            ),
+        ];
+        let write_older = || {
+            for (name, contents) in older {
+                std::fs::write(root.join(name), contents)
+                    .expect("the test temp directory is writable");
+            }
+        };
+
+        write_older();
+        assert_eq!(
+            Agent::Antigravity.state(&home),
+            AgentState::OutOfDate,
+            "an older file of ours counts as installed and out of date"
+        );
+        install(Agent::Antigravity, &home).expect("the temp home is writable");
+        for (name, _) in older {
+            assert_eq!(
+                std::fs::read_to_string(root.join(name)).expect("plug wrote the file"),
+                plugin_file_we_write(name),
+                "plug upgrades {name} to the current text"
+            );
+        }
+
+        write_older();
+        let removed = remove(Agent::Antigravity, &home).expect("the home is writable");
+        assert!(removed, "unplug acts on an older install");
+        assert!(
+            !root.exists(),
+            "unplug removes an older hooks.json and plugin.json of ours, and the empty folder"
+        );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+    }
+
+    #[test]
+    fn antigravity_keeps_a_plugin_file_that_holds_more_than_ours() {
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-agy-more-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        let root = home.join(".gemini/config/plugins/agent-gossip");
+        std::fs::create_dir_all(&root).expect("the test temp directory is writable");
+        let user_files = [
+            (
+                "hooks.json",
+                r#"{"agent-gossip":{"Stop":[]},"mine":{"Stop":[]}}"#,
+            ),
+            (
+                "plugin.json",
+                r#"{"name":"agent-gossip","description":"mine","suggestedPrompts":["hi"]}"#,
+            ),
+        ];
+        for (name, contents) in user_files {
+            std::fs::write(root.join(name), contents).expect("the test temp directory is writable");
+        }
+
+        install(Agent::Antigravity, &home).expect("the temp home is writable");
+        remove(Agent::Antigravity, &home).expect("the home is writable");
+
+        for (name, contents) in user_files {
+            assert_eq!(
+                std::fs::read_to_string(root.join(name)).expect("the user file is still there"),
+                contents,
+                "{name} holds more than plug writes, so plug and unplug leave it"
+            );
+        }
 
         std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }

@@ -70,6 +70,29 @@ const ANTIGRAVITY_HOOKS_JSON: &str = r#"{
 }
 "#;
 
+/// Whether `on_disk` is a `plugin.json` or `hooks.json` that `plug` wrote, in
+/// this or an older version. Ownership goes by marker, not by exact bytes: a
+/// user who has an older copy must get the new one, or each change to the hook
+/// text would strand them. The marker is the name `agent-gossip` and nothing
+/// else in the file: a second hook, or a key that `plug` does not write, means
+/// the user edited it.
+fn is_plugin_file_of_ours(name: &str, on_disk: &[u8]) -> bool {
+    let Ok(serde_json::Value::Object(top_level)) = serde_json::from_slice(on_disk) else {
+        return false;
+    };
+    match name {
+        "hooks.json" => top_level.len() == 1 && top_level.contains_key("agent-gossip"),
+        "plugin.json" => {
+            let named = top_level.get("name").and_then(serde_json::Value::as_str);
+            named == Some("agent-gossip")
+                && top_level
+                    .keys()
+                    .all(|key| key == "name" || key == "description")
+        }
+        _ => false,
+    }
+}
+
 /// An agent the mesh integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
@@ -192,14 +215,16 @@ impl Agent {
         }
     }
 
-    /// The plugin files on disk that are byte for byte what `plug` writes. A
-    /// file that differs is the user's, and `plug` and `unplug` leave it alone.
+    /// The plugin files on disk that `plug` wrote, in this or an older version.
+    /// A file that fails [`is_plugin_file_of_ours`] is the user's, and `plug`
+    /// and `unplug` leave it alone.
     pub(crate) fn owned_plugin_files(self, home: &Path) -> Vec<PathBuf> {
         let Some(root) = self.plugin_root(home) else {
             return Vec::new();
         };
-        let is_ours = |&&(name, contents): &&(&str, &str)| {
-            std::fs::read(root.join(name)).is_ok_and(|on_disk| on_disk == contents.as_bytes())
+        let is_ours = |&&(name, _): &&(&str, &str)| {
+            std::fs::read(root.join(name))
+                .is_ok_and(|on_disk| is_plugin_file_of_ours(name, &on_disk))
         };
         let ours = self.plugin_files().iter().filter(is_ours);
         ours.map(|&(name, _)| root.join(name)).collect()
