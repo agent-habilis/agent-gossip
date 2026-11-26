@@ -273,8 +273,11 @@ impl Session {
     }
 
     /// Clean shutdown — delegates to the core's `leave`.
-    pub(super) async fn leave(self) {
-        let _ = self.inner.leave().await;
+    ///
+    /// # Errors
+    /// The core's error: the node was not closed in time, or its loop failed.
+    pub(super) async fn leave(self) -> Result<(), SessionError> {
+        self.inner.leave().await
     }
 }
 
@@ -476,7 +479,10 @@ mod tests {
             "alice-test",
             "the session reports its nickname"
         );
-        session.leave().await;
+        session
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     #[tokio::test]
@@ -523,8 +529,14 @@ mod tests {
             "the observed reply is the one sent"
         );
 
-        joiner.leave().await;
-        creator.leave().await;
+        joiner
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
+        creator
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     #[tokio::test]
@@ -584,8 +596,14 @@ mod tests {
             "long-poll woke on traffic rather than spinning to its wait ceiling"
         );
 
-        joiner.leave().await;
-        creator.leave().await;
+        joiner
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
+        creator
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     // The empty-timeout shape (park elapses quietly → `[]`) can't be tested
@@ -642,7 +660,10 @@ mod tests {
         .is_some();
         assert!(saw_self, "own send should surface once with self:true");
 
-        alice.leave().await;
+        alice
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     #[tokio::test]
@@ -738,8 +759,13 @@ mod tests {
             "explicit replay must not advance the implicit cursor, got {after_replay:?}"
         );
 
-        alice.leave().await;
-        bob.leave().await;
+        alice
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
+        bob.leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     #[tokio::test]
@@ -749,7 +775,10 @@ mod tests {
             .await
             .expect("a fresh process has no session yet, so the first create is not blocked");
         let first_mesh = first.mesh().clone();
-        first.leave().await;
+        first
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
 
         // Second cycle — new session, new mesh.
         let second = Session::create(create_cfg("cy-b", "cycler-b"))
@@ -765,7 +794,10 @@ mod tests {
             "cycler-b",
             "the second session reports its own nickname"
         );
-        second.leave().await;
+        second
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     /// An object merge applies and is reflected by `state_get` under the own author key; a
@@ -804,7 +836,10 @@ mod tests {
             "a refused merge leaves the prior document"
         );
 
-        session.leave().await;
+        session
+            .leave()
+            .await
+            .expect("a quiet loopback session closes within the leave bound");
     }
 
     #[test]

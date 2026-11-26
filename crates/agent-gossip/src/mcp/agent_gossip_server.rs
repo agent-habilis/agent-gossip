@@ -191,10 +191,11 @@ impl AgentGossipServer {
         let mut guard = self.session.lock().await;
         let session = guard.take();
         drop(guard);
-        if let Some(active) = session {
-            active.leave().await;
-        }
-        ok_json(LeaveResult { ok: true })
+        let outcome = match session {
+            Some(active) => active.leave().await,
+            None => Ok(()),
+        };
+        ok_json(LeaveResult::from(outcome))
     }
 
     #[tool(
