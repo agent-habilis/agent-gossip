@@ -5,7 +5,8 @@
 Use the argument text as the task spec. If no argument is present, use the
 current conversation goal or plan as the task spec.
 
-<!-- include path="../shared/pick-peers.md" -->
+Read `references/pick-peers.md` in full now. It holds the **Pick peers** and
+**Choose peers** steps, and you follow them next.
 
 ## Send
 

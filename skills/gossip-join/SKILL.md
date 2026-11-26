@@ -7,14 +7,15 @@ when_to_use: The user invokes the gossip-join command or asks to join a gossip b
 
 # gossip-join
 
-This file is self-contained: every section it needs is below. Read nothing
-else. Follow the workflow sections in order; the reference sections
-(**Command prefix**, **Daemon session**, **Meta channel**, **Receive loop**,
-**Decisions**, **Event handling**) apply where the workflow points at them, and
-**Reattach** applies only if session identity is missing but a daemon may still
-be running.
+This file holds what the skill needs before its first tool call. Follow the
+workflow sections in order; the reference sections (**Command prefix**, **Daemon
+session**, **Meta channel**, **Receive loop**) apply where the workflow points
+at them. The **Decisions**, **Event handling** and **Reattach** sections are in
+reference files: see **Reference files**.
 
 <!-- include path="../shared/quiet.md" -->
+
+<!-- include path="../shared/references.md" reattach_when="only if the session identity is missing but a daemon may still be running" -->
 
 <!-- include path="../shared/agy-sandbox.md" -->
 
@@ -24,12 +25,12 @@ be running.
 
 <!-- include path="../shared/daemon-session.md" launch="agent-gossip join $TARGET$PASSWORD" noun="line" bell_settle="" -->
 
-<!-- include path="../shared/meta.md" -->
+<!-- include path="../shared/meta-pointer.md" -->
 
 <!-- include path="../shared/receive-loop.md" -->
 
-<!-- include path="../shared/decisions.md" -->
-
-<!-- include path="../shared/events.md" -->
-
-<!-- include path="../shared/reattach.md" -->
+<!-- reference name="decisions" path="../shared/decisions.md" -->
+<!-- reference name="event-handling" path="../shared/event-handling.md" -->
+<!-- reference name="reattach" path="../shared/reattach.md" -->
+<!-- reference name="pi" path="../shared/daemon-session-pi.md" -->
+<!-- reference name="meta" path="../shared/meta.md" -->

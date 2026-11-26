@@ -122,6 +122,66 @@ fn reload_table_covers_every_harness() {
     );
 }
 
+/// A skill that points at `references/<name>.md` is only as good as the file
+/// that `plug` writes there: a name with no file sends the agent to a path
+/// that is not there, and an `unplug` that leaves a reference behind leaves
+/// stale rules on the machine.
+#[test]
+fn plug_writes_every_reference_a_skill_names_and_unplug_removes_them() {
+    let home = std::env::temp_dir().join(format!("agent-gossip-refs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join(".codex")).expect("seeding a fake codex");
+    let run = |verb: &str| {
+        let out = common::test_cmd()
+            .env("HOME", &home)
+            .arg(verb)
+            .output()
+            .expect("failed to run agent-gossip");
+        assert!(out.status.success(), "`{verb}` failed: {out:?}");
+    };
+
+    run("plug");
+    let skills = home.join(".codex/skills");
+    let mut named_total = 0;
+    for entry in std::fs::read_dir(&skills).expect("plug created the skills dir") {
+        let dir = entry.expect("readable dir entry").path();
+        let body =
+            std::fs::read_to_string(dir.join("SKILL.md")).expect("each skill has a SKILL.md");
+        for mention in body.split("references/").skip(1) {
+            let Some((name, _)) = mention.split_once(".md") else {
+                continue;
+            };
+            if !name.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-') {
+                continue;
+            }
+            let file = dir.join("references").join(format!("{name}.md"));
+            assert!(
+                file.is_file(),
+                "{dir:?} names references/{name}.md, plug wrote none"
+            );
+            named_total += 1;
+        }
+    }
+    assert!(
+        named_total > 0,
+        "no skill names a reference, so this test checks nothing"
+    );
+
+    run("unplug");
+    let mut left: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&skills) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("gossip-") {
+                left.push(name);
+            }
+        }
+    }
+    assert!(left.is_empty(), "unplug left skills behind: {left:?}");
+
+    std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+}
+
 /// agy's Standard Sandbox cannot reach the gossip daemon, so the doc the
 /// installing agent reads must say that every `agent-gossip` call in agy runs
 /// with the sandbox off.

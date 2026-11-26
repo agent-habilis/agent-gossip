@@ -8,7 +8,8 @@ conversation goal or plan.
 Hold a one-line label of the goal as `$GOAL_LABEL`; it names the run in the
 report header and the todo subjects.
 
-<!-- include path="../shared/pick-peers.md" -->
+Read `references/pick-peers.md` in full now. It holds the **Pick peers** and
+**Choose peers** steps, and you follow them next.
 
 The selected peers are the **workers** for this run. You are the orchestrator:
 you plan, dispatch, verify, and never take a subtask yourself — an orchestrator

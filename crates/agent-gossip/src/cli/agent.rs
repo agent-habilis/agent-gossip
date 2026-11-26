@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use include_dir::{Dir, include_dir};
 
 /// The portable Agent Skills payload installed into each supported harness:
-/// the single-file-per-skill tree `build.rs` renders from the multi-file
-/// `skills/` sources into `$OUT_DIR/skills`.
+/// the tree `build.rs` renders from the multi-file `skills/` sources into
+/// `$OUT_DIR/skills`: a `SKILL.md` per skill, and its `references/` files.
 pub(crate) static SKILLS: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
 const OWNED_SKILL_DIRS: &[&str] = &[
@@ -463,11 +463,81 @@ mod tests {
         }
     }
 
+    /// The rules that moved out of a `SKILL.md` stay reachable only if the
+    /// body says which file holds them and when to read it. A skill that sends
+    /// or answers tasks, asks the user, or handles events needs those three.
+    #[test]
+    fn skills_name_the_references_that_hold_their_rules() {
+        let standard = ["event-handling", "decisions", "reattach"];
+        let starters = ["gossip-create", "gossip-join", "gossip-topic"];
+        let pickers = ["gossip-task", "gossip-review", "gossip-orchestrate"];
+        for skill in OWNED_SKILL_DIRS {
+            let body = skill_body(skill);
+            let wants_standard =
+                !["gossip-discover", "gossip-doctor", "gossip-leave"].contains(skill);
+            for name in standard {
+                assert_eq!(
+                    body.contains(&format!("references/{name}.md")),
+                    wants_standard,
+                    "{skill}: the SKILL.md must name references/{name}.md exactly when the skill handles events"
+                );
+            }
+            let extras = [
+                ("pi", starters.contains(skill)),
+                ("meta", starters.contains(skill)),
+                ("pick-peers", pickers.contains(skill)),
+            ];
+            for (name, wanted) in extras {
+                assert_eq!(
+                    body.contains(&format!("references/{name}.md")),
+                    wanted,
+                    "{skill}: references/{name}.md is named by the wrong skills"
+                );
+            }
+            if wants_standard {
+                let flat: Vec<&str> = body.split_whitespace().collect();
+                assert!(
+                    flat.join(" ")
+                        .contains("before you handle the first batch of events"),
+                    "{skill}: the SKILL.md must say when to read the event rules"
+                );
+            }
+        }
+    }
+
+    /// A reference is part of the install: an edited or a missing one is drift,
+    /// or the agent would read stale rules after an upgrade.
+    #[test]
+    fn a_missing_or_edited_reference_is_drift() {
+        let home = std::env::temp_dir().join(format!("agent-gossip-refs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = Agent::Codex.install_path(&home);
+        write_embedded_dir(&SKILLS, &dir);
+        assert!(
+            Agent::Codex.in_sync(&home),
+            "a fresh copy has every reference"
+        );
+
+        let reference = dir.join("gossip-join/references/event-handling.md");
+        std::fs::write(&reference, "stale").expect("the test temp directory is writable");
+        assert!(
+            !Agent::Codex.in_sync(&home),
+            "an edited reference is out of date"
+        );
+        write_embedded_dir(&SKILLS, &dir);
+        std::fs::remove_file(&reference).expect("the test temp directory is writable");
+        assert!(
+            !Agent::Codex.in_sync(&home),
+            "a missing reference is out of date"
+        );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+    }
+
     /// agy loads only the first 24000 bytes of a skill body, so the text after
     /// that is never read: a rule past the cut does not exist for the agent.
     /// Every harness gets the same rendered tree, so the limit binds them all.
     #[test]
-    #[ignore = "red until the event rules move to references"]
     fn every_skill_body_fits_the_agy_load_limit() {
         const LOAD_LIMIT: usize = 24_000;
         let mut over: Vec<String> = Vec::new();
@@ -513,6 +583,12 @@ mod tests {
             "reattach.md",
             "receive-loop.md",
             "bell-hook.yaml",
+            "agy-sandbox.md",
+            "daemon-session-pi.md",
+            "event-handling.md",
+            "meta-pointer.md",
+            "receive-loop-details.md",
+            "references.md",
         ] {
             assert!(root.join("shared").join(partial).is_file(), "{partial}");
         }

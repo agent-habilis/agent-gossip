@@ -1,15 +1,18 @@
-//! Render the multi-file `skills/` sources into the single-file SKILL.md tree
-//! the binary embeds (`src/cli/agent.rs` `include_dir!($OUT_DIR/skills)`), and
+//! Render the multi-file `skills/` sources into the SKILL.md tree (and the
+//! `references/` files beside it) that the binary embeds (`src/cli/agent.rs` `include_dir!($OUT_DIR/skills)`), and
 //! emit a fingerprint of the *generated* output so editing a source or the
 //! renderer itself forces a rebuild (`include_dir!` is otherwise untracked on
 //! stable, and fingerprinting the sources would miss renderer-only changes).
 //!
-//! One `SKILL.md` per skill is the runtime contract: an agent invoking a skill
-//! gets the whole procedure in the file it was already handed — zero extra
-//! read round-trips. The sources stay multi-file for reuse; each SKILL.md
-//! template declares its own sources with `<!-- include path="..." -->`
-//! directives that `slot-template` expands at build time, so adding a skill
-//! needs no change here.
+//! One `SKILL.md` per skill is what an agent is handed, and agy loads only the
+//! first 24000 bytes of its body. So a `SKILL.md` holds what the agent needs
+//! before its first tool call, and the long rules sit in `references/<name>.md`
+//! files that the body says when to read. The sources stay multi-file for
+//! reuse; each SKILL.md template declares its own sources with
+//! `<!-- include path="..." -->` directives that `slot-template` expands at
+//! build time, and its reference files with
+//! `<!-- reference name="..." path="..." -->` lines that this script handles,
+//! so adding a skill needs no change here.
 //!
 //! Also stamps the build's git identity into `VERGEN_GIT_SHA` /
 //! `VERGEN_GIT_DIRTY`, which [`agent_gossip::version`] splices into every

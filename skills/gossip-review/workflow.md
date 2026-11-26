@@ -16,7 +16,8 @@ A subject past a few tens of kilobytes also stops healing via gossip
 anti-entropy and rides a direct transfer instead — prefer condensing a long
 diff over pasting it whole.
 
-<!-- include path="../shared/pick-peers.md" -->
+Read `references/pick-peers.md` in full now. It holds the **Pick peers** and
+**Choose peers** steps, and you follow them next.
 
 ## Send
 
