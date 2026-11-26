@@ -675,8 +675,8 @@ COMMANDS
               The keepalive proves that the worker's daemon is up, not that
               its agent works. So the worker's keepalive also carries
               mesh:bell (whether the agent has a bell armed), mesh:last_poll
-              (seconds since its last foreground poll) and the age of its
-              last check-in. The sender owns the check that its task is
+              (seconds since its last foreground poll) and mesh:checkin_age
+              (the age of its last check-in). The sender owns the check that its task is
               worked on, with one timer: the check-in interval X (5 minutes).
               X after its last activity on the task, the worker's daemon
               emits checkin_due, then every X, which rings the bell of the
@@ -1438,12 +1438,16 @@ JSON EVENTS
               is meant to reuse verbatim so both parties name it the same way.
               Absent when the initiator sent none.
 
-              A "status-update" leg that the worker sent with --waiting-on
-              additionally carries "waiting" — a top-level string with the
-              tag (control characters removed, at most 120 characters).
-              The key is absent, not null, on every other status-update.
-              A check-in from a peer goes on the ring without waking the
-              bell; a question, an artifact and a terminal state wake it.
+              A "status-update" leg that the worker sent with --progress
+              additionally carries "progress" — a top-level integer from 0
+              to 100, absent when none. A leg sent with --waiting-on carries
+              "waiting_on" — a top-level string with the tag (control
+              characters removed, at most 120 characters). Both keys are
+              absent, not null, on every other status-update.
+              A check-in wakes the bell only when its progress quarter
+              changes (0-24, 25-49, 50-74, 75-99, 100); the first progress
+              after none and the beats never wake it. A question, an
+              artifact and a terminal state wake it.
 
               Content legs also land in the poll / fetch_messages buffer (raw
               records with "type":"task") for the two parties only. See TASKS
@@ -1453,7 +1457,8 @@ JSON EVENTS
               The worker's liveness + percent beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
               record. It carries the progress and the text of the last
-              check-in, and done/total are omitted before the first one.
+              check-in age, and done/total are omitted before the first
+              progress. It carries no status text.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
@@ -1496,8 +1501,11 @@ JSON EVENTS
               the initiator's last follow-up that the worker has not
               answered: read it again with poll --after <seq-1>. When
               followup_aged_out is true that follow-up left the ring, and the
-              worker asks the initiator (GetTask or a follow-up). Answer with
-              a check-in.
+              worker sends --state input-required --text "resend your last
+              message" on the task. followup_seq can also name the opening
+              offer of a task the worker never saw (a missed brief): the
+              worker re-reads it with poll --after <seq-1> and handles it as
+              a new task brief. Answer with a check-in.
 
                  {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
                   "followup_seq":41,"followup_aged_out":false}

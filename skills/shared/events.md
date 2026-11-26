@@ -229,12 +229,14 @@ follow-up that carries `--task-id` (see the initiator flow below).
 
 `task_progress` is a **liveness** beat. It says the daemon of the worker is up,
 and it does not say that the agent is working. It carries the last progress
-and status text of the worker.
+of the worker and the age of its last check-in, and no status text.
 
 A **check-in** is a `working` status leg from the worker, with a text (what
 changed) and a progress (0 to 100), and optionally `waiting_on`. The worker
-sends one at least every check-in interval (5 min by default). A check-in does
-not wake you: its badge update, `working`, waits for your next batch. Only
+sends one at least every check-in interval (5 min by default). A check-in
+wakes you only when its progress moves into another quarter (0–24, 25–49,
+50–74, 75–99, 100). The first progress after none and the beats never wake you.
+Otherwise its badge update, `working`, waits for your next batch. A
 `task_overdue`, a question, an artifact or a terminal state wakes you.
 
 `task_overdue` is the one task event with `is_visible` true. The daemon of the
@@ -406,8 +408,10 @@ Worker flow:
    The daemon beats do not count as a check-in. When a `checkin_due` event
    rings your bell, answer it with a check-in. If it names a follow-up from the
    initiator, read that message first, with `agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --after <seq-1>`.
-   If the event aged out of the ring, ask the initiator with `GetTask` or a
-   follow-up. Wrap every command you run in `timeout`, run anything that takes
+   If the event aged out of the ring, send `--state input-required --text
+   "resend your last message"` on the task. If `followup_seq` names the opening
+   offer of a task you never saw (a missed brief), read it the same way, with
+   `poll --after <seq-1>`, and handle it as a new task brief. Wrap every command you run in `timeout`, run anything that takes
    more than 2 minutes in the background, and never wait in a shell loop: a
    command that blocks the turn is a check-in you cannot send.
 
