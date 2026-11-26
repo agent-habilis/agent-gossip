@@ -2005,17 +2005,17 @@ fn reachable_endpoints(reply: &serde_json::Value) -> HashSet<String> {
     seen
 }
 
-/// The headline of the multihop transport: at `--max-connections 2` a node of
-/// five cannot hold a direct connection to each of the four others, and every
-/// directed message still arrives. A peer past the cap is pinned: the
-/// `topology` reply names its first hop.
+/// The headline of the multihop transport: at `--max-connections 8`, the lowest cap the engine
+/// accepts, a node of ten cannot hold a direct connection to each of the nine others, and every
+/// directed message still arrives. A peer past the cap is pinned: the `topology` reply names its
+/// first hop.
 #[test]
-fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers() {
-    const CAP2: [(&str, &str); 1] = [("--max-connections", "2")];
+fn test_directed_messages_cross_a_cap_of_eight_and_the_topology_pins_the_far_peers() {
+    const CAP8: [(&str, &str); 1] = [("--max-connections", "8")];
     let _serial = serial_guard();
-    let (creator, mesh) = Node::create_flags("cap-two", &CAP2);
-    let joiners: Vec<Node> = (0..4)
-        .map(|index| Node::join_flags(&mesh, &format!("cp-{index}"), &CAP2))
+    let (creator, mesh) = Node::create_flags("cap-eight", &CAP8);
+    let joiners: Vec<Node> = (0..9)
+        .map(|index| Node::join_flags(&mesh, &format!("cp-{index}"), &CAP8))
         .collect();
     assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     for joiner in &joiners {
@@ -2098,7 +2098,7 @@ fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers
         .collect();
     assert!(
         pinned_seen >= 1,
-        "no node reports a pinned link with a first hop at a cap of 2\n{}",
+        "no node reports a pinned link with a first hop at a cap of 8\n{}",
         state_of_each_node.join("\n")
     );
 }
