@@ -868,9 +868,9 @@ async fn test_alive_presence_is_silent_in_json() {
 /// still return. Everything that reports a live count reads `peer_count` or
 /// filters on `!quiet`; nothing may use `peers.len()`.
 ///
-/// Shortens the eviction window by passing `ALIVE_TIMEOUT_SECS=3` and
-/// `SWEEP_INTERVAL_SECS=1` to the survivor daemon. The env is scoped to
-/// that child process, so nothing leaks to sibling tests in the binary.
+/// Shortens the eviction window by passing `--alive-timeout-secs 3` and
+/// `--sweep-interval-secs 1` to the survivor daemon. The flags go to
+/// that child process only, so nothing leaks to sibling tests in the binary.
 #[test]
 fn test_hard_kill_triggers_peer_timeout() {
     let state_file = tmp_log("state-survivor");
@@ -1005,8 +1005,8 @@ fn test_hard_kill_triggers_peer_timeout() {
 /// `peer_timeout` ("went quiet"), or a message. A peer still alive at
 /// join time must, by contrast, surface exactly one `has joined`.
 ///
-/// Shortens the eviction window via `ALIVE_TIMEOUT_SECS=3` /
-/// `SWEEP_INTERVAL_SECS=1` (scoped to each spawned daemon) so the ghost
+/// Shortens the eviction window via `--alive-timeout-secs 3` /
+/// `--sweep-interval-secs 1` (flags of each spawned daemon) so the ghost
 /// would be swept (and, pre-fix, emit a bogus `peer_timeout`) well
 /// within the test window.
 #[test]
@@ -1918,12 +1918,12 @@ fn channel_wire_contract(channel: Channel) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_wire_contract_patch_get_event_and_cas() {
+async fn state_wire_contract_merge_event_and_get() {
     channel_wire_contract(Channel::State);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn meta_wire_contract_patch_get_event_and_cas() {
+async fn meta_wire_contract_merge_event_and_get() {
     channel_wire_contract(Channel::Meta);
 }
 

@@ -2,7 +2,7 @@
 //!
 //! This is a library crate, not a `tests/common/` module, for one reason: each
 //! integration binary is its own compilation unit, so a shared `mod common;`
-//! makes every helper it does not personally call look dead. Sixteen binaries
+//! makes every helper it does not personally call look dead. Binaries
 //! with wildly different needs (`man_contract` uses one helper; `gossip_network`
 //! uses two dozen) made that unavoidable, and the blanket `#![allow(dead_code)]`
 //! it forced also hid genuinely dead helpers. A library's `pub` surface is

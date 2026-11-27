@@ -391,9 +391,8 @@ async fn test_state_reaches_a_late_joiner() {
     );
 }
 
-/// Three-node full-mesh: a broadcast should reach at least 2 of the 3 nodes
-/// (the sender never receives its own broadcast). This test also documents
-/// the known `HyParView` relay bug where the second joiner may not receive messages.
+/// Three-node full-mesh: a broadcast reaches the 2 other nodes (the sender
+/// never receives its own broadcast).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_node_full_delivery() {
     let alpha = InProcNode::create("net3node").await;
@@ -438,7 +437,7 @@ async fn test_bidirectional_messaging() {
     );
 }
 
-/// `ask` with no running server exits non-zero with a clear error message.
+/// A broadcast with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {
     // All-`1` Base58 payload — valid charset, can't match a real mesh.
@@ -533,7 +532,7 @@ fn test_control_char_body_rejected() {
     );
 }
 
-/// Multiple concurrent `ask` calls all get distinct IDs and all arrive.
+/// Several broadcasts in a row all get distinct ids and all arrive.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_concurrent_asks() {
     const ASK_COUNT: usize = 5;
@@ -561,11 +560,8 @@ async fn test_concurrent_asks() {
     );
 }
 
-/// With three agents on the same mesh, `ask --nickname <n>` must post as the
-/// specified agent. Without `--nickname`, `find_socket` picks whichever socket
-/// `read_dir` returns first — non-deterministic when multiple sockets share the
-/// same mesh prefix. This test documents that bug and will pass once `ask`
-/// accepts `--nickname`.
+/// With three agents on the same mesh, a message carries the nickname of the
+/// agent that sent it, on every receiver.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ask_targets_specific_agent_three_peers() {
     let alpha = InProcNode::create("netpick3").await;
@@ -574,8 +570,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
 
     // Each node posts a uniquely-tagged message as itself; the other
     // two must receive it with the *correct* author (each in-process
-    // session owns its own nickname, so authorship can't be swapped —
-    // the in-process analogue of the old find_socket bug).
+    // session owns its own nickname, so authorship can't be swapped).
     let alpha_nick = alpha.nickname.clone();
     alpha.broadcast("tag-from-alpha").await;
     for node in [&mut beta, &mut gamma] {
@@ -2478,7 +2473,7 @@ fn test_resume_triggers_hard_rebootstrap() {
     sleeper.cont();
 
     // The hard-path markers are `tracing` output — they land in the
-    // sink log (AHS_LOG_DIR), not the operator stdout/stderr capture.
+    // sink log (`--log-dir`), not the operator stdout/stderr capture.
     // "hard re-bootstrap edge" is the hard path itself;
     // "rendezvous-independent re-bridge" proves the resume also re-dials
     // known peers directly rather than relying solely on a rendezvous
@@ -4100,8 +4095,6 @@ fn owner_pid_launcher_reports_flag_errors() {
     let _ = owner.kill();
 }
 
-/// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
-/// subtype, the author and the frame id.
 /// The chat messages a node has received, one per line, for an assertion message.
 fn chat_debug(node: &Node) -> String {
     let lines: Vec<String> = node
@@ -4111,6 +4104,8 @@ fn chat_debug(node: &Node) -> String {
     lines.join("\n")
 }
 
+/// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
+/// subtype, the author and the frame id.
 fn presence_lines(node: &Node) -> Vec<(String, String, String)> {
     let log = node.log_contents();
     let events = log
