@@ -3936,10 +3936,14 @@ fn agy_hook_command() -> String {
     command
 }
 
-/// Run a hook command as agy does: `sh -c`, with the Stop payload on stdin.
+/// Run a hook command as agy does: `sh -c`, with the Stop payload on stdin. A
+/// throwaway shell sits between the test and the hook (the `:` keeps it from
+/// exec-ing the hook), so the hook's `$PPID` names a process with no daemons
+/// under it. The test process itself has the daemons of every other test.
 fn run_agy_hook(command: &str, path: &std::path::Path) -> std::process::Output {
     let mut hook = Command::new("/bin/sh");
-    hook.arg("-c").arg(command).env("PATH", path);
+    hook.args(["-c", "/bin/sh -c \"$1\"; :", "sh", command])
+        .env("PATH", path);
     hook.stdin(Stdio::piped());
     hook.stdout(Stdio::piped());
     let mut child: Child = hook.spawn().expect("the platform has /bin/sh");
