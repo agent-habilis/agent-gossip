@@ -580,7 +580,20 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         if status_update_params::is_incomplete_checkin(message) {
             return Routed::default();
         }
-        if task_record::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
+        let applied = task_record::apply_leg(
+            &mut app.tasks,
+            &app.closed_tasks,
+            task_record::ReceivedLeg {
+                task_id: &task_id,
+                from: &message.key(),
+                peer: &message.author,
+                payload: task_record::LegPayload::Frame(message),
+                now: Instant::now(),
+            },
+        );
+        replay = !applied.first_seen;
+        quarter_moved = applied.quarter_moved;
+        if replay {
             tracing::info!(
                 target: "agent_gossip::a2a",
                 %task_id,
@@ -589,19 +602,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
                 "replayed task leg kept off the surface"
             );
             surface = false;
-            replay = true;
         }
-        quarter_moved = !replay && task_record::quarter_moved(app.tasks.get(&task_id), message);
-        let now = Instant::now();
-        task_record::ingest(
-            &mut app.tasks,
-            task_record::IngestLegParams {
-                frame: message,
-                task_id: &task_id,
-                mine: false,
-                now,
-            },
-        );
     }
     let loggable = handle_task(
         &app.output,
@@ -1042,7 +1043,7 @@ fn apply_remote_leg(
     app: &mut A2aApp,
     now: Instant,
 ) -> Result<RemoteLeg, RpcError> {
-    use crate::a2a::task_record::{LegInfo, LegKind};
+    use crate::a2a::task_record::LegKind;
     let (task_id, kind) = match &payload.task_id {
         Some(task_id) => (task_id.clone(), LegKind::Text),
         None => (crate::a2a::TaskId::random(), LegKind::Offer),
@@ -1073,29 +1074,29 @@ fn apply_remote_leg(
         // loop, so an unbounded registry is a stall as well as a leak.
         return Err(error);
     }
-    // A relay can replay a follow-up; only its first copy restarts the clock.
-    let first_seen = kind == LegKind::Offer
-        || task_record::mark_seen(&mut app.tasks, &task_id, payload.message_id.as_str());
     let label = status_update_params::task_label(payload);
-    task_record::apply(
+    let message_id = payload.message_id.as_str();
+    let applied = task_record::apply_leg(
         &mut app.tasks,
-        &LegInfo {
+        &app.closed_tasks,
+        task_record::ReceivedLeg {
             task_id: &task_id,
-            peer_key: requester_key,
-            peer: Some(requester),
-            kind,
-            mine: false,
-            progress: None,
-            first_seen,
+            from: requester_key,
+            peer: requester,
+            payload: if kind == LegKind::Offer {
+                task_record::LegPayload::Brief(message_id)
+            } else {
+                task_record::LegPayload::FollowUp(message_id)
+            },
+            now,
         },
-        now,
     );
-    if kind == LegKind::Offer {
-        task_record::mark_seen(&mut app.tasks, &task_id, payload.message_id.as_str());
-        if let Some(rec) = app.tasks.get_mut(&task_id) {
-            rec.label.clone_from(&label);
-        }
+    if kind == LegKind::Offer
+        && let Some(rec) = app.tasks.get_mut(&task_id)
+    {
+        rec.label.clone_from(&label);
     }
+    let first_seen = applied.first_seen;
     Ok(RemoteLeg {
         task_id,
         first_seen,

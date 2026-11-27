@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::blob::ContentId;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{AuthorKey, Message, MessageId, MessageKind, Nickname, UnixSecs};
+use habilis_network::protocol::{AuthorKey, Message, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
 use super::status_update_params::Progress;
@@ -260,7 +260,10 @@ pub(crate) struct IngestLegParams<'caller> {
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
 /// peer and the beat progress) and advances the machine. A frame that
 /// belongs to no task is a no-op.
-pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegParams<'_>) {
+pub(crate) fn ingest(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    params: IngestLegParams<'_>,
+) -> Ingested {
     let IngestLegParams {
         frame,
         task_id,
@@ -280,7 +283,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         tag, to: Some(to), ..
     } = &frame.kind
     else {
-        return;
+        return Ingested::NONE;
     };
     let mut checkin = None;
     let mut order = None;
@@ -288,7 +291,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     let (kind, progress) = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = status_update_params::status_payload(frame) else {
-                return;
+                return Ingested::NONE;
             };
             if status_update_params::is_beat(&payload) {
                 beat = Some(PeerBeat {
@@ -310,10 +313,10 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             }
         }
         wire::ARTIFACT => (LegKind::Artifact, None),
-        _ => return,
+        _ => return Ingested::NONE,
     };
     if kind == LegKind::Beat && !mine && is_stale(frame) {
-        return;
+        return Ingested::NONE;
     }
     let author_key = frame.key();
     let peer_key = if mine { to } else { &author_key };
@@ -323,7 +326,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         .get(task_id)
         .is_some_and(|rec| rec.peer_key != *peer_key)
     {
-        return;
+        return Ingested::NONE;
     }
     // Remembered on the first ingest of every inbound leg, surfaced or not, so a
     // replay of a silent one cannot move the clock either.
@@ -349,10 +352,14 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         },
         now,
     );
+    let mut quarter_moved = false;
     let Some(rec) = tasks.get_mut(task_id) else {
-        return;
+        return Ingested {
+            first_seen,
+            quarter_moved,
+        };
     };
-    // Only a beat from the other party says anything about its reader and age.
+    // Only a beat from the other party says anything about its age.
     if !mine
         && let Some(beat) = beat
         && rec
@@ -371,6 +378,11 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         if rec.state.is_terminal() {
             rec.waiting_user = false;
         } else if first_seen && is_newer_than_waiting(rec, frame.timestamp, order) {
+            // A beat that arrives before the check-in it replays moves `last_progress` first,
+            // and that wake is lost; the cost is accepted.
+            quarter_moved = checkin
+                .as_ref()
+                .is_some_and(|checkin| quarter_changed(rec.last_progress, checkin.progress));
             record_checkin(rec, checkin);
             rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
         }
@@ -384,6 +396,27 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         rec.waiting_user = false;
         rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, None));
     }
+    Ingested {
+        first_seen,
+        quarter_moved,
+    }
+}
+
+/// What one ingested frame turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Ingested {
+    /// Whether its id was new to the record.
+    pub first_seen: bool,
+    /// Whether it moved the progress into another quarter.
+    pub quarter_moved: bool,
+}
+
+impl Ingested {
+    /// A frame that belongs to no task.
+    const NONE: Self = Self {
+        first_seen: false,
+        quarter_moved: false,
+    };
 }
 
 /// Keep what a status leg says about the work. A check-in sets the flag, the
@@ -409,25 +442,119 @@ struct CheckinFields {
     progress: Option<Progress>,
 }
 
-/// Whether an inbound check-in puts the progress in another quarter than the
-/// one the record holds. The first progress after none does not count, and a
-/// beat never does: it only replays the last progress. A beat that arrives before the check-in
-/// it replays moves `last_progress` first, and that wake is lost; the cost is accepted.
-pub(crate) fn quarter_moved(rec: Option<&TaskRecord>, frame: &Authored) -> bool {
-    let Ok(payload) = status_update_params::status_payload(frame) else {
-        return false;
+/// Whether a check-in puts the progress in another quarter than the one held. The first
+/// progress after none does not count.
+fn quarter_changed(held: Option<Progress>, new: Option<Progress>) -> bool {
+    matches!(
+        (held.map(Progress::quarter), new.map(Progress::quarter)),
+        (Some(held), Some(new)) if held != new
+    )
+}
+
+/// A leg that arrived from the peer, as the receive path hands it over.
+pub(crate) struct ReceivedLeg<'caller> {
+    pub task_id: &'caller TaskId,
+    /// The key that authored the leg.
+    pub from: &'caller AuthorKey,
+    /// The name of that author, which a brief records.
+    pub peer: &'caller Nickname,
+    pub payload: LegPayload<'caller>,
+    pub now: Instant,
+}
+
+/// What a received leg is.
+pub(crate) enum LegPayload<'caller> {
+    /// A status or artifact frame the peer pushed.
+    Frame(&'caller Authored),
+    /// The brief that opens a task, by the id of its message.
+    Brief(&'caller str),
+    /// A follow-up into a task we serve, by the id of its message.
+    FollowUp(&'caller str),
+}
+
+/// What a received leg turned out to be, for the layer that surfaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Applied {
+    /// Whether the leg is news: its id is new to the record and its task is still open. A leg
+    /// that is not news stays off the surface, and it moves no clock.
+    pub first_seen: bool,
+    /// Whether a check-in put the progress in another quarter.
+    pub quarter_moved: bool,
+}
+
+/// Apply one received leg to the registry. The one place that decides whether a leg is news,
+/// for a frame the peer pushed and for a message it sent over RPC alike. An unknown task still
+/// counts as open: the initiator's record comes from the RPC response, and the worker's first
+/// leg can arrive ahead of it.
+pub(crate) fn apply_leg(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    closed: &ClosedTasks,
+    leg: ReceivedLeg<'_>,
+) -> Applied {
+    let ReceivedLeg {
+        task_id,
+        from,
+        peer,
+        payload,
+        now,
+    } = leg;
+    let reaped = closed.get(task_id).is_some();
+    let terminal = tasks
+        .get(task_id)
+        .is_some_and(|rec| rec.state.is_terminal());
+    let finished = reaped || terminal;
+    let ingested = match payload {
+        LegPayload::Frame(frame) => ingest(
+            tasks,
+            IngestLegParams {
+                frame,
+                task_id,
+                mine: false,
+                now,
+            },
+        ),
+        LegPayload::Brief(id) => {
+            apply_message(tasks, (task_id, from, peer), (LegKind::Offer, id), now)
+        }
+        LegPayload::FollowUp(id) => {
+            apply_message(tasks, (task_id, from, peer), (LegKind::Text, id), now)
+        }
     };
-    if payload.status.state != TaskState::Working || status_update_params::is_beat(&payload) {
-        return false;
+    Applied {
+        first_seen: ingested.first_seen && !finished,
+        quarter_moved: ingested.quarter_moved && !finished,
     }
-    // A late, older check-in changes nothing in the record, so it wakes nobody.
-    let order = status_update_params::status_order(&payload);
-    if rec.is_some_and(|rec| !is_newer_than_waiting(rec, frame.timestamp, order)) {
-        return false;
+}
+
+/// Apply a message of the RPC path: a brief opens the record, a follow-up restarts the
+/// check-in clock. A relay can replay a follow-up, and only its first copy moves the clock.
+fn apply_message(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    (task_id, from, peer): (&TaskId, &AuthorKey, &Nickname),
+    (kind, id): (LegKind, &str),
+    now: Instant,
+) -> Ingested {
+    let first_seen = kind == LegKind::Offer || mark_seen(tasks, task_id, id);
+    apply(
+        tasks,
+        &LegInfo {
+            task_id,
+            peer_key: from,
+            peer: Some(peer),
+            kind,
+            mine: false,
+            progress: None,
+            first_seen,
+        },
+        now,
+    );
+    if kind == LegKind::Offer {
+        mark_seen(tasks, task_id, id);
     }
-    let held = rec.and_then(|rec| rec.last_progress).map(Progress::quarter);
-    let new = status_update_params::leg_progress(&payload).map(Progress::quarter);
-    matches!((held, new), (Some(held), Some(new)) if held != new)
+    Ingested {
+        first_seen,
+        quarter_moved: false,
+    }
 }
 
 /// Remember `leg_id` for the task and say whether it is new. A task with no
@@ -634,26 +761,6 @@ impl ClosedTasks {
     pub(crate) fn get(&self, task_id: &TaskId) -> Option<&ClosedTask> {
         self.by_id.get(task_id)
     }
-}
-
-/// Whether an inbound leg was already shown, and must stay off the surface: its
-/// task closed (live record terminal, or reaped and remembered in `closed`), or
-/// this leg id was ingested before. An unknown task still surfaces: the
-/// initiator's record comes from the RPC response, and the worker's first leg
-/// can arrive ahead of it.
-pub(crate) fn is_replay(
-    tasks: &HashMap<TaskId, TaskRecord>,
-    closed: &ClosedTasks,
-    task_id: &TaskId,
-    leg_id: &MessageId,
-) -> bool {
-    if closed.get(task_id).is_some() {
-        return true;
-    }
-    let Some(rec) = tasks.get(task_id) else {
-        return false;
-    };
-    rec.state.is_terminal() || rec.legs_seen.contains(leg_id.as_str())
 }
 
 /// Whether the registry has room for one more task offered by a peer.
@@ -1962,10 +2069,7 @@ mod tests {
                     .get_mut(&tid())
                     .expect("the test inserted this task earlier")
                     .last_progress = held.map(progress_of);
-                super::quarter_moved(
-                    registry.get(&tid()),
-                    &authored_by("calm-otter", &checkin_leg("step", percent, false)),
-                )
+                receive(registry, &checkin_leg("step", percent, false)).quarter_moved
             };
         assert!(!moved(&mut tasks, Some(30), "40"), "same quarter");
         assert!(
@@ -1998,7 +2102,7 @@ mod tests {
             Some(status_update_params::beat_metadata(Some(progress_of(90)))),
         );
         assert!(
-            !super::quarter_moved(tasks.get(&tid()), &authored_by("calm-otter", &beat)),
+            !receive(&mut tasks, &beat).quarter_moved,
             "a beat never wakes"
         );
     }
@@ -2547,7 +2651,7 @@ mod tests {
             .state = TaskState::Completed;
         let late = status_leg(false);
         assert!(
-            super::is_replay(&tasks, &closed(), &tid(), &late.id),
+            !receive(&mut tasks, &late).first_seen,
             "a relay can deliver an old frame, and a closed task must not surface it twice"
         );
     }
@@ -2574,7 +2678,7 @@ mod tests {
         assert!(tasks.is_empty(), "the registry is empty after the reap");
         let late = status_leg(false);
         assert!(
-            super::is_replay(&tasks, &reaped_ids, &tid(), &late.id),
+            !receive_with(&mut tasks, &reaped_ids, &tid(), &late).first_seen,
             "the reap forgets the record but the id list must still catch old frames"
         );
     }
@@ -2679,10 +2783,13 @@ mod tests {
         let mut tasks = HashMap::new();
         open_as_initiator(&mut tasks, now);
         let working = status_leg(false);
-        super::mark_seen(&mut tasks, &tid(), working.id.as_str());
         assert!(
-            super::is_replay(&tasks, &closed(), &tid(), &working.id),
-            "a leg for a closed task is a replay"
+            receive(&mut tasks, &working).first_seen,
+            "the first copy of a leg is news"
+        );
+        assert!(
+            !receive(&mut tasks, &working).first_seen,
+            "the second copy of the same leg is a replay"
         );
     }
 
@@ -2695,12 +2802,12 @@ mod tests {
         let mut tasks = HashMap::new();
         open_as_initiator(&mut tasks, now);
         let real = status_leg(false);
-        super::mark_seen(&mut tasks, &tid(), real.id.as_str());
+        receive(&mut tasks, &real);
         for _ in 0..100 {
             ingest_inbound(&mut tasks, &status_leg(true));
         }
         assert!(
-            super::is_replay(&tasks, &closed(), &tid(), &real.id),
+            !receive(&mut tasks, &real).first_seen,
             "a leg the task already saw is a replay"
         );
     }
@@ -2712,17 +2819,42 @@ mod tests {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         open_as_initiator(&mut tasks, now);
-        super::mark_seen(&mut tasks, &tid(), status_leg(false).id.as_str());
+        receive(&mut tasks, &status_leg(false));
         let fresh = status_leg(false);
         assert!(
-            !super::is_replay(&tasks, &closed(), &tid(), &fresh.id),
+            receive(&mut tasks, &fresh).first_seen,
             "a live task must keep surfacing its new legs"
         );
         let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
         assert!(
-            !super::is_replay(&tasks, &closed(), &unknown, &fresh.id),
+            receive_with(&mut tasks, &closed(), &unknown, &fresh).first_seen,
             "the worker's first leg can beat the RPC response, so it must still surface"
         );
+    }
+
+    /// Receive `frame` as the worker's, with `closed` as the list of reaped tasks.
+    fn receive_with(
+        tasks: &mut HashMap<TaskId, TaskRecord>,
+        closed: &super::ClosedTasks,
+        task_id: &TaskId,
+        frame: &Message,
+    ) -> super::Applied {
+        super::apply_leg(
+            tasks,
+            closed,
+            super::ReceivedLeg {
+                task_id,
+                from: &peer_key("calm-otter"),
+                peer: &Nickname::from("calm-otter"),
+                payload: super::LegPayload::Frame(&authored_by("calm-otter", frame)),
+                now: Instant::now(),
+            },
+        )
+    }
+
+    /// Receive `frame` as the worker's, for `tid()`, with no task reaped.
+    fn receive(tasks: &mut HashMap<TaskId, TaskRecord>, frame: &Message) -> super::Applied {
+        receive_with(tasks, &closed(), &tid(), frame)
     }
 
     /// The record a sender holds once its brief is answered: the task, as an initiator, at
