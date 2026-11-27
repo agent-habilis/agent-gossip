@@ -420,8 +420,8 @@ COMMANDS
                     between the peer and someone else answers the same
                     "task not found" as an id that does not exist. The task
                     metadata carries the last check-in as mesh:status_text
-                    (its text), mesh:done and mesh:total (its progress as
-                    N of 100) and mesh:label (the initiator's name for the
+                    (its text), mesh:progress (its progress, an integer
+                    from 0 to 100) and mesh:label (the initiator's name for the
                     task); a task that waits carries mesh:waiting.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
@@ -460,7 +460,9 @@ COMMANDS
               A working status is a check-in: the worker proves that the
               task is worked on. It needs a non-empty --text (what changed)
               and --progress PERCENT (a whole number from 0 to 100); a bare
-              working is refused. Accept with --text "accepted: <plan>"
+              working is refused, and a working leg that arrives without
+              a non-blank text or a valid mesh:progress is dropped by the
+              receiver. Accept with --text "accepted: <plan>"
               --progress 0. --progress is refused with any other state.
               The worker sends a check-in at least every 5 minutes. A
               question, an artifact or a terminal state also counts; the
@@ -672,10 +674,7 @@ COMMANDS
               skill does not re-emit `working` to keep it alive; the proof
               that the agent works is the check-in (see a2a status). Two limits:
               a task neither agent touches for 24 hours stops being beaten,
-              and the other daemon cancels it about 2 minutes later; a peer
-              on an older version, which beats only while it owes the next
-              move, is not timed out for silence until its first keepalive
-              arrives.
+              and the other daemon cancels it about 2 minutes later.
 
               The keepalive proves that the worker's daemon is up, not that
               its agent works. So the worker's keepalive also carries
@@ -687,8 +686,10 @@ COMMANDS
               emits checkin_due, then every X, which rings the bell of the
               worker. 2·X after the last activity, the initiator's daemon
               emits task_overdue, then every X. Nothing is canceled: the
-              initiator decides. A worker on an older version sends no
-              check-in age, so it never raises task_overdue.
+              initiator decides. The age of the last check-in is enough:
+              task_overdue does not wait for a first beat, so a task that
+              the worker never accepted is overdue at 2·X, marked not
+              picked up.
 
        ORCHESTRATION
               A skill-level convention layered on tasks: one agent (the
@@ -1461,15 +1462,15 @@ JSON EVENTS
        task_progress
               The worker's liveness + percent beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
-              record. It carries done and total (the progress of the last
-              check-in of the worker, as N/100), and both are omitted
-              before the first progress. It carries no status text and no
+              record. It carries progress, a top-level integer from 0 to
+              100 (the progress of the last check-in of the worker), absent
+              before the first one. It carries no status text and no
               check-in age.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "to_pubkey":"<hex>","task_id":"<uuid>","done":35,"total":100,
-                  "display":"💬️ task progress `<from>` → `<to>`: 35/100",
+                  "to_pubkey":"<hex>","task_id":"<uuid>","progress":35,
+                  "display":"💬️ task progress `<from>` → `<to>`: 35%",
                   "self":false}
 
        task_timeout
@@ -1491,9 +1492,9 @@ JSON EVENTS
               the worker never accepted, and what the last beat said about
               the bell and the last poll. The event is visible: print its
               display line. It rings the bell, except when the worker waits
-              on `user`: then it goes on the ring without a wake. A worker
-              on an older version sends no check-in age, so it never raises
-              this event.
+              on `user`: then it goes on the ring without a wake. It fires
+              from the age of the last check-in alone, also before the first
+              beat of the worker.
 
                  {"event":"task_overdue","task_id":"<uuid>","peer":"calm-otter",
                   "label":"review the diff","age_secs":660,
