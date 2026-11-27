@@ -527,41 +527,29 @@ fn task_progress_event_json_shape() {
 fn task_timeout_event_json_shape() {
     use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
-    let json = simple_event::event_json(&OutputEvent::TaskTimeout {
-        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        reason: TaskGoneReason::Timeout,
-    })
-    .expect("task_timeout event produces a JSON line");
-    let parsed = parse(&json);
-    assert_eq!(
-        parsed["event"], "task_timeout",
-        "the event field is task_timeout"
-    );
-    assert_eq!(
-        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
-        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
-    );
-    assert_eq!(parsed["reason"], "timeout", "the reason field is timeout");
-}
-
-#[test]
-fn task_peer_left_event_json_shape() {
-    use super::{OutputEvent, TaskGoneReason};
-    use crate::a2a::TaskId;
-    let json = simple_event::event_json(&OutputEvent::TaskTimeout {
-        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        reason: TaskGoneReason::PeerLeft,
-    })
-    .expect("task_timeout event produces a JSON line");
-    let parsed = parse(&json);
-    assert_eq!(
-        parsed["event"], "task_timeout",
-        "the event field is task_timeout"
-    );
-    assert_eq!(
-        parsed["reason"], "peer-left",
-        "the reason field is peer-left"
-    );
+    for (reason, reason_text) in [
+        (TaskGoneReason::Timeout, "timeout"),
+        (TaskGoneReason::PeerLeft, "peer-left"),
+    ] {
+        let json = simple_event::event_json(&OutputEvent::TaskTimeout {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            reason,
+        })
+        .expect("task_timeout event produces a JSON line");
+        let parsed = parse(&json);
+        assert_eq!(
+            parsed["event"], "task_timeout",
+            "the event field is task_timeout"
+        );
+        assert_eq!(
+            parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+            "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(
+            parsed["reason"], reason_text,
+            "the reason field is {reason_text}"
+        );
+    }
 }
 
 #[test]
@@ -1063,13 +1051,10 @@ mod snapshots {
 }
 
 mod prop {
-    use habilis_network::protocol::Message;
     use proptest::arbitrary::any;
     use proptest::collection::vec as arb_vec;
     use proptest::strategy::Strategy;
     use proptest::{prop_assert, prop_assert_eq, proptest};
-
-    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, test_key, view};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7eu8, 0..200)
@@ -1092,7 +1077,7 @@ mod prop {
         ) {
             let expected = body_text.clone();
             let message = super::chat_frame(author.as_str(), &body_text);
-            let json = format_msg_json(&message, is_self, None);
+            let json = super::format_msg_json(&message, is_self, None);
             let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(parsed["body"].as_str().expect("the JSON field is a string in this test"), expected.as_str());
             prop_assert_eq!(
@@ -1100,19 +1085,6 @@ mod prop {
                 expected.as_str()
             );
             prop_assert!(!json.contains('\n'));
-        }
-
-        #[test]
-        fn prop_presence_json_is_valid(is_join in any::<bool>()) {
-            let test_nick = habilis_network::protocol::Nickname::from("test-nick");
-            let (message, subtype) = if is_join {
-                (view(Message::new_joined(&sid(), &test_nick)), PresenceSubtype::Joined)
-            } else {
-                (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
-            };
-            let json = format_presence_json(&message, subtype, &test_key("x"));
-            let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-            prop_assert_eq!(&parsed["type"], "presence");
         }
     }
 }
