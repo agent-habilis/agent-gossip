@@ -241,8 +241,8 @@ pub(crate) struct LegInfo<'source> {
     pub mine: bool,
     /// The progress a beat carries (else `None`).
     pub progress: Option<Progress>,
-    /// Whether this is the first time the leg was seen. A replayed leg changes
-    /// the state machine as before but never moves the check-in clock.
+    /// Whether the leg is news: its id is new and it is not older than the leg that last
+    /// decided the waiting flag. A leg that is not news changes neither the state nor a clock.
     pub first_seen: bool,
 }
 
@@ -312,7 +312,12 @@ pub(crate) fn ingest(
                 (LegKind::Status(payload.status.state), None)
             }
         }
-        wire::ARTIFACT => (LegKind::Artifact, None),
+        wire::ARTIFACT => {
+            order = status_update_params::artifact_payload(frame)
+                .ok()
+                .and_then(|payload| status_update_params::artifact_order(&payload));
+            (LegKind::Artifact, None)
+        }
         _ => return Ingested::NONE,
     };
     if kind == LegKind::Beat && !mine && is_stale(frame) {
@@ -331,11 +336,11 @@ pub(crate) fn ingest(
     // Remembered on the first ingest of every inbound leg, surfaced or not, so a
     // replay of a silent one cannot move the clock either.
     let first_seen = mine || kind == LegKind::Beat || mark_seen(tasks, task_id, frame.id.as_str());
-    // A status leg that a slow relay delivers after a newer one is a first sight of its id, but
-    // not news: it must not restart the check-in clock.
+    // A leg that a slow relay delivers after a newer one is a first sight of its id, but not
+    // news: it moves no clock and no state.
     let moves_clock = first_seen
         && (mine
-            || !matches!(kind, LegKind::Status(_))
+            || kind == LegKind::Beat
             || tasks
                 .get(task_id)
                 .is_none_or(|rec| is_newer_than_waiting(rec, frame.timestamp, order)));
@@ -391,10 +396,10 @@ pub(crate) fn ingest(
     if kind == LegKind::Artifact
         && first_seen
         && !rec.state.is_terminal()
-        && is_newer_than_waiting(rec, frame.timestamp, None)
+        && is_newer_than_waiting(rec, frame.timestamp, order)
     {
         rec.waiting_user = false;
-        rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, None));
+        rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
     }
     Ingested {
         first_seen,
@@ -671,7 +676,7 @@ pub(crate) fn due_checkins(
         match rec.role {
             TaskRole::Initiator => {
                 let age = checkin_age(rec, now);
-                if age >= interval * 2 {
+                if age >= interval.saturating_mul(2) {
                     rec.last_notice = Some(now);
                     let not_picked_up = rec.state == TaskState::Submitted;
                     let label = rec.label.clone();
@@ -960,6 +965,12 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         return;
     }
 
+    // A leg that is not news must not move the state either: a question replayed after its
+    // answer, a follow-up replayed behind a newer question, or a check-in delayed behind its
+    // own artifact would otherwise undo what a later leg decided. A beat is liveness only.
+    if !leg.mine && !leg.first_seen && leg.kind != LegKind::Beat {
+        return;
+    }
     advance(rec, leg.kind, leg.mine);
     if let Some(progress) = leg.progress {
         rec.last_progress = Some(progress);
@@ -1905,6 +1916,126 @@ mod tests {
         );
     }
 
+    /// A question that a relay replays after its answer must not park the task again: the sender
+    /// would stop the clock and never raise the alarm.
+    #[test]
+    fn a_replayed_question_does_not_park_a_task_that_was_answered() {
+        let start = Instant::now();
+        let mut tasks = HashMap::new();
+        open_as_initiator(&mut tasks, start);
+        receive(&mut tasks, &status_leg(false));
+        let question = status_frame(TaskState::InputRequired, None);
+        assert!(
+            receive(&mut tasks, &question).first_seen,
+            "the question is news"
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the worker waits for the answer"
+        );
+        super::note_follow_up_sent(
+            &mut tasks,
+            &tid(),
+            &peer_key("calm-otter"),
+            later(start, Duration::from_secs(10)),
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the answer resumes it"
+        );
+        assert!(
+            !receive(&mut tasks, &question).first_seen,
+            "the second copy of the question is a replay"
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a replayed question must not park the task again"
+        );
+    }
+
+    /// A follow-up that a relay replays behind a newer question must not resume a worker that
+    /// still waits for the answer to that question.
+    #[test]
+    fn a_replayed_follow_up_does_not_resume_a_worker_that_asked() {
+        let start = Instant::now();
+        let mut tasks = task_we_serve(start);
+        let message = |registry: &mut HashMap<TaskId, TaskRecord>, id: &str| {
+            super::apply_leg(
+                registry,
+                &closed(),
+                super::ReceivedLeg {
+                    task_id: &tid(),
+                    from: &peer_key("calm-otter"),
+                    peer: &Nickname::from("calm-otter"),
+                    payload: super::LegPayload::FollowUp(id),
+                    now: later(start, Duration::from_secs(10)),
+                },
+            )
+        };
+        assert!(
+            message(&mut tasks, "m-a").first_seen,
+            "the follow-up is news"
+        );
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::InputRequired), true),
+            later(start, Duration::from_secs(20)),
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the worker asked a question"
+        );
+        assert!(
+            !message(&mut tasks, "m-a").first_seen,
+            "the second copy of the follow-up is a replay"
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "a replayed follow-up is not the answer to the question"
+        );
+    }
+
+    /// A check-in that a slow relay delivers behind the artifact it preceded must not take the
+    /// task out of review, even within the same second as the artifact.
+    #[test]
+    fn a_check_in_delayed_behind_its_artifact_does_not_end_the_review() {
+        let sent = UnixSecs::now();
+        let start = Instant::now();
+        let mut tasks = HashMap::new();
+        open_as_initiator(&mut tasks, start);
+        ingest_at(&mut tasks, &ordered_leg(false, sent, 1_000), start);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the worker accepted"
+        );
+        ingest_at(&mut tasks, &artifact_leg(sent, 2_000), start);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the result parks the task for review"
+        );
+        assert!(tasks[&tid()].review, "the task awaits the review");
+        ingest_at(&mut tasks, &ordered_leg(false, sent, 1_500), start);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "a check-in sent before the artifact cannot end the review"
+        );
+        assert!(tasks[&tid()].review, "the review stands");
+        ingest_at(&mut tasks, &ordered_leg(false, sent, 3_000), start);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a check-in sent after the artifact is the rework"
+        );
+    }
+
     /// A follow-up or a brief that a relay delivers twice is news only the first time, and a
     /// follow-up to a task that already closed is not news at all.
     #[test]
@@ -2148,12 +2279,14 @@ mod tests {
         );
     }
 
-    /// An artifact frame for `tid()` from the worker, stamped at `at`.
-    fn artifact_leg(at: UnixSecs) -> Message {
+    /// An artifact frame for `tid()` from the worker, stamped at `at` with the order value
+    /// `order_ms`.
+    fn artifact_leg(at: UnixSecs, order_ms: u64) -> Message {
         use habilis_network::protocol::{AppFrameParams, MeshId, MessageBody};
 
         let mesh = MeshId::from("test");
-        let payload = status_update_params::artifact_update(&mesh, &tid(), "the result");
+        let mut payload = status_update_params::artifact_update(&mesh, &tid(), "the result");
+        payload.metadata = Some(serde_json::json!({ "mesh:order_ms": order_ms }));
         let mut frame = Message::new_app(
             &mesh,
             &Nickname::from("calm-otter"),
@@ -2179,7 +2312,10 @@ mod tests {
         let mut tasks = working_task_we_opened(Instant::now());
         ingest_inbound(&mut tasks, &waiting_leg(true, first));
         assert!(tasks[&tid()].waiting_user, "the check-in names the user");
-        ingest_inbound(&mut tasks, &artifact_leg(first + Duration::from_secs(5)));
+        ingest_inbound(
+            &mut tasks,
+            &artifact_leg(first + Duration::from_secs(5), 1_000),
+        );
         assert!(
             !tasks[&tid()].waiting_user,
             "the artifact ends the wait on the user"

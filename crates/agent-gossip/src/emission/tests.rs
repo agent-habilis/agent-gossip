@@ -950,6 +950,7 @@ mod snapshots {
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
+        update.metadata = None;
         let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
             MessageKind::app_to(wire::ARTIFACT, test_key("calm-otter"), None),

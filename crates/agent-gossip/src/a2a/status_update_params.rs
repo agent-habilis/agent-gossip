@@ -352,8 +352,16 @@ pub fn artifact_update_parts(
         },
         append: None,
         last_chunk: Some(true),
-        metadata: None,
+        // The order value tells the result apart from the check-ins of its own second, so a
+        // check-in that a slow relay delivers after it cannot undo the review.
+        metadata: Some(serde_json::json!({ META_ORDER_MS: leg_order_ms() })),
     }
+}
+
+/// The order value an artifact leg carries, when the peer sends one.
+#[must_use]
+pub fn artifact_order(update: &TaskArtifactUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
 }
 
 /// Parse + validate the status payload of a logical `A2aStatus` frame:
