@@ -1,12 +1,12 @@
 use anyhow::Result;
 use habilis_network::ops::blob;
 use habilis_network::ops::blob::BlobTicket;
-use habilis_network::protocol::{MeshName, MessageBody, Nickname};
+use habilis_network::protocol::{MessageBody, Nickname};
 
 use super::a2a_call_request::A2aCallRequest;
 use super::a2a_call_sugar::A2aCallSugar;
+use super::a2a_discover::a2a_discover;
 use super::advertised_file_name::advertised_file_name;
-use super::args::lookup::LookupArgs;
 use super::args::{A2aAction, ArtifactArgs, CallArgs, ExposeArgs, SessionAddress, StatusArgs};
 use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
@@ -28,7 +28,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             directory,
             lookups,
             legacy_output: _,
-        } => discover(directory, lookups).await,
+        } => Box::pin(a2a_discover(directory, lookups.to_set()?)).await,
         A2aAction::Broadcast { session, text } => {
             let command = IpcCommand::Broadcast {
                 mesh: session.gossip,
@@ -92,16 +92,6 @@ async fn connect(
         other => super::password_flag::resolve_password(other)?,
     };
     bridge::connect(ticket, port, password, allow_anonymous).await
-}
-
-async fn discover(directory: Option<MeshName>, lookups: LookupArgs) -> Result<()> {
-    Box::pin(super::discover_params::discover(
-        super::discover_params::DiscoverParams {
-            directory,
-            lookups: lookups.to_set()?,
-        },
-    ))
-    .await
 }
 
 fn message_body(text: &str) -> Result<MessageBody> {

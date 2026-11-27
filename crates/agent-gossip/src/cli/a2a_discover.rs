@@ -9,19 +9,12 @@ use habilis_network::util::logging;
 use super::signal::{interrupted, sigterm_stream};
 use crate::tunnel::{TicketDirectory, TicketDirectoryEvent};
 
-/// The parsed `agent-gossip a2a discover` CLI arguments.
-pub(super) struct DiscoverParams {
-    pub(super) directory: Option<MeshName>,
-    pub(super) lookups: LookupSet,
-}
-
 /// Run `agent-gossip a2a discover`: browse `directory` for advertised bridges,
 /// streaming `ticket_found`/`ticket_lost` JSON lines until interrupted.
 ///
 /// # Errors
 /// The directory session cannot be established.
-pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
-    let DiscoverParams { directory, lookups } = params;
+pub(super) async fn a2a_discover(directory: Option<MeshName>, lookups: LookupSet) -> Result<()> {
     let name = directory.unwrap_or_else(|| {
         MeshName::try_new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
     });
