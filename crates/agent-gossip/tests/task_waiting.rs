@@ -1,4 +1,4 @@
-//! Integration tests for the waiting-on tag of a task.
+//! Integration tests for the waiting-on-user flag of a task.
 
 use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::{TaskId, TaskState};
@@ -20,11 +20,11 @@ async fn served_metadata(
     served["result"]["metadata"].clone()
 }
 
-/// A worker that waits on its own user says so on a `working` leg. The
-/// worker's registry serves the reason under `mesh:waiting`, and the next
-/// status leg clears it.
+/// A worker that waits on its own user says so on a `working` check-in. The
+/// worker's registry serves the flag as `mesh:waiting_user`, a check-in that
+/// repeats it keeps it, and the next check-in without it clears it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_task_shows_the_waiting_reason_until_the_next_status() {
+async fn get_task_shows_waiting_user_until_a_check_in_without_it() {
     let mut alice = InProcNode::create("t-wait").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-wait-bob").await;
     common::warm_up(&alice, &mut [&mut bob]).await;
@@ -53,6 +53,18 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
     let metadata = served_metadata(&alice, "t-wait-bob", &task_id).await;
     assert_eq!(metadata["mesh:waiting_user"], true, "got: {metadata}");
 
+    bob.task_waiting_user(
+        &task_id,
+        "still waiting for the answer",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
+    let repeated = served_metadata(&alice, "t-wait-bob", &task_id).await;
+    assert_eq!(
+        repeated["mesh:waiting_user"], true,
+        "a check-in that repeats the flag must keep it, got: {repeated}"
+    );
+
     bob.task_checkin(
         &task_id,
         "back at it",
@@ -62,7 +74,7 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
     let cleared = served_metadata(&alice, "t-wait-bob", &task_id).await;
     assert!(
         cleared.get("mesh:waiting_user").is_none(),
-        "the next status must clear the flag, got: {cleared}"
+        "a check-in without the flag must clear it, got: {cleared}"
     );
 
     alice.leave().await;

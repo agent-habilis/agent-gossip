@@ -22,31 +22,67 @@ fn status(state: &str, extra: &[&str]) -> std::process::Output {
         .expect("the test binary is built before the tests run")
 }
 
-/// `--waiting-on-user` and `--progress` only mean something while a task runs. On
-/// any other state the CLI must refuse before any IPC and say why, not just
-/// that the flag is unknown.
+/// `--waiting-on-user` only means something while a task runs. On any other
+/// state the CLI must refuse before any IPC and say why, not just that the
+/// flag is unknown.
 #[test]
-fn waiting_on_user_and_progress_with_a_state_other_than_working_fail_on_the_cli_side() {
+fn waiting_on_user_with_a_state_other_than_working_fails_on_the_cli_side() {
     for state in ["input-required", "completed", "failed", "canceled"] {
-        for (extra, reason) in [
-            (
-                &["--waiting-on-user"][..],
-                "waiting-on-user requires state working",
-            ),
-            (&["--progress", "50"][..], "progress requires state working"),
-        ] {
-            let out = status(state, extra);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            assert!(
-                !out.status.success(),
-                "{extra:?} only makes sense while a task still runs, so {state} must be refused"
-            );
-            assert!(
-                stderr.contains(reason),
-                "{state}: the error must explain {extra:?}, got: {stderr}"
-            );
-        }
+        let out = status(state, &["--waiting-on-user"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "the user can only be waited on while the task runs, so {state} must be refused"
+        );
+        assert!(
+            stderr.contains("waiting-on-user requires state working"),
+            "{state}: the error must name the rule, got: {stderr}"
+        );
     }
+}
+
+/// `--progress` is a percentage of work done, so it is meaningless once the
+/// task is no longer running.
+#[test]
+fn progress_with_a_state_other_than_working_fails_on_the_cli_side() {
+    for state in ["input-required", "completed", "failed", "canceled"] {
+        let out = status(state, &["--progress", "50"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "a percentage of a task that no longer runs says nothing, so {state} must be refused"
+        );
+        assert!(
+            stderr.contains("progress requires state working"),
+            "{state}: the error must name the rule, got: {stderr}"
+        );
+    }
+}
+
+/// The free-text `--waiting-on` tag is gone: waiting on a peer goes in
+/// `--text`, and only the user has a flag.
+#[test]
+fn the_old_waiting_on_tag_is_an_unknown_argument() {
+    let out = status(
+        "working",
+        &[
+            "--text",
+            "on it",
+            "--progress",
+            "50",
+            "--waiting-on",
+            "peer",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a tag that was removed must not be accepted again"
+    );
+    assert!(
+        stderr.contains("unexpected argument"),
+        "the parser must name the removed flag, got: {stderr}"
+    );
 }
 
 /// A `working` status is a check-in, so it needs a text and a progress. There
