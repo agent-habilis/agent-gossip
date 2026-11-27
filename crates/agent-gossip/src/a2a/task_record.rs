@@ -114,8 +114,8 @@ pub(crate) struct TaskRecord {
     /// moves the check-in clock. Beats are never recorded: at one every 30 s
     /// they would evict every real id.
     pub legs_seen: BoundedFifoSet<String>,
-    /// Last progress fraction reported, replayed on keepalives.
-    pub last_fraction: Option<(u64, u64)>,
+    /// Last progress reported, replayed on keepalives.
+    pub last_progress: Option<Progress>,
     /// Which role currently owes the next move.
     pub ball: TaskRole,
     /// Whom the worker waits on (a peer or `user`), from the `mesh:waiting` key
@@ -137,9 +137,6 @@ pub(crate) struct TaskRecord {
     /// When this node last raised a reminder (worker) or an alarm (sender), so
     /// one task raises one per interval. Any check-in activity clears it.
     pub last_notice: Option<Instant>,
-    /// Whether the worker's beats carry a check-in age: it supports check-ins,
-    /// so its silence can raise an alarm. An older peer keeps `task_timeout`.
-    pub peer_checkins: bool,
     /// The last beat of the worker, for the alarm line.
     pub peer_beat: Option<PeerBeat>,
 }
@@ -201,8 +198,8 @@ pub(crate) struct LegInfo<'source> {
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
-    /// `done/total` carried by a beat (else `None`).
-    pub fraction: Option<(u64, u64)>,
+    /// The progress a beat carries (else `None`).
+    pub progress: Option<Progress>,
     /// Whether this is the first time the leg was seen. A replayed leg changes
     /// the state machine as before but never moves the check-in clock.
     pub first_seen: bool,
@@ -220,7 +217,7 @@ pub(crate) struct IngestLegParams<'caller> {
 /// Feed one **validated logical** task frame into the registry from the
 /// broadcast (`mine = true`) or receive (`mine = false`) path. The single
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
-/// peer and the beat fraction) and advances the machine. A frame that
+/// peer and the beat progress) and advances the machine. A frame that
 /// belongs to no task is a no-op.
 pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegParams<'_>) {
     let IngestLegParams {
@@ -247,7 +244,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     let mut checkin = None;
     let mut order = None;
     let mut beat = None;
-    let (kind, fraction) = match tag.as_str() {
+    let (kind, progress) = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = status_update_params::status_payload(frame) else {
                 return;
@@ -259,13 +256,13 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
                     at: now,
                     sent_at: frame.timestamp,
                 });
-                (LegKind::Beat, status_update_params::leg_fraction(&payload))
+                (LegKind::Beat, status_update_params::leg_progress(&payload))
             } else {
                 if payload.status.state == TaskState::Working {
                     checkin = Some(CheckinFields {
                         waiting_on: status_update_params::status_waiting(&payload),
                         text: status_update_params::status_text(&payload),
-                        fraction: status_update_params::leg_fraction(&payload),
+                        progress: status_update_params::leg_progress(&payload),
                     });
                 }
                 order = status_update_params::status_order(&payload);
@@ -307,7 +304,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             peer: None,
             kind,
             mine,
-            fraction,
+            progress,
             first_seen: moves_clock,
         },
         now,
@@ -322,7 +319,6 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             .peer_beat
             .is_none_or(|held| held.sent_at <= beat.sent_at)
     {
-        rec.peer_checkins |= beat.checkin_age_secs.is_some();
         rec.peer_beat = Some(beat);
     }
     // Every working leg restates whom the worker waits on, so a plain one clears
@@ -361,8 +357,8 @@ fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
     if checkin.text.is_some() {
         rec.status_text = checkin.text;
     }
-    if checkin.fraction.is_some() {
-        rec.last_fraction = checkin.fraction;
+    if checkin.progress.is_some() {
+        rec.last_progress = checkin.progress;
     }
 }
 
@@ -370,13 +366,13 @@ fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
 struct CheckinFields {
     waiting_on: Option<String>,
     text: Option<String>,
-    fraction: Option<(u64, u64)>,
+    progress: Option<Progress>,
 }
 
 /// Whether an inbound check-in puts the progress in another quarter than the
 /// one the record holds. The first progress after none does not count, and a
 /// beat never does: it only replays the last progress. A beat that arrives before the check-in
-/// it replays moves `last_fraction` first, and that wake is lost; the cost is accepted.
+/// it replays moves `last_progress` first, and that wake is lost; the cost is accepted.
 pub(crate) fn quarter_moved(rec: Option<&TaskRecord>, frame: &Authored) -> bool {
     let Ok(payload) = status_update_params::status_payload(frame) else {
         return false;
@@ -389,9 +385,8 @@ pub(crate) fn quarter_moved(rec: Option<&TaskRecord>, frame: &Authored) -> bool 
     if rec.is_some_and(|rec| !is_newer_than_waiting(rec, frame.timestamp, order)) {
         return false;
     }
-    let quarter = |fraction| Progress::from_fraction(fraction).map(Progress::quarter);
-    let held = rec.and_then(|rec| rec.last_fraction).and_then(quarter);
-    let new = status_update_params::leg_fraction(&payload).and_then(quarter);
+    let held = rec.and_then(|rec| rec.last_progress).map(Progress::quarter);
+    let new = status_update_params::leg_progress(&payload).map(Progress::quarter);
     matches!((held, new), (Some(held), Some(new)) if held != new)
 }
 
@@ -416,14 +411,26 @@ pub(crate) fn mark_seen(
 /// The ring can end with another event, such as the loss marker, so the newest seq is not
 /// necessarily the one a caller just emitted.
 pub(crate) fn newest_task_message_seq(app: &mut A2aApp, after: Option<u64>) -> Option<u64> {
+    use crate::emission::OutputEvent;
+
     app.drain_surfaced_ring();
-    app.surfaced.newest_task_message_seq(after)
+    app.surfaced
+        .poll_since(None)
+        .events
+        .iter()
+        .rev()
+        .find(|item| {
+            matches!(item.event, OutputEvent::TaskMessage { .. })
+                && after.is_none_or(|after| item.seq > after)
+        })
+        .map(|item| item.seq)
 }
 
 /// The oldest and the newest seq the surfaced ring holds, once its tap is drained.
 pub(crate) fn ring_bounds(app: &mut A2aApp) -> Option<(u64, u64)> {
     app.drain_surfaced_ring();
-    app.surfaced.ring_bounds()
+    let batch = app.surfaced.poll_since(None);
+    Some((batch.events.first()?.seq, batch.events.last()?.seq))
 }
 
 /// Whether a status leg is not older than the one that last set `waiting`. When
@@ -486,7 +493,7 @@ pub(crate) struct CheckinDue {
 /// The alarms and reminders that fall due at `now`, each marked so the next
 /// one waits a full interval. The alarm is the sender's, from 2·X after the
 /// last activity; the reminder is the worker's, from X. A worker whose beats
-/// carry no check-in age raises none: an older peer keeps `task_timeout`.
+/// carry no check-in age counts the silence it sees itself.
 pub(crate) fn due_checkins(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     interval: Duration,
@@ -505,7 +512,7 @@ pub(crate) fn due_checkins(
         match rec.role {
             TaskRole::Initiator => {
                 let age = checkin_age(rec, now);
-                if rec.peer_checkins && age >= interval * 2 {
+                if age >= interval * 2 {
                     rec.last_notice = Some(now);
                     let reader = rec.peer_beat.and_then(|beat| beat.reader);
                     let not_picked_up = rec.state == TaskState::Submitted;
@@ -709,14 +716,13 @@ pub(crate) fn adopt_initiator(
                 last_skill_activity: now,
                 peer_beats: false,
                 legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
-                last_fraction: None,
+                last_progress: None,
                 waiting_on: None,
                 waiting_mark: None,
                 status_text: None,
                 label: None,
                 followup_seq: None,
                 last_notice: None,
-                peer_checkins: false,
                 peer_beat: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -785,7 +791,7 @@ pub(crate) fn note_follow_up_sent(
             peer: None,
             kind: LegKind::Text,
             mine: true,
-            fraction: None,
+            progress: None,
             first_seen: true,
         },
         now,
@@ -842,14 +848,13 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_skill_activity: now,
                 peer_beats: false,
                 legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
-                last_fraction: None,
+                last_progress: None,
                 waiting_on: None,
                 waiting_mark: None,
                 status_text: None,
                 label: None,
                 followup_seq: None,
                 last_notice: None,
-                peer_checkins: false,
                 peer_beat: None,
                 ball: TaskRole::Receiver,
             });
@@ -873,8 +878,8 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     }
 
     advance(rec, leg.kind, leg.mine);
-    if let Some(fraction) = leg.fraction {
-        rec.last_fraction = Some(fraction);
+    if let Some(progress) = leg.progress {
+        rec.last_progress = Some(progress);
     }
     rec.last_activity = now;
     if leg.mine {
@@ -1178,14 +1183,8 @@ pub(crate) async fn tick_task_keepalive(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
-    /// `(task_id, peer, state, last_fraction, check-in age)` for one keepalive-due task.
-    type KeepaliveDue = (
-        TaskId,
-        AuthorKey,
-        TaskState,
-        Option<(u64, u64)>,
-        Option<u64>,
-    );
+    /// `(task_id, peer, state, last_progress, check-in age)` for one keepalive-due task.
+    type KeepaliveDue = (TaskId, AuthorKey, TaskState, Option<Progress>, Option<u64>);
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
@@ -1207,18 +1206,18 @@ pub(crate) async fn tick_task_keepalive(
                 task_id.clone(),
                 rec.peer_key,
                 rec.state,
-                rec.last_fraction,
+                rec.last_progress,
                 age,
             )
         })
         .collect();
 
-    for (task_id, peer_key, task_state, fraction, checkin_age_secs) in due {
+    for (task_id, peer_key, task_state, progress, checkin_age_secs) in due {
         let update = status_update_params::status_update(
             context.mesh,
             status_update_params::StatusUpdateParams::new(&task_id, task_state).with_metadata(
                 status_update_params::beat_metadata_with_extras(status_update_params::BeatExtras {
-                    fraction,
+                    progress,
                     reader,
                     checkin_age_secs,
                 }),
@@ -1634,14 +1633,8 @@ mod tests {
         tasks
     }
 
-    /// A sender's record of a task it opened, accepted by a worker that supports check-ins.
-    fn task_we_opened_with_checkins(at: Instant) -> HashMap<TaskId, TaskRecord> {
-        let mut tasks = working_task_we_opened(at);
-        let rec = tasks
-            .get_mut(&tid())
-            .expect("the test inserted this task earlier");
-        rec.peer_checkins = true;
-        tasks
+    fn progress_of(percent: u8) -> Progress {
+        Progress::try_from(percent).expect("the test passes a percentage")
     }
 
     fn later(at: Instant, by: Duration) -> Instant {
@@ -1677,7 +1670,7 @@ mod tests {
     #[test]
     fn the_alarm_fires_at_two_x_and_then_every_x() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         let overdue = |registry: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
             super::due_checkins(registry, CHECKIN, later(start, after))
                 .0
@@ -1706,21 +1699,10 @@ mod tests {
         assert_eq!(overdue(&mut tasks, CHECKIN * 3), 1, "then again every X");
     }
 
-    /// The sender raises no alarm until a beat of the worker carries a check-in age: an
-    /// older peer keeps `task_timeout`.
+    /// A beat carries the worker's check-in age for the alarm line, and proves only that the
+    /// daemon lives.
     #[test]
-    fn no_alarm_before_the_first_beat_with_a_check_in_age() {
-        let start = Instant::now();
-        let mut tasks = working_task_we_opened(start);
-        let (overdue, reminders) =
-            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 10));
-        assert!(overdue.is_empty(), "an older peer is never overdue");
-        assert!(reminders.is_empty(), "the sender is never reminded");
-    }
-
-    /// The worker's beat carries its check-in age; that is what marks it as supporting them.
-    #[test]
-    fn a_beat_with_a_check_in_age_enables_the_alarm() {
+    fn a_beat_with_a_check_in_age_does_not_restart_the_clock() {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
         let beat = status_frame(
@@ -1733,7 +1715,6 @@ mod tests {
             )),
         );
         ingest_inbound(&mut tasks, &beat);
-        assert!(tasks[&tid()].peer_checkins, "the beat states an age");
         assert_eq!(
             tasks[&tid()].last_skill_activity,
             start,
@@ -1745,7 +1726,7 @@ mod tests {
     #[test]
     fn the_smaller_age_wins() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         let at = later(start, CHECKIN * 3);
         tasks
             .get_mut(&tid())
@@ -1772,7 +1753,7 @@ mod tests {
     #[test]
     fn the_clock_pauses_with_the_ball_on_the_sender_and_restarts_on_a_follow_up() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::InputRequired), false),
@@ -1810,7 +1791,7 @@ mod tests {
     #[test]
     fn a_check_in_resets_the_timers() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         assert_eq!(
             super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2))
                 .0
@@ -1848,7 +1829,7 @@ mod tests {
     #[test]
     fn a_replayed_leg_does_not_move_the_clock_on_the_push_path() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         let frame = checkin_leg("built it", "50", None);
         let first = later(start, Duration::from_secs(10));
         let replay = later(start, Duration::from_secs(100));
@@ -1961,7 +1942,7 @@ mod tests {
     #[test]
     fn a_check_in_keeps_its_text_progress_and_tag() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         let first = UnixSecs::now();
         let mut waiting = checkin_leg("waits for review", "30", Some("user"));
         waiting.timestamp = first;
@@ -1973,9 +1954,9 @@ mod tests {
             "the text of the check-in is kept"
         );
         assert_eq!(
-            rec.last_fraction,
-            Some((30, 100)),
-            "the progress of the check-in is kept as a fraction"
+            rec.last_progress,
+            Some(progress_of(30)),
+            "the progress of the check-in is kept"
         );
         assert_eq!(
             rec.waiting_on.as_deref(),
@@ -2005,13 +1986,13 @@ mod tests {
     /// either direction, and not otherwise.
     #[test]
     fn a_check_in_wakes_only_when_the_quarter_moves() {
-        let mut tasks = task_we_opened_with_checkins(Instant::now());
+        let mut tasks = working_task_we_opened(Instant::now());
         let moved =
-            |registry: &mut HashMap<TaskId, TaskRecord>, held: Option<u64>, percent: &str| {
+            |registry: &mut HashMap<TaskId, TaskRecord>, held: Option<u8>, percent: &str| {
                 registry
                     .get_mut(&tid())
                     .expect("the test inserted this task earlier")
-                    .last_fraction = held.map(|done| (done, 100));
+                    .last_progress = held.map(progress_of);
                 super::quarter_moved(
                     registry.get(&tid()),
                     &authored_by("calm-otter", &checkin_leg("step", percent, None)),
@@ -2037,15 +2018,15 @@ mod tests {
 
     /// A beat only replays the last progress, so it never moves the quarter.
     #[test]
-    fn a_beat_with_a_new_fraction_does_not_move_the_quarter() {
-        let mut tasks = task_we_opened_with_checkins(Instant::now());
+    fn a_beat_with_a_new_progress_does_not_move_the_quarter() {
+        let mut tasks = working_task_we_opened(Instant::now());
         tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier")
-            .last_fraction = Some((10, 100));
+            .last_progress = Some(progress_of(10));
         let beat = status_frame(
             TaskState::Working,
-            Some(status_update_params::beat_metadata(Some((90, 100)))),
+            Some(status_update_params::beat_metadata(Some(progress_of(90)))),
         );
         assert!(
             !super::quarter_moved(tasks.get(&tid()), &authored_by("calm-otter", &beat)),
@@ -2101,7 +2082,7 @@ mod tests {
     #[test]
     fn a_follow_up_resumes_a_task_that_waited_on_input() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         let parked = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
@@ -2185,10 +2166,6 @@ mod tests {
             "a stranger's beat is not the worker's"
         );
         assert!(
-            !rec.peer_checkins,
-            "a stranger does not vouch for the worker"
-        );
-        assert!(
             !rec.legs_seen.contains(working.id.as_str()),
             "a stranger's leg id is not remembered"
         );
@@ -2244,7 +2221,7 @@ mod tests {
     #[test]
     fn an_unbounded_beat_age_cannot_panic_the_alarm() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier")
@@ -2268,7 +2245,7 @@ mod tests {
     #[test]
     fn a_get_task_adoption_does_not_delay_the_alarm() {
         let start = Instant::now();
-        let mut tasks = task_we_opened_with_checkins(start);
+        let mut tasks = working_task_we_opened(start);
         let probe = later(start, CHECKIN);
         let adopt = |registry: &mut HashMap<TaskId, TaskRecord>, now, restarts_clock| {
             super::adopt_initiator(
@@ -2296,7 +2273,7 @@ mod tests {
             1,
             "the alarm is due 2·X after the last check-in, whatever the probes"
         );
-        let mut answered = task_we_opened_with_checkins(start);
+        let mut answered = working_task_we_opened(start);
         adopt(&mut answered, probe, true);
         assert!(
             super::due_checkins(&mut answered, CHECKIN, later(start, CHECKIN * 2))
@@ -2312,10 +2289,6 @@ mod tests {
         let start = Instant::now();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), start);
-        tasks
-            .get_mut(&tid())
-            .expect("the test inserted this task earlier")
-            .peer_checkins = true;
         let overdue = super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2)).0;
         assert_eq!(
             overdue.first().map(|notice| notice.not_picked_up),
@@ -2596,7 +2569,7 @@ mod tests {
         beat.timestamp = UnixSecs::now() - Duration::from_secs(super::task_timeout_secs() + 1);
         ingest_inbound(&mut tasks, &beat);
         assert!(
-            !tasks[&tid()].peer_checkins,
+            tasks[&tid()].peer_beat.is_none(),
             "a replayed beat proves nothing"
         );
     }
@@ -2835,7 +2808,7 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind,
             mine,
-            fraction: None,
+            progress: None,
             first_seen: true,
         }
     }
@@ -2858,7 +2831,7 @@ mod tests {
             peer: Some(outsider),
             kind,
             mine: false,
-            fraction: None,
+            progress: None,
             first_seen: true,
         };
 
@@ -2967,7 +2940,7 @@ mod tests {
                     peer: Some(&Nickname::from("a-peer")),
                     kind: LegKind::Offer,
                     mine: false,
-                    fraction: None,
+                    progress: None,
                     first_seen: true,
                 },
                 now,
@@ -3203,7 +3176,7 @@ mod tests {
                 peer: Some(Box::leak(Box::new(Nickname::from("wire-thistle")))),
                 kind: LegKind::Offer,
                 mine: false,
-                fraction: None,
+                progress: None,
                 first_seen: true,
             },
             now,
@@ -3229,7 +3202,7 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from(peer)))),
             kind: LegKind::Offer,
             mine: false,
-            fraction: None,
+            progress: None,
             first_seen: true,
         };
         let live_id = "550e8400-e29b-41d4-a716-446655440001";
@@ -3864,7 +3837,7 @@ mod tests {
                     peer: Some(&Nickname::from("wire-thistle")),
                     kind: LegKind::Offer,
                     mine: false,
-                    fraction: None,
+                    progress: None,
                     first_seen: true,
                 },
                 Instant::now(),
@@ -3892,7 +3865,7 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind: LegKind::Offer,
             mine: false,
-            fraction: None,
+            progress: None,
             first_seen: true,
         };
         let left_id = "550e8400-e29b-41d4-a716-446655440001";

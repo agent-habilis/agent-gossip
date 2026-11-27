@@ -215,8 +215,8 @@ struct TaskLine<'source> {
 }
 
 /// A `{"event":"task_progress",...}` line for a liveness beat — the
-/// ball-owner's keepalive/percent heartbeat. `done`/`total` are `None` when
-/// the beat reports indeterminate progress (no fraction in its metadata).
+/// ball-owner's keepalive/percent heartbeat. `progress` is `None` when
+/// the beat reports indeterminate progress (no percentage in its metadata).
 #[derive(Serialize)]
 struct TaskProgressLine<'source> {
     pub event: &'static str,
@@ -228,9 +228,7 @@ struct TaskProgressLine<'source> {
     pub to_pubkey: &'source str,
     pub task_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub done: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total: Option<u64>,
+    pub progress: Option<u8>,
     pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
@@ -325,14 +323,14 @@ fn task_display(params: TaskDisplayParams<'_>) -> String {
 }
 
 /// `display` line for a `task_progress` event:
-/// `` 💬️ task progress `<author>` → `<to>`: 35/100 `` (or
+/// `` 💬️ task progress `<author>` → `<to>`: 35% `` (or
 /// `working` when indeterminate).
-fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Option<u64>) -> String {
-    match (done, total) {
-        (Some(done), Some(total)) => {
-            format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: {done}/{total}")
+fn task_progress_display(author: &str, to: &str, progress: Option<u8>) -> String {
+    match progress {
+        Some(percent) => {
+            format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: {percent}%")
         }
-        _ => format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working"),
+        None => format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working"),
     }
 }
 
@@ -630,12 +628,12 @@ pub(super) fn format_task_json(
     if let Ok(payload) = status_update_params::status_payload(message)
         && status_update_params::is_beat(&payload)
     {
-        let (done, total) = status_update_params::leg_fraction(&payload)
-            .map_or((None, None), |(done, total)| (Some(done), Some(total)));
+        let progress = status_update_params::leg_progress(&payload)
+            .map(status_update_params::Progress::percent);
         let author = message.author.as_str();
         let to_text = to_label(to, addressee_name);
         let to_pubkey = to.to_string();
-        let display = task_progress_display(author, &to_text, done, total);
+        let display = task_progress_display(author, &to_text, progress);
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
                 event: "task_progress",
@@ -646,8 +644,7 @@ pub(super) fn format_task_json(
                 to: &to_text,
                 to_pubkey: &to_pubkey,
                 task_id,
-                done,
-                total,
+                progress,
                 display,
                 is_self,
             })
@@ -669,11 +666,9 @@ pub(super) fn format_task_json(
     let waiting_on = checkin
         .as_ref()
         .and_then(status_update_params::status_waiting);
-    let fraction = checkin
+    let progress: Option<u8> = checkin
         .as_ref()
-        .and_then(status_update_params::leg_fraction);
-    let progress: Option<u8> = fraction
-        .and_then(status_update_params::Progress::from_fraction)
+        .and_then(status_update_params::leg_progress)
         .map(status_update_params::Progress::percent);
     let display = task_display(TaskDisplayParams {
         author,

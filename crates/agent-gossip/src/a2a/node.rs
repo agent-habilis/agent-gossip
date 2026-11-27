@@ -579,6 +579,11 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         {
             return Routed::default();
         }
+        // A check-in with no text or no progress breaks the rule that binds the sender too, so it
+        // is neither ingested nor surfaced and moves no clock.
+        if status_update_params::is_incomplete_checkin(message) {
+            return Routed::default();
+        }
         if task_record::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
             tracing::info!(
                 target: "agent_gossip::a2a",
@@ -1084,7 +1089,7 @@ fn apply_remote_leg(
             peer: Some(requester),
             kind,
             mine: false,
-            fraction: None,
+            progress: None,
             first_seen,
         },
         now,
@@ -1443,11 +1448,6 @@ mod classify_tests {
             !wakes(&task_event(check_in, false)),
             "a routine check-in is data, not news"
         );
-        let bare = working_with(None, None);
-        assert!(
-            !wakes(&task_event(bare, false)),
-            "a bare working from an older peer does not wake either"
-        );
         let to = Some(key("initiator"));
         for state in [
             TaskState::InputRequired,
@@ -1459,6 +1459,48 @@ mod classify_tests {
                 "a peer's {state:?} status wakes"
             );
         }
+    }
+
+    // The check-in rule binds the receiver too: a `working` leg with no text or no progress is
+    // not taken in, and a beat is not a check-in.
+    #[test]
+    fn a_working_leg_without_text_or_progress_is_incomplete() {
+        let progress = |percent: &str| {
+            status_update_params::status_metadata(
+                None,
+                Some(percent.parse().expect("the test passes a percentage")),
+                1,
+            )
+        };
+        assert!(
+            status_update_params::is_incomplete_checkin(&working_with_raw(None, None)),
+            "a leg with neither text nor progress breaks the rule"
+        );
+        assert!(
+            status_update_params::is_incomplete_checkin(&working_with_raw(Some("built"), None)),
+            "a text alone says nothing of how far the work is"
+        );
+        assert!(
+            status_update_params::is_incomplete_checkin(&working_with_raw(
+                Some("  "),
+                Some(progress("40"))
+            )),
+            "spaces say nothing of what changed"
+        );
+        assert!(
+            !status_update_params::is_incomplete_checkin(&working_with_raw(
+                Some("built"),
+                Some(progress("40"))
+            )),
+            "both fields present is what the sender emits"
+        );
+        assert!(
+            !status_update_params::is_incomplete_checkin(&working_with_raw(
+                None,
+                Some(status_update_params::beat_metadata(None))
+            )),
+            "a beat is plumbing every 30 s and carries no text"
+        );
     }
 
     // A check-in whose progress moves into another quarter wakes the sender, so its

@@ -5,7 +5,7 @@ use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 use super::extensions::{META_BELL, META_CHECKIN_AGE, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::frame_payload_error::FramePayloadError;
 use super::{
-    EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
+    EXT_MESH_BROADCAST, META_BEAT, META_LABEL, META_PROGRESS, Message, Part, Role,
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
@@ -290,14 +290,13 @@ pub fn status_update(mesh: &MeshId, params: StatusUpdateParams<'_>) -> TaskStatu
 }
 
 /// The beat metadata for a keepalive/progress status: the wire-static
-/// plumbing marker plus an optional `done/total` fraction.
+/// plumbing marker plus the last progress, when there is one.
 #[must_use]
-pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
+pub fn beat_metadata(progress: Option<Progress>) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert(META_BEAT.to_string(), serde_json::Value::Bool(true));
-    if let Some((done, total)) = fraction {
-        map.insert(META_DONE.to_string(), done.into());
-        map.insert(META_TOTAL.to_string(), total.into());
+    if let Some(progress) = progress {
+        map.insert(META_PROGRESS.to_string(), progress.percent().into());
     }
     serde_json::Value::Object(map)
 }
@@ -318,7 +317,7 @@ pub struct ReaderBeat {
 #[non_exhaustive]
 pub struct BeatExtras {
     /// The last progress reported, replayed so a lost check-in costs nothing.
-    pub fraction: Option<(u64, u64)>,
+    pub progress: Option<Progress>,
     /// Whether the worker agent is reading.
     pub reader: Option<ReaderBeat>,
     /// Seconds since the worker's agent last checked in on this task. Its presence
@@ -329,7 +328,7 @@ pub struct BeatExtras {
 /// As [`beat_metadata`], plus the worker's [`ReaderBeat`] and check-in age.
 #[must_use]
 pub fn beat_metadata_with_extras(extras: BeatExtras) -> serde_json::Value {
-    let mut meta = beat_metadata(extras.fraction);
+    let mut meta = beat_metadata(extras.progress);
     if let Some(map) = meta.as_object_mut() {
         if let Some(reader) = extras.reader {
             map.insert(META_BELL.to_string(), reader.bell.into());
@@ -429,7 +428,7 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
 }
 
 /// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
-/// beat from an old peer, or from a worker that never polled, reads as unknown.
+/// worker that never polled reads as unknown.
 #[must_use]
 pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
     let meta = update.metadata.as_ref()?;
@@ -445,14 +444,13 @@ pub fn beat_checkin_age(update: &TaskStatusUpdate) -> Option<u64> {
     update.metadata.as_ref()?.get(META_CHECKIN_AGE)?.as_u64()
 }
 
-/// The `done/total` fraction a beat or a check-in carries, if any.
+/// The progress a beat or a check-in carries, if any. A value outside 0 to 100 reads as none.
 #[must_use]
-pub fn leg_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
-    let meta = update.metadata.as_ref()?;
-    Some((
-        meta.get(META_DONE)?.as_u64()?,
-        meta.get(META_TOTAL)?.as_u64()?,
-    ))
+pub fn leg_progress(update: &TaskStatusUpdate) -> Option<Progress> {
+    let percent = update.metadata.as_ref()?.get(META_PROGRESS)?.as_u64()?;
+    u8::try_from(percent)
+        .ok()
+        .and_then(|percent| Progress::try_from(percent).ok())
 }
 
 /// The initiator's one-line task label (`mesh:label`), when the brief carries one.
@@ -484,8 +482,8 @@ pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
 /// The metadata of a status leg.
 ///
 /// It holds the order value, the `mesh:waiting` tag when there is one, and the
-/// progress of a check-in as `done/total` out of 100. The counterpart of
-/// [`status_order`], [`status_waiting`] and [`leg_fraction`].
+/// progress of a check-in as a percentage. The counterpart of
+/// [`status_order`], [`status_waiting`] and [`leg_progress`].
 #[must_use]
 pub fn status_metadata(
     waiting_on: Option<&str>,
@@ -497,9 +495,7 @@ pub fn status_metadata(
         meta[META_WAITING] = reason.into();
     }
     if let Some(progress) = progress {
-        let (done, total) = progress.fraction();
-        meta[META_DONE] = done.into();
-        meta[META_TOTAL] = total.into();
+        meta[META_PROGRESS] = progress.percent().into();
     }
     meta
 }
@@ -571,21 +567,29 @@ pub fn status_text(update: &TaskStatusUpdate) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
+/// Whether `frame` is a `working` leg that breaks the check-in rule.
+///
+/// Such a leg is not a beat and lacks a text or a valid `mesh:progress`. The sender refuses to
+/// emit one, and the receiver refuses to take one in.
+#[must_use]
+pub fn is_incomplete_checkin(frame: &Frame) -> bool {
+    let Ok(payload) = status_payload(frame) else {
+        return false;
+    };
+    payload.status.state == TaskState::Working
+        && !is_beat(&payload)
+        && (status_text(&payload).is_none() || leg_progress(&payload).is_none())
+}
+
 /// A check-in's progress: a whole percentage, 0 to 100.
 ///
 /// Built only by a checked parse, so every value is in range. It goes on the
-/// wire as `done/total` with a total of 100, the shape a beat already carries.
+/// wire as the integer `mesh:progress`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "u8", into = "u8")]
 pub struct Progress(u8);
 
 impl Progress {
-    /// The percentage as a `done/total` fraction out of 100.
-    #[must_use]
-    pub fn fraction(self) -> (u64, u64) {
-        (u64::from(self.0), 100)
-    }
-
     /// The percentage.
     #[must_use]
     pub fn percent(self) -> u8 {
@@ -598,17 +602,6 @@ impl Progress {
     #[must_use]
     pub fn quarter(self) -> u8 {
         if self.0 >= 100 { 4 } else { self.0 / 25 }
-    }
-
-    /// The progress a `done/total` fraction stands for, `None` for a total of
-    /// zero. A done above the total counts as complete.
-    #[must_use]
-    pub fn from_fraction((done, total): (u64, u64)) -> Option<Self> {
-        // u128 holds `u64::MAX * 100`, so a huge fraction cannot overflow into `None`.
-        let percent = u128::from(done.min(total))
-            .checked_mul(100)?
-            .checked_div(u128::from(total))?;
-        u8::try_from(percent).ok().map(Self)
     }
 }
 
@@ -746,10 +739,10 @@ mod tests {
 
     use super::{
         Frame, Progress, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg,
-        display_text, msg_payload, next_order_ms, payload_body, status_metadata, status_order,
-        status_update, status_waiting, waiting_metadata,
+        display_text, leg_progress, msg_payload, next_order_ms, payload_body, status_metadata,
+        status_order, status_update, status_waiting, waiting_metadata,
     };
-    use crate::a2a::wire;
+    use crate::a2a::{META_PROGRESS, wire};
 
     fn mesh() -> MeshId {
         MeshId::from("test")
@@ -956,9 +949,9 @@ mod tests {
             );
         }
         assert_eq!(
-            Progress::try_from(100).map(Progress::fraction),
-            Ok((100, 100)),
-            "a progress goes on the wire as a fraction out of 100"
+            status_metadata(None, Progress::try_from(100).ok(), 1)[META_PROGRESS],
+            100,
+            "a progress goes on the wire as a percentage"
         );
         assert!(
             serde_json::from_str::<Progress>("101").is_err(),
@@ -987,26 +980,40 @@ mod tests {
                 "quarters round down from {percent}%"
             );
         }
+    }
+
+    /// Only a whole percentage in `mesh:progress` counts: a value out of range, another type or
+    /// the retired `mesh:done`/`mesh:total` pair reads as no progress.
+    #[test]
+    fn a_leg_carries_its_progress_as_one_percentage() {
+        let update = |metadata: serde_json::Value| {
+            status_update(
+                &mesh(),
+                StatusUpdateParams::new(
+                    &crate::a2a::TaskId::random(),
+                    crate::a2a::TaskState::Working,
+                )
+                .with_metadata(metadata),
+            )
+        };
         assert_eq!(
-            Progress::from_fraction((6, 12)).map(Progress::percent),
-            Some(50),
-            "a fraction stands for its percentage"
+            leg_progress(&update(serde_json::json!({ META_PROGRESS: 40 }))),
+            Progress::try_from(40).ok(),
+            "a whole percentage in range is the wire shape of progress"
         );
-        assert_eq!(
-            Progress::from_fraction((150, 100)).map(Progress::percent),
-            Some(100),
-            "more done than the total counts as complete"
-        );
-        assert_eq!(
-            Progress::from_fraction((u64::MAX, u64::MAX)).map(Progress::percent),
-            Some(100),
-            "a huge fraction still stands for its percentage"
-        );
-        assert_eq!(
-            Progress::from_fraction((1, 0)),
-            None,
-            "a zero total has no progress"
-        );
+        for metadata in [
+            serde_json::json!({ META_PROGRESS: 101 }),
+            serde_json::json!({ META_PROGRESS: -1 }),
+            serde_json::json!({ META_PROGRESS: "40" }),
+            serde_json::json!({ "mesh:done": 40, "mesh:total": 100 }),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(
+                leg_progress(&update(metadata.clone())),
+                None,
+                "{metadata} does not read as a percentage"
+            );
+        }
     }
 
     /// The wall clock can step back, so two legs of one worker must still get

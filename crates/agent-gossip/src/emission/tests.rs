@@ -535,7 +535,9 @@ fn task_progress_event_json_shape() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::Working,
             note: None,
-            metadata: Some(status_update_params::beat_metadata(Some((35, 100)))),
+            metadata: Some(status_update_params::beat_metadata(Some(
+                "35".parse().expect("35 is a percentage"),
+            ))),
         },
     );
     let json = simple_event::event_json(&OutputEvent::Task {
@@ -556,12 +558,12 @@ fn task_progress_event_json_shape() {
         parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
         "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
     );
-    assert_eq!(parsed["done"], 35, "the done field is 35");
-    assert_eq!(parsed["total"], 100, "the total field is 100");
+    assert_eq!(parsed["progress"], 35, "the progress field is 35");
+    assert!(parsed.get("done").is_none(), "the done field is gone");
     assert!(parsed.get("phase").is_none(), "the phase key is absent");
     assert_eq!(
-        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100",
-        "the progress line names both peers and the 35 of 100 fraction"
+        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35%",
+        "the progress line names both peers and the percentage"
     );
 }
 
@@ -931,7 +933,7 @@ mod snapshots {
         insta::assert_snapshot!(snap_status(
             crate::a2a::TaskState::Working,
             None,
-            Some(status_update_params::beat_metadata(Some((35, 100)))),
+            Some(status_update_params::beat_metadata("35".parse().ok())),
         ));
     }
 
