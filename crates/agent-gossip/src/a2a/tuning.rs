@@ -195,13 +195,10 @@ pub(crate) const CHAT_SURFACED_IDS_CAP: usize = tuning::SEEN_IDS_CAP * 2;
 pub(crate) struct Tuning {
     pub(crate) task_timeout_secs: u64,
     pub(crate) task_keepalive_secs: u64,
-    pub(crate) task_skill_silence_max_secs: u64,
     pub(crate) task_stall_check_secs: u64,
     pub(crate) longpoll_max_ms: u64,
     pub(crate) own_legs_cap: usize,
     pub(crate) unsent_legs_cap: usize,
-    pub(crate) own_legs_bytes_cap: usize,
-    pub(crate) unsent_legs_bytes_cap: usize,
     pub(crate) call_blob_groups_per_task_cap: usize,
 }
 
@@ -209,13 +206,10 @@ impl Tuning {
     pub(crate) const DEFAULTS: Self = Self {
         task_timeout_secs: TASK_TIMEOUT_SECS,
         task_keepalive_secs: TASK_KEEPALIVE_SECS,
-        task_skill_silence_max_secs: TASK_SKILL_SILENCE_MAX_SECS,
         task_stall_check_secs: TASK_STALL_CHECK_SECS,
         longpoll_max_ms: LONGPOLL_MAX_MS,
         own_legs_cap: OWN_LEGS_CAP,
         unsent_legs_cap: UNSENT_LEGS_CAP,
-        own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
-        unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
         call_blob_groups_per_task_cap: CALL_BLOB_GROUPS_PER_TASK_CAP,
     };
 }
@@ -249,7 +243,7 @@ pub(crate) fn task_keepalive_secs() -> u64 {
 }
 
 pub(crate) fn task_skill_silence_max_secs() -> u64 {
-    current().task_skill_silence_max_secs
+    TASK_SKILL_SILENCE_MAX_SECS
 }
 
 pub(crate) fn task_stall_check_secs() -> u64 {
@@ -269,11 +263,11 @@ pub(crate) fn unsent_legs_cap() -> usize {
 }
 
 pub(crate) fn own_legs_bytes_cap() -> usize {
-    current().own_legs_bytes_cap
+    OWN_LEGS_BYTES_CAP
 }
 
 pub(crate) fn unsent_legs_bytes_cap() -> usize {
-    current().unsent_legs_bytes_cap
+    UNSENT_LEGS_BYTES_CAP
 }
 
 pub(crate) fn call_blob_groups_per_task_cap() -> usize {

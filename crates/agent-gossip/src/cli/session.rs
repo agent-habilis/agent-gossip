@@ -4,14 +4,18 @@ use anyhow::Result;
 use habilis_network::protocol::Nickname;
 use habilis_network::runtime::state_file;
 use habilis_network::runtime::state_file::{read_identity, read_session_entry};
-use habilis_network::util::process;
+use habilis_network::util::{process, tuning};
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
-use super::bell;
 use super::discovery::Discovery;
-use super::info_response::live_daemons;
 use super::target::Target;
+use super::{bell, info_response};
 use crate::runtime_base;
+
+/// Seconds to wait for a signalled daemon to drop its state file and stop
+/// answering its socket before reporting it unconfirmed. Outlasts the engine's
+/// own leave budget.
+pub(super) const LEAVE_CONFIRM_SECS: u64 = tuning::NODE_LEAVE.as_secs() + 2;
 
 /// Walk every state file under [`runtime_base`](fn@runtime_base) and resolve it to a live
 /// daemon or clean it up. Covers both per-mesh files
@@ -143,7 +147,7 @@ struct Owner {
 /// The live daemons that state their own pid. A daemon that predates the `pid` field
 /// cannot confirm an owner, so it is left out.
 async fn live_owners() -> Vec<Owner> {
-    live_daemons()
+    info_response::live_daemons()
         .await
         .into_iter()
         .filter_map(|info| {
@@ -217,7 +221,6 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         gossip: mesh,
         nickname,
         session_pid,
-        confirm_timeout_secs,
         legacy_output: _,
     } = options;
     let Discovery { live, cleaned } = discover();
@@ -261,8 +264,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     // identity, the new one announcing `joined` before the old one broadcast
     // `left`. Requiring silence on the socket too makes the report agree with
     // the predicate `run_session` refuses to start against.
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(confirm_timeout_secs);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(LEAVE_CONFIRM_SECS);
     let mut outcomes: Vec<(Target, bool, bool)> = left
         .into_iter()
         .map(|(target, signalled)| (target, signalled, false))
