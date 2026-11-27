@@ -3,19 +3,14 @@
 //! picker and nickname validation; also useful standalone.
 
 use clap::Parser;
-use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy_output::LegacyOutput;
+use super::session_address::SessionAddress;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {
-    /// Gossip identifier
-    #[arg(long, alias = "room")]
-    pub gossip: MeshId,
-
-    /// Nickname of the local agent (must have a running join/create session)
-    #[arg(long)]
-    pub nickname: Nickname,
+    #[command(flatten)]
+    pub session: SessionAddress,
 
     #[command(flatten)]
     pub legacy_output: LegacyOutput,
@@ -41,7 +36,7 @@ mod tests {
             panic!("expected Peers command");
         };
         assert_eq!(
-            options.nickname.as_str(),
+            options.session.nickname.as_str(),
             "my-nick",
             "--nickname sets the local nickname"
         );
@@ -75,8 +70,8 @@ mod tests {
             panic!("expected Peers commands");
         };
         assert_eq!(
-            options.gossip.as_str(),
-            expected.gossip.as_str(),
+            options.session.gossip.as_str(),
+            expected.session.gossip.as_str(),
             "the gossip id parses to the value given on the command line"
         );
     }

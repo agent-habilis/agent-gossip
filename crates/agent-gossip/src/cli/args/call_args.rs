@@ -1,15 +1,12 @@
 use clap::Args;
-use habilis_network::protocol::{MeshId, Nickname};
+use habilis_network::protocol::Nickname;
+
+use super::session_address::SessionAddress;
 
 #[derive(Args, Debug)]
 pub(crate) struct CallArgs {
-    /// Gossip identifier
-    #[arg(long, alias = "room")]
-    pub gossip: MeshId,
-
-    /// Nickname of the local agent (must have a running join/create session)
-    #[arg(long)]
-    pub nickname: Nickname,
+    #[command(flatten)]
+    pub session: SessionAddress,
 
     /// The peer to call.
     #[arg(long)]

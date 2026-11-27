@@ -9,9 +9,9 @@ use crate::topology_doc::{TopologyDoc, render, warnings};
 /// daemon: as JSON, or drawn as text with `--draw`.
 pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
     let command = IpcCommand::Topology {
-        mesh: options.gossip.clone(),
+        mesh: options.session.gossip.clone(),
     };
-    let response = super::send::send(&command, &options.nickname).await?;
+    let response = super::send::send(&command, &options.session.nickname).await?;
     if !reply_is_ok(&response)? {
         println!("{response}");
         std::process::exit(1);
@@ -21,15 +21,15 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
         return Ok(());
     }
     let peers_command = IpcCommand::Peers {
-        mesh: options.gossip,
+        mesh: options.session.gossip,
     };
-    let peers_response = super::send::send(&peers_command, &options.nickname).await?;
+    let peers_response = super::send::send(&peers_command, &options.session.nickname).await?;
     if !reply_is_ok(&peers_response)? {
         println!("{peers_response}");
         std::process::exit(1);
     }
     let doc = TopologyDoc::assemble(
-        options.nickname.as_str(),
+        options.session.nickname.as_str(),
         &serde_json::from_str(&peers_response)?,
         &serde_json::from_str(&response)?,
     );

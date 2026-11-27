@@ -1,11 +1,12 @@
 use clap::Subcommand;
-use habilis_network::protocol::{MeshId, MeshName, Nickname};
+use habilis_network::protocol::{MeshName, Nickname};
 
 use super::artifact_args::ArtifactArgs;
 use super::call_args::CallArgs;
 use super::expose_args::ExposeArgs;
 use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
+use super::session_address::SessionAddress;
 use super::status_args::StatusArgs;
 use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
@@ -76,13 +77,8 @@ pub(crate) enum A2aAction {
     ///
     /// Every member sees it. Use `a2a msg` to reach one peer privately.
     Broadcast {
-        /// Gossip identifier
-        #[arg(long, alias = "room")]
-        gossip: MeshId,
-
-        /// Nickname of the local agent (must have a running join/create session)
-        #[arg(long)]
-        nickname: Nickname,
+        #[command(flatten)]
+        session: SessionAddress,
 
         /// Message text.
         #[arg(long)]
@@ -95,13 +91,8 @@ pub(crate) enum A2aAction {
     /// sealed to the recipient, so the peers relaying it cannot read the body.
     /// This is chat, not a task — use `a2a call --to <peer>` to delegate work.
     Msg {
-        /// Gossip identifier
-        #[arg(long, alias = "room")]
-        gossip: MeshId,
-
-        /// Nickname of the local agent (must have a running join/create session)
-        #[arg(long)]
-        nickname: Nickname,
+        #[command(flatten)]
+        session: SessionAddress,
 
         /// The peer to message.
         #[arg(long)]

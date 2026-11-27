@@ -8,26 +8,24 @@ use crate::a2a::ipc_command::IpcCommand;
 /// raw IPC JSON response — `{ok,...}` for `merge`, `{ok,document}` for `get`.
 pub(super) async fn state(action: StateAction) -> Result<()> {
     let (command, nickname) = match action {
-        StateAction::Merge {
-            gossip: mesh,
-            nickname,
-            merge,
-        } => {
+        StateAction::Merge { session, merge } => {
             let merge_doc: serde_json::Value = serde_json::from_str(&merge).map_err(|error| {
                 anyhow::anyhow!("--merge must be valid JSON (an RFC 7386 merge patch): {error}")
             })?;
             (
                 IpcCommand::StateMerge {
-                    mesh,
+                    mesh: session.gossip,
                     merge: merge_doc,
                 },
-                nickname,
+                session.nickname,
             )
         }
-        StateAction::Get {
-            gossip: mesh,
-            nickname,
-        } => (IpcCommand::StateGet { mesh }, nickname),
+        StateAction::Get { session } => (
+            IpcCommand::StateGet {
+                mesh: session.gossip,
+            },
+            session.nickname,
+        ),
     };
     let response = super::send::send(&command, &nickname).await?;
     println!("{response}");

@@ -7,7 +7,7 @@ use super::a2a_call_request::A2aCallRequest;
 use super::a2a_call_sugar::A2aCallSugar;
 use super::advertised_file_name::advertised_file_name;
 use super::args::lookup::LookupArgs;
-use super::args::{A2aAction, ArtifactArgs, CallArgs, ExposeArgs, StatusArgs};
+use super::args::{A2aAction, ArtifactArgs, CallArgs, ExposeArgs, SessionAddress, StatusArgs};
 use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
 use crate::a2a::ipc_command::IpcCommand;
@@ -29,17 +29,12 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             lookups,
             legacy_output: _,
         } => discover(directory, lookups).await,
-        A2aAction::Broadcast {
-            gossip,
-            nickname,
-            text,
-        } => broadcast(gossip, &nickname, text).await,
-        A2aAction::Msg {
-            gossip,
-            nickname,
-            to,
-            text,
-        } => send_msg(gossip, &nickname, to, text).await,
+        A2aAction::Broadcast { session, text } => {
+            broadcast(session.gossip, &session.nickname, text).await
+        }
+        A2aAction::Msg { session, to, text } => {
+            send_msg(session.gossip, &session.nickname, to, text).await
+        }
         A2aAction::Call(args) => call(args).await,
         A2aAction::Status(args) => status(args).await,
         A2aAction::Artifact(args) => artifact(args).await,
@@ -120,8 +115,10 @@ async fn send_msg(mesh: MeshId, nickname: &Nickname, to: Nickname, text: String)
 
 async fn call(args: CallArgs) -> Result<()> {
     let CallArgs {
-        gossip: mesh,
-        nickname,
+        session: SessionAddress {
+            gossip: mesh,
+            nickname,
+        },
         to,
         method,
         text,
@@ -174,8 +171,10 @@ async fn call(args: CallArgs) -> Result<()> {
 
 async fn status(args: StatusArgs) -> Result<()> {
     let StatusArgs {
-        gossip: mesh,
-        nickname,
+        session: SessionAddress {
+            gossip: mesh,
+            nickname,
+        },
         task_id,
         state,
         note,
@@ -198,8 +197,10 @@ async fn status(args: StatusArgs) -> Result<()> {
 
 async fn artifact(args: ArtifactArgs) -> Result<()> {
     let ArtifactArgs {
-        gossip: mesh,
-        nickname,
+        session: SessionAddress {
+            gossip: mesh,
+            nickname,
+        },
         task_id,
         text,
         file,

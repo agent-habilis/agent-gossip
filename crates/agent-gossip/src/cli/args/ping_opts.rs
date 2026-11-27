@@ -3,19 +3,14 @@
 //! stream, not on this command's stdout.
 
 use clap::Parser;
-use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy_output::LegacyOutput;
+use super::session_address::SessionAddress;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
-    /// Gossip identifier
-    #[arg(long, alias = "room")]
-    pub gossip: MeshId,
-
-    /// Nickname of the local agent (must have a running join/create session)
-    #[arg(long)]
-    pub nickname: Nickname,
+    #[command(flatten)]
+    pub session: SessionAddress,
 
     #[command(flatten)]
     pub legacy_output: LegacyOutput,
@@ -41,7 +36,7 @@ mod tests {
             panic!("expected Ping command");
         };
         assert_eq!(
-            options.nickname.as_str(),
+            options.session.nickname.as_str(),
             "my-nick",
             "--nickname sets the local nickname"
         );

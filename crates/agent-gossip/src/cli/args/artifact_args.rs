@@ -1,14 +1,11 @@
 use clap::Args;
-use habilis_network::protocol::{MeshId, Nickname};
+
+use super::session_address::SessionAddress;
 
 #[derive(Args, Debug)]
 pub(crate) struct ArtifactArgs {
-    /// Gossip identifier
-    #[arg(long, alias = "room")]
-    pub gossip: MeshId,
-    /// Nickname of the local agent (must have a running join/create session)
-    #[arg(long)]
-    pub nickname: Nickname,
+    #[command(flatten)]
+    pub session: SessionAddress,
     /// The task id (uuid).
     #[arg(long)]
     pub task_id: crate::a2a::TaskId,
