@@ -182,6 +182,60 @@ fn plug_writes_every_reference_a_skill_names_and_unplug_removes_them() {
     std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
 }
 
+/// With the user's own `hooks.json` in the agy plugin folder, `plug` installs
+/// the skills and no Stop hook. Both `plug` and `doctor` must say so, and say
+/// what to do, or the user is told to run `plug` again and nothing changes.
+#[test]
+fn plug_and_doctor_say_when_the_bell_hook_is_not_installed() {
+    let home =
+        std::env::temp_dir().join(format!("agent-gossip-foreign-hook-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let root = home.join(".gemini/config/plugins/agent-gossip");
+    std::fs::create_dir_all(&root).expect("seeding the plugin folder");
+    std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).expect("seeding a fake agy");
+    std::fs::write(root.join("hooks.json"), r#"{"mine":{}}"#).expect("seeding a user hooks file");
+
+    let plug = common::test_cmd()
+        .env("HOME", &home)
+        .args(["plug", "--agent", "antigravity"])
+        .output()
+        .expect("failed to run agent-gossip plug");
+    let warning = String::from_utf8_lossy(&plug.stderr).into_owned();
+    assert!(
+        warning.contains("NOT installed") && warning.contains("move your file away"),
+        "plug must say that the bell Stop hook is not installed, and the way out: {warning}"
+    );
+
+    let doctor = common::test_cmd()
+        .env("HOME", &home)
+        .args(["doctor", "--no-probe", "--output", "json"])
+        .output()
+        .expect("failed to run agent-gossip doctor");
+    let report: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("doctor --output json emits JSON");
+    let sections = report["sections"].as_array().expect("report has sections");
+    let integrations = sections
+        .iter()
+        .find(|section| section["title"] == "Integrations")
+        .expect("machine report has an Integrations section");
+    let checks = integrations["checks"]
+        .as_array()
+        .expect("Integrations has checks");
+    let agy = checks
+        .iter()
+        .find(|check| check["name"] == "antigravity")
+        .expect("the roster lists antigravity");
+    let detail = agy["detail"]
+        .as_str()
+        .expect("an integration check has detail");
+    assert!(
+        detail.contains("NOT installed") && detail.contains("move your file away"),
+        "doctor must say the same, and not only tell the user to run plug: {detail}"
+    );
+
+    std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+}
+
 /// agy's Standard Sandbox cannot reach the gossip daemon, so the doc the
 /// installing agent reads must say that every `agent-gossip` call in agy runs
 /// with the sandbox off.

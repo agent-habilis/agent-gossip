@@ -84,15 +84,19 @@ const ANTIGRAVITY_HOOKS_JSON: &str = r#"{
 /// Whether `on_disk` is a `plugin.json` or `hooks.json` that `plug` wrote, in
 /// this or an older version. Ownership goes by marker, not by exact bytes: a
 /// user who has an older copy must get the new one, or each change to the hook
-/// text would strand them. The marker is the name `agent-gossip` and nothing
-/// else in the file: a second hook, or a key that `plug` does not write, means
-/// the user edited it.
+/// text would strand them. For `plugin.json` the marker is the name
+/// `agent-gossip` and no key that `plug` does not write. For `hooks.json` it is
+/// the whole shape of the bell hook: one `agent-gossip` entry that holds only
+/// `Stop`, with exactly one handler whose command starts with
+/// `agent-gossip bell-check`. A second hook, a second handler or a key `plug`
+/// does not write means the user edited the file, and the next `plug` must not
+/// delete that work.
 fn is_plugin_file_of_ours(name: &str, on_disk: &[u8]) -> bool {
     let Ok(serde_json::Value::Object(top_level)) = serde_json::from_slice(on_disk) else {
         return false;
     };
     match name {
-        "hooks.json" => top_level.len() == 1 && top_level.contains_key("agent-gossip"),
+        "hooks.json" => is_bell_hook_file(&top_level),
         "plugin.json" => {
             let named = top_level.get("name").and_then(serde_json::Value::as_str);
             named == Some("agent-gossip")
@@ -102,6 +106,49 @@ fn is_plugin_file_of_ours(name: &str, on_disk: &[u8]) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_bell_hook_file(top_level: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let only_entry = top_level.len() == 1;
+    let Some(serde_json::Value::Object(entry)) = top_level.get("agent-gossip") else {
+        return false;
+    };
+    let Some(serde_json::Value::Array(handlers)) = entry.get("Stop") else {
+        return false;
+    };
+    let [serde_json::Value::Object(handler)] = handlers.as_slice() else {
+        return false;
+    };
+    let command = handler.get("command").and_then(serde_json::Value::as_str);
+    only_entry
+        && entry.len() == 1
+        && command.is_some_and(|text| text.starts_with("agent-gossip bell-check"))
+}
+
+/// What the user must do about a plugin file in place that `plug` did not
+/// write. The same words go to the `plug` warning and to `doctor`, so neither
+/// tells the user to run `plug` again when that cannot change anything.
+pub(crate) fn foreign_file_advice(name: &str) -> String {
+    match name {
+        "hooks.json" => format!(
+            "the bell Stop hook is NOT installed, so agy will not refuse a turn that ends \
+             with no bell armed. Merge this entry into your hooks.json, or move your file \
+             away and run `agent-gossip plug` again: {}",
+            stop_hook_entry()
+        ),
+        _ => format!(
+            "the {name} stays yours, so agy loads the plugin under your manifest. Move your \
+             file away and run `agent-gossip plug` again to use the one that plug writes"
+        ),
+    }
+}
+
+/// The `agent-gossip` entry of the bell hook, on one line, for a user to merge
+/// into a `hooks.json` of their own.
+fn stop_hook_entry() -> String {
+    let parsed: serde_json::Value =
+        serde_json::from_str(ANTIGRAVITY_HOOKS_JSON).expect("the bell hook text is valid JSON");
+    parsed.to_string()
 }
 
 /// An agent the mesh integrations can be installed into.
@@ -241,6 +288,20 @@ impl Agent {
         };
         let ours = self.plugin_files().iter().filter(is_ours);
         ours.map(|&(name, _)| root.join(name)).collect()
+    }
+
+    /// The plugin files in place that `plug` did not write and will not touch.
+    pub(crate) fn foreign_plugin_files(self, home: &Path) -> Vec<&'static str> {
+        let Some(root) = self.plugin_root(home) else {
+            return Vec::new();
+        };
+        let owned = self.owned_plugin_files(home);
+        let is_foreign = |&&(name, _): &&(&str, &str)| {
+            let path = root.join(name);
+            path.exists() && !owned.contains(&path)
+        };
+        let foreign = self.plugin_files().iter().filter(is_foreign);
+        foreign.map(|&(name, _)| name).collect()
     }
 
     pub(crate) fn installed(self, home: &Path) -> bool {

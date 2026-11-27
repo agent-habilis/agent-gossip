@@ -170,7 +170,14 @@ fn integrations_section() -> Section {
                     }
                 };
                 let base = format!("{} ({})", state.label(), output::home_path(&path));
-                let detail = if state == AgentState::OutOfDate {
+                let foreign = agent.foreign_plugin_files(&home);
+                let advice: Vec<String> = foreign
+                    .iter()
+                    .map(|name| format!("{name}: {}", agent::foreign_file_advice(name)))
+                    .collect();
+                let detail = if !advice.is_empty() {
+                    format!("{base} — {}", advice.join("; "))
+                } else if state == AgentState::OutOfDate {
                     format!("{base} — run `agent-gossip plug --agent {}`", agent.label())
                 } else {
                     base

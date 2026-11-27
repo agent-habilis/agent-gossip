@@ -136,8 +136,9 @@ fn install(agent: Agent, home: &Path) -> Result<()> {
                 // `remove_owned` just deleted every copy that is ours, so one
                 // that is still here belongs to the user.
                 warn(&format!(
-                    "not overwriting {}: it holds more than the file plug writes",
-                    home_path(&target)
+                    "not overwriting {}: it is not a file that plug wrote, so {}",
+                    home_path(&target),
+                    agent::foreign_file_advice(name)
                 ));
                 continue;
             }
@@ -582,6 +583,42 @@ mod tests {
                 std::fs::read_to_string(root.join(name)).expect("the user file is still there"),
                 contents,
                 "{name} holds more than plug writes, so plug and unplug leave it"
+            );
+        }
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+    }
+
+    /// The marker is the whole shape of the hook, not only the name: a user who
+    /// adds a `PreToolUse` hook, a second `Stop` handler, or a `Stop` handler
+    /// that runs something else under the `agent-gossip` key has edited the
+    /// file, and the next `plug` must not delete that work.
+    #[test]
+    fn antigravity_keeps_a_hooks_file_whose_agent_gossip_entry_holds_more() {
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-agy-shape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        let root = home.join(".gemini/config/plugins/agent-gossip");
+        std::fs::create_dir_all(&root).expect("the test temp directory is writable");
+        let bell = r#"{"type":"command","command":"agent-gossip bell-check --session-pid \"$PPID\"","timeout":15}"#;
+        let user_hooks = [
+            format!(r#"{{"agent-gossip":{{"Stop":[{bell}],"PreToolUse":[{bell}]}}}}"#),
+            format!(r#"{{"agent-gossip":{{"Stop":[{bell},{bell}]}}}}"#),
+            r#"{"agent-gossip":{"Stop":[{"type":"command","command":"my-own-script"}]}}"#
+                .to_owned(),
+        ];
+        for contents in user_hooks {
+            std::fs::write(root.join("hooks.json"), &contents)
+                .expect("the test temp directory is writable");
+            install(Agent::Antigravity, &home).expect("the temp home is writable");
+            remove(Agent::Antigravity, &home).expect("the home is writable");
+            assert_eq!(
+                std::fs::read_to_string(root.join("hooks.json"))
+                    .expect("the user file is still there"),
+                contents,
+                "plug and unplug must leave a hooks.json that holds more than the one bell hook"
             );
         }
 
