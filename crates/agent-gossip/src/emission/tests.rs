@@ -502,7 +502,11 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::InputRequired,
             note: None,
-            metadata: status_update_params::waiting_metadata(Some("asks its user")),
+            metadata: Some(status_update_params::status_metadata(
+                Some("asks its user"),
+                Some("40".parse().expect("40 is a percentage")),
+                status_update_params::leg_order_ms(),
+            )),
         },
     );
     let json = simple_event::event_json(&OutputEvent::Task {
@@ -517,7 +521,8 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
         parsed["state"], "input-required",
         "the state field is input-required"
     );
-    assert!(parsed.get("waiting").is_none(), "got: {parsed}");
+    assert!(parsed.get("waiting_on").is_none(), "got: {parsed}");
+    assert!(parsed.get("progress").is_none(), "got: {parsed}");
 }
 
 #[test]

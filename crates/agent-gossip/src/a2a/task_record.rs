@@ -150,6 +150,9 @@ pub(crate) struct PeerBeat {
     pub checkin_age_secs: Option<u64>,
     pub reader: Option<ReaderBeat>,
     pub at: Instant,
+    /// The wire second the beat was sent, so a beat that a relay delivers late cannot replace a
+    /// newer one and shrink the stated age.
+    pub sent_at: UnixSecs,
 }
 
 impl TaskRecord {
@@ -254,6 +257,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
                     checkin_age_secs: status_update_params::beat_checkin_age(&payload),
                     reader: status_update_params::beat_reader(&payload),
                     at: now,
+                    sent_at: frame.timestamp,
                 });
                 (LegKind::Beat, status_update_params::leg_fraction(&payload))
             } else {
@@ -274,11 +278,27 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     if kind == LegKind::Beat && !mine && is_stale(frame) {
         return;
     }
+    let author_key = frame.key();
+    let peer_key = if mine { to } else { &author_key };
+    // The record's own counterparty is the only authority over it: a bystander's frame must not
+    // even be remembered, or it could push a real leg id out of the bounded set.
+    if tasks
+        .get(task_id)
+        .is_some_and(|rec| rec.peer_key != *peer_key)
+    {
+        return;
+    }
     // Remembered on the first ingest of every inbound leg, surfaced or not, so a
     // replay of a silent one cannot move the clock either.
     let first_seen = mine || kind == LegKind::Beat || mark_seen(tasks, task_id, frame.id.as_str());
-    let author_key = frame.key();
-    let peer_key = if mine { to } else { &author_key };
+    // A status leg that a slow relay delivers after a newer one is a first sight of its id, but
+    // not news: it must not restart the check-in clock.
+    let moves_clock = first_seen
+        && (mine
+            || !matches!(kind, LegKind::Status(_))
+            || tasks
+                .get(task_id)
+                .is_none_or(|rec| is_newer_than_waiting(rec, frame.timestamp, order)));
     apply(
         tasks,
         &LegInfo {
@@ -288,7 +308,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             kind,
             mine,
             fraction,
-            first_seen,
+            first_seen: moves_clock,
         },
         now,
     );
@@ -296,7 +316,12 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         return;
     };
     // Only a beat from the other party says anything about its reader and age.
-    if !mine && let Some(beat) = beat {
+    if !mine
+        && let Some(beat) = beat
+        && rec
+            .peer_beat
+            .is_none_or(|held| held.sent_at <= beat.sent_at)
+    {
         rec.peer_checkins |= beat.checkin_age_secs.is_some();
         rec.peer_beat = Some(beat);
     }
@@ -391,26 +416,14 @@ pub(crate) fn mark_seen(
 /// The ring can end with another event, such as the loss marker, so the newest seq is not
 /// necessarily the one a caller just emitted.
 pub(crate) fn newest_task_message_seq(app: &mut A2aApp, after: Option<u64>) -> Option<u64> {
-    use crate::emission::OutputEvent;
-
     app.drain_surfaced_ring();
-    app.surfaced
-        .poll_since(None)
-        .events
-        .iter()
-        .rev()
-        .find(|item| {
-            matches!(item.event, OutputEvent::TaskMessage { .. })
-                && after.is_none_or(|after| item.seq > after)
-        })
-        .map(|item| item.seq)
+    app.surfaced.newest_task_message_seq(after)
 }
 
 /// The oldest and the newest seq the surfaced ring holds, once its tap is drained.
 pub(crate) fn ring_bounds(app: &mut A2aApp) -> Option<(u64, u64)> {
     app.drain_surfaced_ring();
-    let batch = app.surfaced.poll_since(None);
-    Some((batch.events.first()?.seq, batch.events.last()?.seq))
+    app.surfaced.ring_bounds()
 }
 
 /// Whether a status leg is not older than the one that last set `waiting`. When
@@ -1741,6 +1754,7 @@ mod tests {
             checkin_age_secs: Some(10),
             reader: None,
             at,
+            sent_at: UnixSecs::now(),
         });
         assert!(
             super::due_checkins(&mut tasks, CHECKIN, at).0.is_empty(),
@@ -2121,6 +2135,111 @@ mod tests {
         );
     }
 
+    /// Ingest `frame` as the worker's at `now`, for tests that read the clocks.
+    fn ingest_at(tasks: &mut HashMap<TaskId, TaskRecord>, frame: &Message, now: Instant) {
+        super::ingest(
+            tasks,
+            IngestLegParams {
+                frame: &authored_by("calm-otter", frame),
+                task_id: &tid(),
+                mine: false,
+                now,
+            },
+        );
+    }
+
+    fn beat_leg(checkin_age_secs: u64, at: UnixSecs) -> Message {
+        let extras = status_update_params::BeatExtras {
+            checkin_age_secs: Some(checkin_age_secs),
+            ..Default::default()
+        };
+        let mut frame = status_frame(
+            TaskState::Working,
+            Some(status_update_params::beat_metadata_with_extras(extras)),
+        );
+        frame.timestamp = at;
+        frame
+    }
+
+    /// A frame from a member who is not the task's worker is not even remembered: it could push
+    /// real leg ids out of the bounded set or forge the beat that silences the alarm.
+    #[test]
+    fn a_bystander_frame_changes_nothing_in_the_record() {
+        let mut tasks = working_task_we_opened(Instant::now());
+        let beat = beat_leg(0, UnixSecs::now());
+        let working = checkin_leg("sneaky", "40", Some("user"));
+        for frame in [&beat, &working] {
+            super::ingest(
+                &mut tasks,
+                IngestLegParams {
+                    frame: &authored_by("stranger-bot", frame),
+                    task_id: &tid(),
+                    mine: false,
+                    now: Instant::now(),
+                },
+            );
+        }
+        let rec = &tasks[&tid()];
+        assert!(
+            rec.peer_beat.is_none(),
+            "a stranger's beat is not the worker's"
+        );
+        assert!(
+            !rec.peer_checkins,
+            "a stranger does not vouch for the worker"
+        );
+        assert!(
+            !rec.legs_seen.contains(working.id.as_str()),
+            "a stranger's leg id is not remembered"
+        );
+        assert_eq!(
+            rec.waiting_on, None,
+            "a stranger cannot name whom the worker waits on"
+        );
+    }
+
+    /// A relay can deliver beat 1 after beat 2; the older one must not shrink the stated age.
+    #[test]
+    fn a_beat_delivered_late_does_not_replace_a_newer_one() {
+        let sent = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        let now = Instant::now();
+        ingest_at(
+            &mut tasks,
+            &beat_leg(90, sent + Duration::from_secs(10)),
+            now,
+        );
+        ingest_at(&mut tasks, &beat_leg(0, sent), now);
+        assert_eq!(
+            tasks[&tid()]
+                .peer_beat
+                .and_then(|beat| beat.checkin_age_secs),
+            Some(90),
+            "the beat sent first is not news"
+        );
+    }
+
+    /// A check-in that a slow relay delivers after a newer one is a first sight of its id, but not
+    /// news, so it cannot postpone the alarm.
+    #[test]
+    fn a_check_in_delivered_late_does_not_restart_the_clock() {
+        let sent = UnixSecs::now();
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        let newer = later(start, Duration::from_secs(1));
+        ingest_at(
+            &mut tasks,
+            &waiting_leg(None, sent + Duration::from_secs(10)),
+            newer,
+        );
+        ingest_at(&mut tasks, &waiting_leg(None, sent), later(start, CHECKIN));
+        assert_eq!(
+            tasks[&tid()].last_skill_activity,
+            newer,
+            "the older check-in leaves the clock where the newer one put it"
+        );
+    }
+
     /// The age in a beat comes from the peer and has no bound; it must not panic the sender.
     #[test]
     fn an_unbounded_beat_age_cannot_panic_the_alarm() {
@@ -2133,6 +2252,7 @@ mod tests {
             checkin_age_secs: Some(u64::MAX),
             reader: None,
             at: start,
+            sent_at: UnixSecs::now(),
         });
         assert_eq!(
             super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2))
@@ -2226,7 +2346,7 @@ mod tests {
         );
     }
 
-    /// A relay can deliver an old status leg hours late. Both the `--waiting`
+    /// A relay can deliver an old status leg hours late. Both the `--waiting-on`
     /// leg and the plain leg that clears it surface once, so the node records
     /// their ids; their wire time covers the rest. A replay must not set or clear
     /// the reason again, also when the leg shares its second with the clear.
@@ -2254,7 +2374,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].waiting_on,
             None,
-            "a replayed --waiting leg of the same second must not set the reason again"
+            "a replayed --waiting-on leg of the same second must not set the reason again"
         );
 
         deliver(&mut tasks, &clear);
@@ -2262,7 +2382,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].waiting_on,
             None,
-            "a replayed --waiting leg must not set the reason again"
+            "a replayed --waiting-on leg must not set the reason again"
         );
 
         deliver(&mut tasks, &waiting_again);
@@ -2305,7 +2425,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].waiting_on,
             None,
-            "the replayed --waiting leg must not set the reason again"
+            "the replayed --waiting-on leg must not set the reason again"
         );
     }
 
@@ -2439,7 +2559,7 @@ mod tests {
         );
     }
 
-    /// A finished task is frozen: a late `--waiting` leg sets nothing.
+    /// A finished task is frozen: a late `--waiting-on` leg sets nothing.
     #[test]
     fn a_late_waiting_leg_on_a_finished_task_sets_nothing() {
         let mut tasks = working_task_we_opened(Instant::now());

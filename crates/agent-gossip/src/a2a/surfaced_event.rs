@@ -172,6 +172,24 @@ impl SurfacedEvents {
         self.next_seq - 1
     }
 
+    /// The seq of the newest event above `after` that `wanted` accepts, scanning from the
+    /// newest end without copying the ring.
+    pub(crate) fn newest_seq_where(
+        &self,
+        after: Option<u64>,
+        wanted: impl Fn(&OutputEvent) -> bool,
+    ) -> Option<u64> {
+        let newer = self
+            .events
+            .iter()
+            .rev()
+            .take_while(|item| after.is_none_or(|after| item.seq > after));
+        newer
+            .into_iter()
+            .find(|item| wanted(&item.event))
+            .map(|item| item.seq)
+    }
+
     /// The newest seq assigned to a waking event (0 when none yet). The bell's
     /// wake threshold — see [`SurfacedState::fulfill_ready_poll_waiters`].
     pub(crate) fn latest_waking_seq(&self) -> u64 {
@@ -569,6 +587,21 @@ impl SurfacedState {
             return;
         }
         self.surfaced_events.push(event);
+    }
+
+    /// The oldest and the newest seq the ring holds, `None` while it is empty.
+    pub(crate) fn ring_bounds(&self) -> Option<(u64, u64)> {
+        Some((
+            self.surfaced_events.oldest_seq()?,
+            self.surfaced_events.latest_seq(),
+        ))
+    }
+
+    /// The seq of the newest `task_message` event above `after`.
+    pub(crate) fn newest_task_message_seq(&self, after: Option<u64>) -> Option<u64> {
+        self.surfaced_events.newest_seq_where(after, |event| {
+            matches!(event, OutputEvent::TaskMessage { .. })
+        })
     }
 
     /// The events surfaced after the `after` seq cursor, in surfacing order —

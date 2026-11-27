@@ -1017,6 +1017,10 @@ impl<'a> WorkerLeg<'a> {
             let (Some(note), Some(progress)) = (note, progress) else {
                 anyhow::bail!("working requires a text and a progress");
             };
+            let waiting_on = waiting_on.map(str::trim);
+            if waiting_on.is_some_and(str::is_empty) {
+                anyhow::bail!("waiting-on needs a name, or leave the flag out");
+            }
             return Ok(Self::Checkin {
                 note,
                 progress,
@@ -2929,6 +2933,35 @@ mod waiting_tests {
 
     fn progress(percent: &str) -> Progress {
         percent.parse().expect("the test passes a valid percentage")
+    }
+
+    /// A blank tag would reach the wire and clear a real one, so the sender refuses it.
+    #[test]
+    fn a_blank_waiting_tag_is_refused_and_a_padded_one_is_trimmed() {
+        for blank in ["", "   "] {
+            assert!(
+                WorkerLeg::parse(
+                    TaskState::Working,
+                    Some("built it"),
+                    Some(progress("40")),
+                    Some(blank)
+                )
+                .is_err(),
+                "a tag of {blank:?} names nobody"
+            );
+        }
+        let leg = WorkerLeg::parse(
+            TaskState::Working,
+            Some("built it"),
+            Some(progress("40")),
+            Some("  user "),
+        )
+        .expect("surrounding spaces are not part of the name");
+        assert_eq!(
+            leg.waiting_on(),
+            Some("user"),
+            "the surrounding spaces are dropped from the tag"
+        );
     }
 
     /// The shared sender refuses a tag or a progress on any state but

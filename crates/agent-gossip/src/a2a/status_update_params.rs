@@ -879,7 +879,7 @@ mod tests {
         );
     }
 
-    /// The producer (`waiting_metadata`, used by `a2a status --waiting`) and the
+    /// The producer (`waiting_metadata`, used by `a2a status --waiting-on`) and the
     /// reader (`status_waiting`) agree, and a leg without a reason carries none.
     #[test]
     fn waiting_reason_round_trips_through_a_status_update() {

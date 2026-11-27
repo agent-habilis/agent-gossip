@@ -47,7 +47,7 @@ pub(crate) struct TuningOpts {
     pub task_skill_silence_max_secs: u64,
 
     /// Check-in interval X of a task: the worker's reminder is due after X and the sender's `task_overdue` after 2·X (seconds).
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_CHECKIN_SECS)]
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_CHECKIN_SECS, value_parser = clap::value_parser!(u64).range(1..))]
     pub task_checkin_secs: u64,
 
     /// Own task legs that may wait for their send before a new one is refused.

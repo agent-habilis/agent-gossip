@@ -1102,19 +1102,25 @@ fn apply_remote_leg(
     })
 }
 
-fn ingest_remote_message(
-    payload: &crate::a2a::Message,
-    (requester_key, requester): (&AuthorKey, &Nickname),
-    app: &mut A2aApp,
-    context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
-    let RemoteLeg {
+/// An incoming task message, as the skill is told about it.
+#[derive(Clone, Copy)]
+struct RemoteMessage<'caller> {
+    payload: &'caller crate::a2a::Message,
+    requester: (&'caller AuthorKey, &'caller Nickname),
+    task_id: &'caller crate::a2a::TaskId,
+    label: Option<&'caller str>,
+}
+
+/// Surface an incoming task message to our skill (a `task` event, kind:message), and point the
+/// worker's reminder at it.
+fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context: &HandlerCtx<'_>) {
+    let RemoteMessage {
+        payload,
+        requester: (requester_key, requester),
         task_id,
-        first_seen,
         label,
-    } = apply_remote_leg(payload, (requester_key, requester), app, Instant::now())?;
-    // Surface the incoming message to our skill (a `task` event, kind:message).
-    let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
+    } = *remote;
+    let rec_state = app.tasks.get(task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
     let seq_before = task_record::ring_bounds(app).map(|(_, newest)| newest);
     let mesh_name: &str = context.mesh.as_str();
@@ -1128,19 +1134,42 @@ fn ingest_remote_message(
         task_id: task_id.as_str(),
         state: rec_state,
         text: &text,
-        label: label.as_deref(),
+        label,
         message: Some(payload),
         is_self: false,
     });
     // The worker re-reads an unanswered brief or follow-up by its ring seq, so
     // the reminder names it. The event gets its seq when the tap drains. A brief
     // counts too: a worker that never saw it still owes the task a check-in.
-    if first_seen
-        && let Some(seq) = task_record::newest_task_message_seq(app, seq_before)
-        && let Some(rec) = app.tasks.get_mut(&task_id)
+    if let Some(seq) = task_record::newest_task_message_seq(app, seq_before)
+        && let Some(rec) = app.tasks.get_mut(task_id)
         && rec.role == task_record::TaskRole::Receiver
     {
         rec.followup_seq = Some(seq);
+    }
+}
+
+fn ingest_remote_message(
+    payload: &crate::a2a::Message,
+    (requester_key, requester): (&AuthorKey, &Nickname),
+    app: &mut A2aApp,
+    context: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, RpcError> {
+    let RemoteLeg {
+        task_id,
+        first_seen,
+        label,
+    } = apply_remote_leg(payload, (requester_key, requester), app, Instant::now())?;
+    // A replayed message changes nothing the skill has not seen, so it neither surfaces nor
+    // rings the bell; the caller still gets the task snapshot below.
+    if first_seen {
+        let remote = RemoteMessage {
+            payload,
+            requester: (requester_key, requester),
+            task_id: &task_id,
+            label: label.as_deref(),
+        };
+        surface_remote_message(app, &remote, context);
     }
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
     // yields `{"task": <Task>}`.
