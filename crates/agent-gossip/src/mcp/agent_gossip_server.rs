@@ -131,7 +131,8 @@ impl AgentGossipServer {
         })?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
-            let same_mesh = matches!(&target, JoinTarget::Mesh(id) if id == existing.mesh());
+            let same_mesh =
+                matches!(&target, JoinTarget::Mesh(id) if id == existing.core.mesh_id());
             return rejoin_existing(existing, args.nickname.as_deref(), same_mesh);
         }
         let nickname = match args.nickname {
@@ -164,7 +165,7 @@ impl AgentGossipServer {
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
-            let same_mesh = derived.to_string() == existing.mesh().as_str();
+            let same_mesh = derived.to_string() == existing.core.mesh_id().as_str();
             return rejoin_existing(existing, args.nickname.as_deref(), same_mesh);
         }
         let nickname = match args.nickname {
@@ -261,8 +262,8 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let body = MessageBody::try_new(&args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session.send_broadcast(body).await.map_err(to_mcp_error)?;
-        ok_json(SendResult { id, message })
+        let message = session.core.broadcast(body).await.map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -278,8 +279,8 @@ impl AgentGossipServer {
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
         let to = Nickname::try_new(&args.to)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session.send_msg(to, body).await.map_err(to_mcp_error)?;
-        ok_json(SendResult { id, message })
+        let message = session.core.message(to, body).await.map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -343,7 +344,7 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let mesh = MeshRef::from(session);
-        let roster = session.peers().await.map_err(to_mcp_error)?;
+        let roster = session.core.peers().await.map_err(to_mcp_error)?;
         ok_json(MeshInfoResult {
             mesh,
             peer_count: roster.count,
@@ -357,7 +358,7 @@ impl AgentGossipServer {
     async fn ping(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let peers = session.ping().await.map_err(to_mcp_error)?;
+        let peers = session.core.ping().await.map_err(to_mcp_error)?;
         ok_json(PingResult { peers })
     }
 
@@ -398,7 +399,8 @@ impl AgentGossipServer {
         let state = parse_task_state(&args.state)?;
         crate::a2a::broadcast_params::WorkerLeg::parse(state, args.waiting.as_deref())
             .map_err(|_| McpError::invalid_params("waiting requires state \"working\"", None))?;
-        match session
+        let message = session
+            .core
             .task_status(TaskStatusParams {
                 task_id,
                 state,
@@ -406,10 +408,8 @@ impl AgentGossipServer {
                 waiting: args.waiting,
             })
             .await
-        {
-            Ok((id, message)) => ok_json(SendResult { id, message }),
-            Err(error) => Err(to_mcp_error(error)),
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -427,7 +427,8 @@ impl AgentGossipServer {
             let path_name = file.as_ref().and_then(|path| path.file_name());
             path_name.and_then(|name| name.to_str()).map(str::to_owned)
         });
-        match session
+        let message = session
+            .core
             .task_artifact(TaskArtifactParams {
                 task_id,
                 text: args.text,
@@ -436,10 +437,8 @@ impl AgentGossipServer {
                 file_mime: args.file_mime,
             })
             .await
-        {
-            Ok((id, message)) => ok_json(SendResult { id, message }),
-            Err(error) => Err(to_mcp_error(error)),
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -454,6 +453,7 @@ impl AgentGossipServer {
         let peer = Nickname::try_new(&args.to)
             .map_err(|error| McpError::invalid_params(format!("invalid peer: {error}"), None))?;
         let response = session
+            .core
             .a2a_call(A2aCallParams {
                 peer,
                 method: args.method,
@@ -489,7 +489,8 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         session
-            .apply_state_merge(args.merge)
+            .core
+            .state_merge(args.merge)
             .await
             .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
@@ -504,7 +505,7 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let document = session.state_get().await.map_err(to_mcp_error)?;
+        let document = session.core.state_get().await.map_err(to_mcp_error)?;
         ok_json(serde_json::json!({ "document": document }))
     }
 
@@ -518,7 +519,8 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         session
-            .apply_meta_merge(args.merge)
+            .core
+            .meta_merge(args.merge)
             .await
             .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
@@ -535,7 +537,7 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         // The loop derives `absent`, with the same function as the CLI's `meta get`, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
-        let MetaView { document, absent } = session.meta_get().await.map_err(to_mcp_error)?;
+        let MetaView { document, absent } = session.core.meta_get().await.map_err(to_mcp_error)?;
         ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
 }

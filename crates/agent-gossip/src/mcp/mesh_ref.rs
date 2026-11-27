@@ -18,12 +18,12 @@ impl From<&Session> for MeshRef {
     fn from(session: &Session) -> Self {
         // `MeshRef` is the serialized tool output; the wire shape
         // keeps `name` a plain string.
-        let name: String = session.name().as_str().to_owned();
+        let name: String = session.core.name().as_str().to_owned();
         let pubkey: Option<String> = Some(session.own_key().to_string());
         MeshRef {
-            gossip: session.mesh().clone(),
+            gossip: session.core.mesh_id().clone(),
             name,
-            nickname: session.nickname().clone(),
+            nickname: session.core.nickname().clone(),
             pubkey,
         }
     }
