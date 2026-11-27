@@ -1456,9 +1456,10 @@ JSON EVENTS
        task_progress
               The worker's liveness + percent beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
-              record. It carries the progress and the text of the last
-              check-in age, and done/total are omitted before the first
-              progress. It carries no status text.
+              record. It carries done and total (the progress of the last
+              check-in of the worker, as N/100), and both are omitted
+              before the first progress. It carries no status text and no
+              check-in age.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",

@@ -229,7 +229,7 @@ follow-up that carries `--task-id` (see the initiator flow below).
 
 `task_progress` is a **liveness** beat. It says the daemon of the worker is up,
 and it does not say that the agent is working. It carries the last progress
-of the worker and the age of its last check-in, and no status text.
+of the worker as `done` and `total` (N of 100), and no status text.
 
 A **check-in** is a `working` status leg from the worker, with a text (what
 changed) and a progress (0 to 100), and optionally `waiting_on`. The worker
@@ -342,8 +342,8 @@ retry count, a duration: all of them belong in `description` or in a printed
 line, never in the subject.
 
 **Progress glyph.** The glyph comes from the latest progress of the task
-(the `progress` of the last check-in, or of the `task_progress` beat), rounded
-down:
+(the top-level `progress` of the last `working` status-update, or `done` of the
+`task_progress` beat, whose `total` is 100), rounded down:
 
 | Progress | Glyph |
 |---|---|
