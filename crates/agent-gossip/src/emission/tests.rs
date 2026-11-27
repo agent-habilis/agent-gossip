@@ -697,6 +697,7 @@ fn checkin_due_event_json_shape() {
             text: Some("which port?".to_owned()),
             truncated: true,
             has_file: false,
+            brief: true,
         },
     };
     let json = simple_event::event_json(&event).expect("checkin_due event produces a JSON line");
@@ -714,6 +715,7 @@ fn checkin_due_event_json_shape() {
         parsed.get("has_file").is_none(),
         "a flag that is not set carries no key, got: {parsed}"
     );
+    assert_eq!(parsed["brief"], true, "the text is the opening brief");
     assert!(!simple_event::is_visible(&event), "it is never shown");
     assert!(node::wakes(&event), "it must ring the bell");
     assert!(node::is_pollable(&event), "poll must serve it");

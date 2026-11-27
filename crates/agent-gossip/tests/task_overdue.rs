@@ -209,24 +209,29 @@ fn the_workers_reminder_repeats_the_brief_until_it_is_answered() {
         "the reminder must repeat the brief, got:\n{seen}"
     );
 
+    assert!(
+        seen.contains("\"brief\":true"),
+        "the first reminder must say that the text is the opening brief, got:\n{seen}"
+    );
+
     common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
-    let mut after = common::cli_poll(&mesh, &bob.nickname, None);
+    // A reminder raised before the check-in may still wait in the ring. Read it past, so that
+    // what comes after was raised after the check-in.
+    std::thread::sleep(Duration::from_millis(500));
+    let _older = common::cli_poll(&mesh, &bob.nickname, None);
     let again_deadline = Instant::now() + Duration::from_secs(30);
-    let mut reminder = String::new();
+    let mut after = String::new();
     while Instant::now() < again_deadline && !after.contains("\"event\":\"checkin_due\"") {
         std::thread::sleep(Duration::from_millis(500));
         after.push_str(&common::cli_poll(&mesh, &bob.nickname, None));
-    }
-    for line in after.split("\"event\":\"checkin_due\"").skip(1) {
-        reminder.push_str(line.split("\"is_visible\"").next().unwrap_or(""));
     }
     assert!(
         after.contains("\"event\":\"checkin_due\""),
         "the silent worker is reminded again after its check-in, got:\n{after}"
     );
     assert!(
-        !reminder.contains("build the thing"),
-        "a check-in answers the brief, so the next reminder must not repeat it, got:\n{reminder}"
+        !after.contains("build the thing"),
+        "a check-in answers the brief, so the next reminder must not repeat it, got:\n{after}"
     );
 }
 

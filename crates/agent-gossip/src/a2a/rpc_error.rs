@@ -124,8 +124,8 @@ pub(crate) struct A2aRequest {
     pub response: oneshot::Sender<Result<Value, RpcError>>,
 }
 
-/// Whether `method` hands the peer a message: `SendMessage` and its streaming twin share one
-/// meaning, so every caller that asks asks here.
+/// Whether `method` sends the peer a message: `SendMessage` and its streaming twin share one
+/// meaning. The method matches of [`parse_op`] and `served::classify` name both by hand.
 pub(crate) fn is_send_message(method: &str) -> bool {
     matches!(method, "SendMessage" | "SendStreamingMessage")
 }
@@ -247,7 +247,7 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
     if let Some(text) = &rec.status_text {
         metadata[META_STATUS_TEXT] = Value::from(text.as_str());
     }
-    if let Some(progress) = rec.last_progress {
+    if let Some(progress) = rec.shown_progress {
         metadata[META_PROGRESS] = Value::from(progress.percent());
     }
     serde_json::json!({
@@ -341,10 +341,7 @@ pub(crate) async fn handle_op(
                     mesh,
                     author,
                     task_id: &task_id,
-                    leg: super::WorkerLeg::Other {
-                        state: super::TaskState::Canceled,
-                        note: Some("canceled".to_owned()),
-                    },
+                    leg: super::WorkerLeg::canceled("canceled"),
                     app,
                 },
                 state,

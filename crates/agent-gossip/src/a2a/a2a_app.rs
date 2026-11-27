@@ -705,7 +705,7 @@ impl A2aApp {
     }
 
     /// Whether we have an outstanding A2A call to `peer` correlated by `corr`,
-    /// or a timed-out `--file` call still open to a late reply — the gate that
+    /// or a timed-out call that the worker may still answer — the gate that
     /// keeps an unsolicited/forged response from being acted on.
     pub(crate) fn has_a2a_waiter(
         &self,

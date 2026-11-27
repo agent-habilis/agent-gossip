@@ -307,8 +307,8 @@ pub fn beat_metadata(progress: Option<Progress>) -> serde_json::Value {
 pub struct BeatExtras {
     /// The last progress reported, replayed so a lost check-in costs nothing.
     pub progress: Option<Progress>,
-    /// Seconds since the worker's agent last checked in on this task. Its presence
-    /// tells the sender that the worker supports check-ins.
+    /// Seconds since the worker's agent last checked in on this task. The sender takes the
+    /// smaller of it and the silence it measured itself.
     pub checkin_age_secs: Option<u64>,
 }
 
@@ -455,7 +455,8 @@ pub(crate) fn clean_label(raw: &str) -> Option<String> {
 /// The `mesh:waiting_user` metadata of a `working` status leg that waits on its user, and none
 /// for one that does not. The counterpart of [`status_waiting_user`].
 #[must_use]
-pub fn waiting_metadata(
+#[cfg(test)]
+pub(crate) fn waiting_metadata(
     // `true` while the worker waits on its own user.
     waiting_user: bool,
 ) -> Option<serde_json::Value> {

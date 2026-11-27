@@ -1029,6 +1029,8 @@ struct RemoteLeg {
     task_id: crate::a2a::TaskId,
     first_seen: bool,
     label: Option<String>,
+    /// Whether the message opens the task.
+    brief: bool,
 }
 
 /// Check that `requester` may drive the task a `message/send` names, and apply the leg to the
@@ -1101,6 +1103,7 @@ fn apply_remote_leg(
         task_id,
         first_seen,
         label,
+        brief: kind == LegKind::Offer,
     })
 }
 
@@ -1111,6 +1114,8 @@ struct RemoteMessage<'caller> {
     requester: (&'caller AuthorKey, &'caller Nickname),
     task_id: &'caller crate::a2a::TaskId,
     label: Option<&'caller str>,
+    /// Whether the message opens the task.
+    brief: bool,
 }
 
 /// Surface an incoming task message to our skill (a `task` event, kind:message), and keep it for
@@ -1121,6 +1126,7 @@ fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context:
         requester: (requester_key, requester),
         task_id,
         label,
+        brief,
     } = *remote;
     let rec_state = app.tasks.get(task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
@@ -1144,7 +1150,7 @@ fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context:
     if let Some(rec) = app.tasks.get_mut(task_id)
         && rec.role == task_record::TaskRole::Receiver
     {
-        rec.unanswered = Some(task_record::Unanswered::of(payload));
+        rec.unanswered = Some(task_record::Unanswered::of(payload, brief));
     }
 }
 
@@ -1158,6 +1164,7 @@ fn ingest_remote_message(
         task_id,
         first_seen,
         label,
+        brief,
     } = apply_remote_leg(payload, (requester_key, requester), app, Instant::now())?;
     // A replayed message changes nothing the skill has not seen, so it neither surfaces nor
     // rings the bell; the caller still gets the task snapshot below.
@@ -1167,6 +1174,7 @@ fn ingest_remote_message(
             requester: (requester_key, requester),
             task_id: &task_id,
             label: label.as_deref(),
+            brief,
         };
         surface_remote_message(app, &remote, context);
     }

@@ -8,26 +8,24 @@ use super::worker_leg_error::WorkerLegError;
 ///
 /// A `working` leg is a check-in: it says what changed and how far the work is, and may say
 /// that the worker waits on its own user. No other state takes a progress or that flag. Only
-/// [`WorkerLeg::parse`] builds one, and a leg read from the IPC line goes through it too, so
-/// the rule has one place.
+/// [`WorkerLeg::parse`] and [`WorkerLeg::canceled`] build one, and a leg read from the IPC line
+/// goes through the parse too, so the rule has one place and no other code can hold a bare
+/// `working` leg.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "WorkerLegFields", into = "WorkerLegFields")]
-#[non_exhaustive]
-pub enum WorkerLeg {
+pub struct WorkerLeg(Leg);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Leg {
     /// A check-in: the task is working.
     Checkin {
-        /// What changed since the last check-in.
         note: String,
-        /// How far the work is.
         progress: Progress,
-        /// Whether the worker waits on its own user.
         waiting_user: bool,
     },
     /// Any other state: a question, a result, an end.
     Other {
-        /// The state the leg moves the task to.
         state: TaskState,
-        /// The status message, if any.
         note: Option<String>,
     },
 }
@@ -64,11 +62,11 @@ impl WorkerLeg {
             let (Some(text), Some(progress)) = (text, progress) else {
                 return Err(WorkerLegError::CheckinIncomplete);
             };
-            return Ok(Self::Checkin {
+            return Ok(Self(Leg::Checkin {
                 note: text,
                 progress,
                 waiting_user,
-            });
+            }));
         }
         if progress.is_some() {
             return Err(WorkerLegError::ProgressNotWorking);
@@ -76,33 +74,42 @@ impl WorkerLeg {
         if waiting_user {
             return Err(WorkerLegError::WaitingNotWorking);
         }
-        Ok(Self::Other { state, note })
+        Ok(Self(Leg::Other { state, note }))
+    }
+
+    /// The leg that ends a task the worker will not finish, with `note` as the reason.
+    #[must_use]
+    pub fn canceled(note: &str) -> Self {
+        Self(Leg::Other {
+            state: TaskState::Canceled,
+            note: Some(note.to_owned()),
+        })
     }
 
     /// The state the leg moves the task to.
     #[must_use]
     pub fn state(&self) -> TaskState {
-        match self {
-            Self::Checkin { .. } => TaskState::Working,
-            Self::Other { state, .. } => *state,
+        match &self.0 {
+            Leg::Checkin { .. } => TaskState::Working,
+            Leg::Other { state, .. } => *state,
         }
     }
 
     /// The status message.
     #[must_use]
     pub fn note(&self) -> Option<&str> {
-        match self {
-            Self::Checkin { note, .. } => Some(note),
-            Self::Other { note, .. } => note.as_deref(),
+        match &self.0 {
+            Leg::Checkin { note, .. } => Some(note),
+            Leg::Other { note, .. } => note.as_deref(),
         }
     }
 
     /// How far the work is, on a check-in.
     #[must_use]
     pub fn progress(&self) -> Option<Progress> {
-        match self {
-            Self::Checkin { progress, .. } => Some(*progress),
-            Self::Other { .. } => None,
+        match &self.0 {
+            Leg::Checkin { progress, .. } => Some(*progress),
+            Leg::Other { .. } => None,
         }
     }
 
@@ -110,8 +117,8 @@ impl WorkerLeg {
     #[must_use]
     pub fn waiting_user(&self) -> bool {
         matches!(
-            self,
-            Self::Checkin {
+            self.0,
+            Leg::Checkin {
                 waiting_user: true,
                 ..
             }
@@ -135,8 +142,8 @@ impl TryFrom<WorkerLegFields> for WorkerLeg {
 
 impl From<WorkerLeg> for WorkerLegFields {
     fn from(leg: WorkerLeg) -> Self {
-        match leg {
-            WorkerLeg::Checkin {
+        match leg.0 {
+            Leg::Checkin {
                 note,
                 progress,
                 waiting_user,
@@ -146,7 +153,7 @@ impl From<WorkerLeg> for WorkerLegFields {
                 progress: Some(progress),
                 waiting_user,
             },
-            WorkerLeg::Other { state, note } => Self {
+            Leg::Other { state, note } => Self {
                 state,
                 note,
                 progress: None,

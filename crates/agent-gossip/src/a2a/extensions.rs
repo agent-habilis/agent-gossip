@@ -32,7 +32,7 @@ pub(super) const META_WAITING_USER: &str = "mesh:waiting_user";
 /// send it, which then orders by the second alone.
 pub(super) const META_ORDER_MS: &str = "mesh:order_ms";
 /// Seconds since the worker agent last checked in on a task, on a worker beat.
-/// A beat that carries it comes from a worker that supports check-ins.
+/// The sender takes the smaller of it and the silence it measured itself.
 pub(super) const META_CHECKIN_AGE: &str = "mesh:checkin_age";
 /// What changed, from the last check-in of a task, in `GetTask` and `ListTasks`.
 pub(super) const META_STATUS_TEXT: &str = "mesh:status_text";

@@ -237,4 +237,8 @@ pub struct CheckinNotice {
     /// `true` when that message carries a file the reminder does not repeat.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_file: bool,
+    /// `true` when that message is the opening brief, so a worker that lost its todo can tell a
+    /// brief from a follow-up.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub brief: bool,
 }

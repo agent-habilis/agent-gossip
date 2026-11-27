@@ -111,8 +111,12 @@ pub(crate) struct TaskRecord {
     /// moves the check-in clock. Beats are never recorded: at one every 30 s
     /// they would evict every real id.
     pub legs_seen: BoundedFifoSet<String>,
-    /// Last progress reported, replayed on keepalives.
+    /// The progress of the last check-in the record took in. The quarter wake compares against
+    /// it, so a beat never moves it.
     pub last_progress: Option<Progress>,
+    /// The progress to show and to replay on a beat. A check-in sets it, and a beat of the
+    /// worker repairs it on the sender's record, where a lost check-in would leave it behind.
+    pub shown_progress: Option<Progress>,
     /// Whether the worker waits on its own user, from the `mesh:waiting_user` key of its last
     /// status leg. A label only: it does not move the check-in clock. A check-in without it
     /// clears it.
@@ -166,6 +170,7 @@ impl TaskRecord {
             last_skill_activity: now,
             legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
             last_progress: None,
+            shown_progress: None,
             waiting_user: false,
             waiting_mark: None,
             status_text: None,
@@ -239,11 +244,9 @@ pub(crate) struct LegInfo<'source> {
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
-    /// The progress a beat carries (else `None`).
-    pub progress: Option<Progress>,
     /// Whether the leg is news: its id is new and it is not older than the leg that last
     /// decided the waiting flag. A leg that is not news changes neither the state nor a clock.
-    pub first_seen: bool,
+    pub news: bool,
 }
 
 /// The value cluster [`ingest`] needs beyond its `tasks` registry handle.
@@ -263,7 +266,7 @@ pub(crate) struct IngestLegParams<'caller> {
 pub(crate) fn ingest(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     params: IngestLegParams<'_>,
-) -> Ingested {
+) -> Applied {
     let IngestLegParams {
         frame,
         task_id,
@@ -283,15 +286,16 @@ pub(crate) fn ingest(
         tag, to: Some(to), ..
     } = &frame.kind
     else {
-        return Ingested::NONE;
+        return Applied::NONE;
     };
     let mut checkin = None;
     let mut order = None;
     let mut beat = None;
-    let (kind, progress) = match tag.as_str() {
+    let mut beat_progress = None;
+    let kind = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = status_update_params::status_payload(frame) else {
-                return Ingested::NONE;
+                return Applied::NONE;
             };
             if status_update_params::is_beat(&payload) {
                 beat = Some(PeerBeat {
@@ -299,7 +303,8 @@ pub(crate) fn ingest(
                     at: now,
                     sent_at: frame.timestamp,
                 });
-                (LegKind::Beat, status_update_params::leg_progress(&payload))
+                beat_progress = status_update_params::leg_progress(&payload);
+                LegKind::Beat
             } else {
                 if payload.status.state == TaskState::Working {
                     checkin = Some(CheckinFields {
@@ -309,19 +314,19 @@ pub(crate) fn ingest(
                     });
                 }
                 order = status_update_params::status_order(&payload);
-                (LegKind::Status(payload.status.state), None)
+                LegKind::Status(payload.status.state)
             }
         }
         wire::ARTIFACT => {
             order = status_update_params::artifact_payload(frame)
                 .ok()
                 .and_then(|payload| status_update_params::artifact_order(&payload));
-            (LegKind::Artifact, None)
+            LegKind::Artifact
         }
-        _ => return Ingested::NONE,
+        _ => return Applied::NONE,
     };
     if kind == LegKind::Beat && !mine && is_stale(frame) {
-        return Ingested::NONE;
+        return Applied::NONE;
     }
     let author_key = frame.key();
     let peer_key = if mine { to } else { &author_key };
@@ -331,7 +336,7 @@ pub(crate) fn ingest(
         .get(task_id)
         .is_some_and(|rec| rec.peer_key != *peer_key)
     {
-        return Ingested::NONE;
+        return Applied::NONE;
     }
     // Remembered on the first ingest of every inbound leg, surfaced or not, so a
     // replay of a silent one cannot move the clock either.
@@ -352,19 +357,21 @@ pub(crate) fn ingest(
             peer: None,
             kind,
             mine,
-            progress,
-            first_seen: moves_clock,
+            news: moves_clock,
         },
         now,
     );
     let mut quarter_moved = false;
     let Some(rec) = tasks.get_mut(task_id) else {
-        return Ingested {
+        return Applied {
             first_seen,
             quarter_moved,
         };
     };
-    // Only a beat from the other party says anything about its age.
+    // Only a beat from the other party says anything about its age, and a beat that a relay
+    // delivers behind a newer one says nothing. The sender's record takes the progress the beat
+    // replays, which repairs a check-in that never arrived; the worker's own record is the
+    // authority on its progress.
     if !mine
         && let Some(beat) = beat
         && rec
@@ -372,6 +379,9 @@ pub(crate) fn ingest(
             .is_none_or(|held| held.sent_at <= beat.sent_at)
     {
         rec.peer_beat = Some(beat);
+        if rec.role == TaskRole::Initiator && beat_progress.is_some() {
+            rec.shown_progress = beat_progress;
+        }
     }
     // Every working leg restates whom the worker waits on, so a plain one clears
     // it. A relay can replay an old leg, so two checks gate the update:
@@ -383,8 +393,6 @@ pub(crate) fn ingest(
         if rec.state.is_terminal() {
             rec.waiting_user = false;
         } else if first_seen && is_newer_than_waiting(rec, frame.timestamp, order) {
-            // A beat that arrives before the check-in it replays moves `last_progress` first,
-            // and that wake is lost; the cost is accepted.
             quarter_moved = checkin
                 .as_ref()
                 .is_some_and(|checkin| quarter_changed(rec.last_progress, checkin.progress));
@@ -401,27 +409,10 @@ pub(crate) fn ingest(
         rec.waiting_user = false;
         rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
     }
-    Ingested {
+    Applied {
         first_seen,
         quarter_moved,
     }
-}
-
-/// What one ingested frame turned out to be.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Ingested {
-    /// Whether its id was new to the record.
-    pub first_seen: bool,
-    /// Whether it moved the progress into another quarter.
-    pub quarter_moved: bool,
-}
-
-impl Ingested {
-    /// A frame that belongs to no task.
-    const NONE: Self = Self {
-        first_seen: false,
-        quarter_moved: false,
-    };
 }
 
 /// Keep what a status leg says about the work. A check-in sets the flag, the
@@ -437,6 +428,7 @@ fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
     }
     if checkin.progress.is_some() {
         rec.last_progress = checkin.progress;
+        rec.shown_progress = checkin.progress;
     }
 }
 
@@ -485,6 +477,14 @@ pub(crate) struct Applied {
     pub first_seen: bool,
     /// Whether a check-in put the progress in another quarter.
     pub quarter_moved: bool,
+}
+
+impl Applied {
+    /// A frame that belongs to no task.
+    const NONE: Self = Self {
+        first_seen: false,
+        quarter_moved: false,
+    };
 }
 
 /// Apply one received leg to the registry. The one place that decides whether a leg is news,
@@ -538,7 +538,7 @@ fn apply_message(
     (task_id, from, peer): (&TaskId, &AuthorKey, &Nickname),
     (kind, id): (LegKind, &str),
     now: Instant,
-) -> Ingested {
+) -> Applied {
     let first_seen = kind == LegKind::Offer || mark_seen(tasks, task_id, id);
     apply(
         tasks,
@@ -548,15 +548,14 @@ fn apply_message(
             peer: Some(peer),
             kind,
             mine: false,
-            progress: None,
-            first_seen,
+            news: first_seen,
         },
         now,
     );
     if kind == LegKind::Offer {
         mark_seen(tasks, task_id, id);
     }
-    Ingested {
+    Applied {
         first_seen,
         quarter_moved: false,
     }
@@ -627,17 +626,21 @@ pub(crate) struct Unanswered {
     pub truncated: bool,
     /// Whether the message carries a file, which the reminder does not repeat.
     pub has_file: bool,
+    /// Whether the message is the opening brief, which the worker never picked up, and not a
+    /// follow-up.
+    pub brief: bool,
 }
 
 impl Unanswered {
-    pub(crate) fn of(message: &super::Message) -> Self {
+    pub(crate) fn of(message: &super::Message, brief: bool) -> Self {
         let lines: Vec<&str> = message
             .parts
             .iter()
             .filter_map(|part| part.text.as_deref())
             .collect();
         let joined = lines.join("\n");
-        let mut visible = joined.chars().filter(|ch| !ch.is_control() || *ch == '\n');
+        let spaced = joined.chars().map(|ch| if ch == '\t' { ' ' } else { ch });
+        let mut visible = spaced.filter(|ch| !ch.is_control() || *ch == '\n');
         let text: String = visible
             .by_ref()
             .take(tuning::TASK_UNANSWERED_TEXT_MAX_CHARS)
@@ -650,6 +653,7 @@ impl Unanswered {
             text,
             truncated: visible.next().is_some(),
             has_file,
+            brief,
         }
     }
 }
@@ -695,15 +699,19 @@ pub(crate) fn due_checkins(
                 if now.duration_since(rec.last_skill_activity) >= interval {
                     rec.last_notice = Some(now);
                     let unanswered = rec.unanswered.as_ref();
-                    let text = unanswered.map(|unanswered| unanswered.text.clone());
+                    let text = unanswered
+                        .map(|unanswered| unanswered.text.clone())
+                        .filter(|text| !text.is_empty());
                     let truncated = unanswered.is_some_and(|unanswered| unanswered.truncated);
                     let has_file = unanswered.is_some_and(|unanswered| unanswered.has_file);
+                    let brief = unanswered.is_some_and(|unanswered| unanswered.brief);
                     reminders.push(CheckinNotice {
                         task_id: task_id.clone(),
                         peer: rec.peer.clone(),
                         text,
                         truncated,
                         has_file,
+                        brief,
                     });
                 }
             }
@@ -899,8 +907,7 @@ pub(crate) fn note_follow_up_sent(
             peer: None,
             kind: LegKind::Text,
             mine: true,
-            progress: None,
-            first_seen: true,
+            news: true,
         },
         now,
     );
@@ -959,7 +966,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     // *derives* the sender from our own role, so without this an unchecked leg
     // is attributed to the counterparty by construction and any mesh member
     // could close, park, or beat a task they are not in. The RPC leg path makes
-    // the same check by hand (`node.rs`'s `ingest_remote_message`); this is the
+    // the same check by hand (`node.rs`'s `apply_remote_leg`); this is the
     // push plane's, where nearly every transition happens.
     if rec.peer_key != *leg.peer_key {
         return;
@@ -968,20 +975,17 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     // A leg that is not news must not move the state either: a question replayed after its
     // answer, a follow-up replayed behind a newer question, or a check-in delayed behind its
     // own artifact would otherwise undo what a later leg decided. A beat is liveness only.
-    if !leg.mine && !leg.first_seen && leg.kind != LegKind::Beat {
+    if !leg.mine && !leg.news && leg.kind != LegKind::Beat {
         return;
     }
     advance(rec, leg.kind, leg.mine);
-    if let Some(progress) = leg.progress {
-        rec.last_progress = Some(progress);
-    }
     rec.last_activity = now;
     if leg.mine {
         rec.last_sent = now;
     } else {
         rec.last_peer_activity = now;
     }
-    if leg.kind != LegKind::Beat && leg.first_seen {
+    if leg.kind != LegKind::Beat && leg.news {
         rec.last_skill_activity = now;
         rec.last_notice = None;
         if leg.mine && rec.role == TaskRole::Receiver {
@@ -1262,7 +1266,7 @@ pub(crate) async fn tick_task_keepalive(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
-    /// `(task_id, peer, state, last_progress, check-in age)` for one keepalive-due task.
+    /// `(task_id, peer, state, progress, check-in age)` for one keepalive-due task.
     type KeepaliveDue = (TaskId, AuthorKey, TaskState, Option<Progress>, Option<u64>);
 
     let now = Instant::now();
@@ -1273,16 +1277,16 @@ pub(crate) async fn tick_task_keepalive(
         .filter(|(_, rec)| rec.should_keepalive(now, cadence));
     let due: Vec<KeepaliveDue> = quiet
         .map(|(task_id, rec)| {
-            // Only the worker states an age: the sender's silence is not a check-in.
-            let age = (rec.role == TaskRole::Receiver)
-                .then(|| now.duration_since(rec.last_skill_activity).as_secs());
-            (
-                task_id.clone(),
-                rec.peer_key,
-                rec.state,
-                rec.last_progress,
-                age,
-            )
+            // Only the worker states an age and a progress: the sender's silence is not a
+            // check-in, and a progress the sender holds is a copy of the worker's.
+            let from_worker = rec.role == TaskRole::Receiver;
+            let age = from_worker.then(|| now.duration_since(rec.last_skill_activity).as_secs());
+            let progress = if from_worker {
+                rec.shown_progress
+            } else {
+                None
+            };
+            (task_id.clone(), rec.peer_key, rec.state, progress, age)
         })
         .collect();
 
@@ -1906,13 +1910,79 @@ mod tests {
             let now = later(start, Duration::from_secs(after));
             let first_seen = super::mark_seen(&mut tasks, &tid(), message_id);
             let mut info = leg(LegKind::Text, false);
-            info.first_seen = first_seen;
+            info.news = first_seen;
             apply(&mut tasks, &info, now);
             moved.push(tasks[&tid()].last_skill_activity);
         }
         assert_eq!(
             moved[1], moved[0],
             "the second copy of the follow-up is a replay"
+        );
+    }
+
+    /// A beat of the worker carries the progress of its last check-in. When the beat overtakes
+    /// that check-in, the sender shows the progress at once, and the check-in still wakes it
+    /// when it arrives, because the beat does not touch what the wake compares against.
+    #[test]
+    fn a_beat_that_overtakes_its_check_in_does_not_eat_the_wake() {
+        let mut tasks = working_task_we_opened(Instant::now());
+        receive(&mut tasks, &checkin_leg("started", "10", false));
+        let beat = status_frame(
+            TaskState::Working,
+            Some(status_update_params::beat_metadata(Some(progress_of(80)))),
+        );
+        receive(&mut tasks, &beat);
+        assert_eq!(
+            tasks[&tid()].shown_progress,
+            Some(progress_of(80)),
+            "the beat repairs what the sender shows"
+        );
+        assert_eq!(
+            tasks[&tid()].last_progress,
+            Some(progress_of(10)),
+            "the beat leaves the check-in base alone"
+        );
+        assert!(
+            receive(&mut tasks, &checkin_leg("nearly there", "80", false)).quarter_moved,
+            "the check-in that the beat overtook still wakes the sender"
+        );
+    }
+
+    /// The worker's own record is the authority on its progress, and a beat that a relay
+    /// delivers behind a newer one says nothing about it.
+    #[test]
+    fn only_a_current_beat_on_the_senders_record_sets_the_shown_progress() {
+        let sent = UnixSecs::now();
+        let beat = |percent: u8, at: UnixSecs| {
+            let mut frame = status_frame(
+                TaskState::Working,
+                Some(status_update_params::beat_metadata(Some(progress_of(
+                    percent,
+                )))),
+            );
+            frame.timestamp = at;
+            frame
+        };
+        let start = Instant::now();
+        let mut worker = task_we_serve(start);
+        ingest_at(&mut worker, &beat(70, sent), start);
+        assert_eq!(
+            worker[&tid()].shown_progress,
+            None,
+            "the worker does not take its progress from the sender's beat"
+        );
+
+        let mut sender = working_task_we_opened(start);
+        ingest_at(
+            &mut sender,
+            &beat(60, sent + Duration::from_secs(10)),
+            start,
+        );
+        ingest_at(&mut sender, &beat(20, sent), start);
+        assert_eq!(
+            sender[&tid()].shown_progress,
+            Some(progress_of(60)),
+            "a beat sent before the one already taken is not news"
         );
     }
 
@@ -2124,6 +2194,7 @@ mod tests {
             text: "which port?".to_owned(),
             truncated: false,
             has_file: false,
+            brief: false,
         };
         tasks
             .get_mut(&tid())
@@ -2157,16 +2228,20 @@ mod tests {
             message.parts = parts;
             message
         };
-        let cleaned = Unanswered::of(&message(vec![part("a\u{7}b\nc"), part("d")]));
+        let cleaned = Unanswered::of(&message(vec![part("a\u{7}b\nc\te"), part("d")]), false);
         assert_eq!(
-            cleaned.text, "ab\nc\nd",
-            "the newline stays and the bell goes"
+            cleaned.text, "ab\nc e\nd",
+            "the newline stays, a tab is a space and the bell goes"
         );
         assert!(!cleaned.truncated, "a short text is not cut");
         assert!(!cleaned.has_file, "no file part");
+        assert!(
+            Unanswered::of(&message(vec![part("go")]), true).brief,
+            "the flag says that the message opens the task"
+        );
 
         let long = "x".repeat(TASK_UNANSWERED_TEXT_MAX_CHARS + 1);
-        let capped = Unanswered::of(&message(vec![part(&long)]));
+        let capped = Unanswered::of(&message(vec![part(&long)]), false);
         assert_eq!(
             capped.text.chars().count(),
             TASK_UNANSWERED_TEXT_MAX_CHARS,
@@ -2176,7 +2251,7 @@ mod tests {
 
         let exact = "y".repeat(TASK_UNANSWERED_TEXT_MAX_CHARS);
         assert!(
-            !Unanswered::of(&message(vec![part(&exact)])).truncated,
+            !Unanswered::of(&message(vec![part(&exact)]), false).truncated,
             "a text of exactly the cap is whole"
         );
 
@@ -2185,7 +2260,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            Unanswered::of(&message(vec![file])).has_file,
+            Unanswered::of(&message(vec![file]), true).has_file,
             "a file part is flagged"
         );
     }
@@ -2550,7 +2625,7 @@ mod tests {
         );
     }
 
-    /// A relay can deliver an old status leg hours late. Both the `--waiting-on`
+    /// A relay can deliver an old status leg hours late. Both the `--waiting-on-user`
     /// leg and the plain leg that clears it surface once, so the node records
     /// their ids; their wire time covers the rest. A replay must not set or clear
     /// the reason again, also when the leg shares its second with the clear.
@@ -2576,14 +2651,14 @@ mod tests {
         ingest_inbound(&mut tasks, &waiting);
         assert!(
             !tasks[&tid()].waiting_user,
-            "a replayed --waiting-on leg of the same second must not set the reason again"
+            "a replayed --waiting-on-user leg of the same second must not set the flag again"
         );
 
         deliver(&mut tasks, &clear);
         ingest_inbound(&mut tasks, &waiting);
         assert!(
             !tasks[&tid()].waiting_user,
-            "a replayed --waiting-on leg must not set the reason again"
+            "a replayed --waiting-on-user leg must not set the flag again"
         );
 
         deliver(&mut tasks, &waiting_again);
@@ -2621,7 +2696,7 @@ mod tests {
         ingest_inbound(&mut tasks, &waiting);
         assert!(
             !tasks[&tid()].waiting_user,
-            "the replayed --waiting-on leg must not set the reason again"
+            "the replayed --waiting-on-user leg must not set the flag again"
         );
     }
 
@@ -2741,7 +2816,7 @@ mod tests {
         );
     }
 
-    /// A finished task is frozen: a late `--waiting-on` leg sets nothing.
+    /// A finished task is frozen: a late `--waiting-on-user` leg sets nothing.
     #[test]
     fn a_late_waiting_leg_on_a_finished_task_sets_nothing() {
         let mut tasks = working_task_we_opened(Instant::now());
@@ -3055,8 +3130,7 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind,
             mine,
-            progress: None,
-            first_seen: true,
+            news: true,
         }
     }
 
@@ -3078,8 +3152,7 @@ mod tests {
             peer: Some(outsider),
             kind,
             mine: false,
-            progress: None,
-            first_seen: true,
+            news: true,
         };
 
         // We are the *initiator* — the side the attack lands on, since an
@@ -3187,8 +3260,7 @@ mod tests {
                     peer: Some(&Nickname::from("a-peer")),
                     kind: LegKind::Offer,
                     mine: false,
-                    progress: None,
-                    first_seen: true,
+                    news: true,
                 },
                 now,
             );
@@ -3419,8 +3491,7 @@ mod tests {
                 peer: Some(Box::leak(Box::new(Nickname::from("wire-thistle")))),
                 kind: LegKind::Offer,
                 mine: false,
-                progress: None,
-                first_seen: true,
+                news: true,
             },
             now,
         );
@@ -3445,8 +3516,7 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from(peer)))),
             kind: LegKind::Offer,
             mine: false,
-            progress: None,
-            first_seen: true,
+            news: true,
         };
         let live_id = "550e8400-e29b-41d4-a716-446655440001";
         let staying_id = "550e8400-e29b-41d4-a716-446655440002";
@@ -4079,8 +4149,7 @@ mod tests {
                     peer: Some(&Nickname::from("wire-thistle")),
                     kind: LegKind::Offer,
                     mine: false,
-                    progress: None,
-                    first_seen: true,
+                    news: true,
                 },
                 Instant::now(),
             );
@@ -4107,8 +4176,7 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind: LegKind::Offer,
             mine: false,
-            progress: None,
-            first_seen: true,
+            news: true,
         };
         let left_id = "550e8400-e29b-41d4-a716-446655440001";
         let twin_id = "550e8400-e29b-41d4-a716-446655440002";

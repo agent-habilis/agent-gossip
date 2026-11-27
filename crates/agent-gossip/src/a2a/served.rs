@@ -200,8 +200,7 @@ mod tests {
                 peer: Some(&Nickname::from(peer)),
                 kind: Offer,
                 mine: false,
-                progress: None,
-                first_seen: true,
+                news: true,
             },
             std::time::Instant::now(),
         );
