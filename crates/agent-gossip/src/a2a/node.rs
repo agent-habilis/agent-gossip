@@ -907,19 +907,21 @@ fn ingest_remote_message(
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
     let label = status_update_params::task_label(payload);
-    let mesh_name: &str = context.mesh.as_str();
-    let peer_name: &str = context.author.as_str();
-    app.output.task_message(&emission::TaskMessageLeg {
-        id: payload.message_id.as_str(),
-        mesh: mesh_name,
-        author: requester.as_str(),
+    let id = payload.message_id.as_str().to_owned();
+    let mesh = context.mesh.as_str().to_owned();
+    let author = requester.as_str().to_owned();
+    let peer = context.author.as_str().to_owned();
+    app.output.task_message(emission::OutputEvent::TaskMessage {
+        id,
+        mesh,
+        author,
         author_key: *requester_key,
-        peer: peer_name,
-        task_id: task_id.as_str(),
+        peer,
+        task_id: task_id.as_str().to_owned(),
         state: rec_state,
-        text: &text,
-        label: label.as_deref(),
-        message: Some(payload),
+        text,
+        label,
+        message: Some(Box::new(payload.clone())),
         is_self: false,
     });
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation

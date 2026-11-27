@@ -10,7 +10,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use super::simple_event::{self, emit};
 use super::{
     OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, StateChangedParams,
-    TaskGoneReason, TaskId, TaskMessageLeg,
+    TaskGoneReason, TaskId,
 };
 use crate::a2a::task_record::StallNotice;
 use crate::a2a::{node, wire};
@@ -259,35 +259,12 @@ impl Output {
     /// Surface an RPC `message/send` task leg — the initiator's brief / answer
     /// (on the worker), or the created `Task` (on the initiator). No frame
     /// backs it (the leg arrived over the request/response binding), so the
-    /// fields are passed explicitly. Emits a `task` event with `kind:message`.
-    pub(crate) fn task_message(&self, leg: &TaskMessageLeg<'_>) {
-        if leg.is_self && self.filters_self() {
+    /// caller builds the [`OutputEvent::TaskMessage`] itself.
+    pub(crate) fn task_message(&self, leg: OutputEvent) {
+        if matches!(leg, OutputEvent::TaskMessage { is_self: true, .. }) && self.filters_self() {
             return;
         }
-        let state = leg.state;
-        let is_self = leg.is_self;
-        let id = leg.id.to_owned();
-        let mesh = leg.mesh.to_owned();
-        let author = leg.author.to_owned();
-        let author_key = leg.author_key;
-        let peer = leg.peer.to_owned();
-        let task_id = leg.task_id.to_owned();
-        let text = leg.text.to_owned();
-        let label = leg.label.map(ToOwned::to_owned);
-        let message = leg.message.cloned().map(Box::new);
-        self.dispatch(|| OutputEvent::TaskMessage {
-            id,
-            mesh,
-            author,
-            author_key,
-            peer,
-            task_id,
-            state,
-            text,
-            label,
-            message,
-            is_self,
-        });
+        self.dispatch(|| leg);
     }
 
     /// A task went terminal without a peer-authored status: evicted by the

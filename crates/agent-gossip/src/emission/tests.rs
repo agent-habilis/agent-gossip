@@ -21,19 +21,20 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
         data: Some(serde_json::json!({"k": 1})),
         ..crate::a2a::Part::default()
     });
-    let json = simple_event::format_task_message_json(&super::TaskMessageLeg {
-        id: "frame-id",
-        mesh: "mesh",
-        author: "alice-bot",
+    let json = simple_event::event_json(&super::OutputEvent::TaskMessage {
+        id: "frame-id".to_owned(),
+        mesh: "mesh".to_owned(),
+        author: "alice-bot".to_owned(),
         author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
-        peer: "calm-otter",
-        task_id: "task-id",
+        peer: "calm-otter".to_owned(),
+        task_id: "task-id".to_owned(),
         state: None,
-        text: "the brief",
+        text: "the brief".to_owned(),
         label: None,
-        message: Some(&message),
+        message: Some(Box::new(message)),
         is_self: false,
-    });
+    })
+    .expect("a task leg has a JSON line");
     let parsed = parse(&json);
     assert_eq!(
         parsed["payload"]["parts"],
@@ -51,20 +52,20 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
 #[test]
 fn a_task_message_line_names_the_key_of_its_sender_when_two_senders_share_a_name() {
     let line_from = |key: u8| {
-        let leg = super::TaskMessageLeg {
-            id: "frame-id",
-            mesh: "mesh",
-            author: "twin",
+        let leg = super::OutputEvent::TaskMessage {
+            id: "frame-id".to_owned(),
+            mesh: "mesh".to_owned(),
+            author: "twin".to_owned(),
             author_key: habilis_network::protocol::AuthorKey::from([key; 32]),
-            peer: "calm-otter",
-            task_id: "task-id",
+            peer: "calm-otter".to_owned(),
+            task_id: "task-id".to_owned(),
             state: None,
-            text: "the brief",
+            text: "the brief".to_owned(),
             label: None,
             message: None,
             is_self: false,
         };
-        parse(&simple_event::format_task_message_json(&leg))
+        parse(&simple_event::event_json(&leg).expect("a task leg has a JSON line"))
     };
 
     let first = line_from(7);

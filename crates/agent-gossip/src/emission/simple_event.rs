@@ -12,7 +12,7 @@ use habilis_network::protocol::{
 };
 use serde::Serialize;
 
-use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
+use super::{OutputEvent, PingPeer, TaskGoneReason};
 use crate::a2a::{TaskId, status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
@@ -582,7 +582,7 @@ pub(super) fn format_task_json(
             kind,
             state: state.map(crate::a2a::TaskState::friendly_name),
             // The label rides the opening brief, which arrives over the RPC
-            // binding (`format_task_message_json`), never as a frame.
+            // binding (`OutputEvent::TaskMessage`), never as a frame.
             label: None,
             waiting,
             display,
@@ -603,41 +603,6 @@ fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Val
         parts.retain(|part| part.get("text").is_none());
     }
     Some(value)
-}
-
-/// Format an RPC `message/send` task leg (the initiator's brief / answer /
-/// approval, surfaced on the worker; or the created `Task` adopted on the
-/// initiator) as a `{"event":"task","kind":"message",...}` line.
-pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
-    stamp_visibility(
-        serde_json::to_string(&TaskLine {
-            event: "task",
-            id: leg.id,
-            gossip: leg.mesh,
-            author: leg.author,
-            pubkey: Some(leg.author_key.to_string()),
-            to_pubkey: None,
-            ts: UnixSecs::now().as_secs(),
-            to: leg.peer,
-            task_id: leg.task_id.to_owned(),
-            kind: "message",
-            state: leg.state.map(crate::a2a::TaskState::friendly_name),
-            label: leg.label,
-            waiting: None,
-            display: task_display(TaskDisplayParams {
-                author: leg.author,
-                to: leg.peer,
-                kind: "message",
-                state: leg.state,
-                body: leg.text,
-            }),
-            body: leg.text.to_owned(),
-            payload: leg.message.and_then(message_without_text),
-            is_self: leg.is_self,
-        })
-        .expect("task event serialization should never fail"),
-        false,
-    )
 }
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
@@ -838,19 +803,41 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             label,
             message,
             is_self,
-        } => format_task_message_json(&TaskMessageLeg {
-            id,
-            mesh,
-            author,
-            author_key: *author_key,
-            peer,
-            task_id,
-            state: *state,
-            text,
-            label: label.as_deref(),
-            message: message.as_deref(),
-            is_self: *is_self,
-        }),
+        } => {
+            let display = task_display(TaskDisplayParams {
+                author,
+                to: peer,
+                kind: "message",
+                state: *state,
+                body: text,
+            });
+            let payload = message.as_deref().and_then(message_without_text);
+            let pubkey = Some(author_key.to_string());
+            let ts = UnixSecs::now().as_secs();
+            let line = TaskLine {
+                event: "task",
+                id,
+                gossip: mesh,
+                author,
+                pubkey,
+                to_pubkey: None,
+                ts,
+                to: peer,
+                task_id: task_id.clone(),
+                kind: "message",
+                state: state.map(crate::a2a::TaskState::friendly_name),
+                label: label.as_deref(),
+                waiting: None,
+                display,
+                body: text.clone(),
+                payload,
+                is_self: *is_self,
+            };
+            stamp_visibility(
+                serde_json::to_string(&line).expect("task event serialization should never fail"),
+                false,
+            )
+        }
         OutputEvent::Presence { message, peer } => {
             let MessageKind::Presence { subtype } = &message.kind else {
                 return Formatted::Silent;
