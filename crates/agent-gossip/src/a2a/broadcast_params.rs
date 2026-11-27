@@ -23,13 +23,15 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
-use crate::a2a::rpc_error::{PeerRef, is_send_message};
+use crate::a2a::extensions::META_SEQ;
+use crate::a2a::rpc_error::{PeerRef, RpcError, is_send_message};
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
 use crate::a2a::{
-    WorkerLeg, ipc_command, receipt, served, status_update_params, task_record, tuning, wire,
+    META_LABEL, WorkerLeg, ipc_command, node, receipt, served, status_update_params, task_record,
+    tuning, wire,
 };
 use crate::emission;
 
@@ -1797,6 +1799,134 @@ pub(crate) struct BroadcastA2aCallParams<'caller> {
     pub(crate) file: Option<FileRef>,
 }
 
+/// The peer a call goes to, as the record of a task it opens names it.
+struct CallPeer {
+    key: AuthorKey,
+    name: Option<Nickname>,
+}
+
+/// Stamp the `SendMessage` in `params` as the initiator. An opening gets a task id that this node
+/// mints, `mesh:seq` 1, and a record in `submitted` that exists from now on, so a call that times
+/// out leaves a task to follow. A follow-up gets the next `mesh:seq` of the record it names.
+/// Returns the id of the task that the call opened.
+///
+/// # Errors
+/// An opening over the quota or to a peer with no name, and a follow-up for a task that this node
+/// does not hold as its initiator.
+fn stamp_send_message(
+    params: &mut serde_json::Value,
+    peer: &CallPeer,
+    app: &mut A2aApp,
+) -> Result<Option<crate::a2a::TaskId>, RpcError> {
+    let Some(message) = params.get_mut("message").filter(|slot| slot.is_object()) else {
+        return Ok(None);
+    };
+    let (task_id, seq, opened) = if message["taskId"].is_null() {
+        if let Some(error) = node::task_admission_error(app, &peer.key) {
+            return Err(error);
+        }
+        let name = peer
+            .name
+            .clone()
+            .ok_or_else(|| RpcError::invalid_params("the peer of a new task has no name"))?;
+        let task_id = crate::a2a::TaskId::random();
+        let mut rec = TaskRecord::open(
+            (peer.key, name),
+            task_record::TaskRole::Initiator,
+            crate::a2a::TaskState::Submitted,
+            Instant::now(),
+        );
+        rec.seq = 1;
+        rec.label = message["metadata"][META_LABEL]
+            .as_str()
+            .and_then(status_update_params::clean_label);
+        app.tasks.insert(task_id.clone(), rec);
+        (task_id.clone(), 1, Some(task_id))
+    } else {
+        let named = message["taskId"]
+            .as_str()
+            .and_then(crate::a2a::TaskId::from_uuid_str);
+        let held = named.as_ref().and_then(|task_id| {
+            app.tasks.get_mut(task_id).filter(|rec| {
+                rec.role == task_record::TaskRole::Initiator && rec.peer_key == peer.key
+            })
+        });
+        let Some(rec) = held else {
+            return Err(RpcError::invalid_params(
+                "SendMessage names a taskId with no task on this node",
+            ));
+        };
+        rec.seq += 1;
+        (
+            named.unwrap_or_else(crate::a2a::TaskId::random),
+            rec.seq,
+            None,
+        )
+    };
+    message["taskId"] = serde_json::Value::from(task_id.as_str());
+    if !message["metadata"].is_object() {
+        message["metadata"] = serde_json::json!({});
+    }
+    message["metadata"][META_SEQ] = serde_json::Value::from(seq);
+    Ok(opened)
+}
+
+/// What [`prepare_call`] needs to know about the call beyond its params and handles.
+struct PreparedCall<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    method: &'caller str,
+    peer: &'caller PeerRef,
+    peer_key: AuthorKey,
+    file: Option<FileRef>,
+}
+
+/// Stamp a `SendMessage` as the initiator and attach its file, so that the call is ready to seal.
+/// Returns the task that the call opened and the blob group that it owns.
+///
+/// # Errors
+/// What [`stamp_send_message`] refuses, and a file that cannot be attached. The record of an
+/// opening is taken back in that case.
+async fn prepare_call(
+    call: PreparedCall<'_>,
+    params: &mut serde_json::Value,
+    state: &EventLoopState,
+    app: &mut A2aApp,
+) -> Result<(Option<crate::a2a::TaskId>, Option<ContentId>), RpcError> {
+    let PreparedCall {
+        mesh,
+        author,
+        method,
+        peer,
+        peer_key,
+        file,
+    } = call;
+    let opening = if is_send_message(method) {
+        let name = match peer {
+            PeerRef::Nickname(nickname) => Some(nickname.clone()),
+            PeerRef::Key(key) => state.known_nickname_of(key),
+        };
+        let call_peer = CallPeer {
+            key: peer_key,
+            name,
+        };
+        stamp_send_message(params, &call_peer, app)?
+    } else {
+        None
+    };
+    let Some(file) = file else {
+        return Ok((opening, None));
+    };
+    let attachment = CallFile { mesh, author, file };
+    match attach_call_file(params, attachment, state, app).await {
+        Ok(blob_group) => Ok((opening, blob_group)),
+        Err(error) => {
+            app.drop_opening(opening.as_ref());
+            Err(RpcError::invalid_params(&error.to_string()))
+        }
+    }
+}
+
 /// The waiter times out via the loop's a2a-deadline arm. Fails fast (through the
 /// responder) when `peer` isn't a current peer or the waiter registry
 /// is full — no silent park.
@@ -1836,29 +1966,34 @@ pub(crate) async fn broadcast_a2a_call(
             return;
         }
     };
-    let blob = match file {
-        None => None,
-        Some(file) => {
-            let attachment = CallFile { mesh, author, file };
-            match attach_call_file(&mut params, attachment, state, app).await {
-                Ok(blob) => blob,
-                Err(error) => {
-                    responder.send_response(&rpc_error(-32602, &error.to_string()));
-                    return;
-                }
-            }
+    let prepared = prepare_call(
+        PreparedCall {
+            mesh,
+            author,
+            method,
+            peer: &peer,
+            peer_key,
+            file,
+        },
+        &mut params,
+        state,
+        app,
+    )
+    .await;
+    let (opening, blob_group) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            responder.send_response(&rpc_error(error.code, &error.message));
+            return;
         }
     };
-    // The request decides it, not the attachment: a plain brief opens a task as well, and its
-    // late reply must cancel it.
-    let opens_task = is_send_message(method) && params["message"]["taskId"].is_null();
-    let blob_group = blob;
     if let Some(message_id) = params["message"]["messageId"].as_str() {
         app.note_sent_ref(message_id, &peer_key);
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
         app.orphan_blob(blob_group);
+        app.drop_opening(opening.as_ref());
         responder.send_response(&rpc_error(
             -32602,
             "request params contain control characters",
@@ -1870,6 +2005,7 @@ pub(crate) async fn broadcast_a2a_call(
         Ok(sealed) => sealed,
         Err(error) => {
             app.orphan_blob(blob_group);
+            app.drop_opening(opening.as_ref());
             responder.send_response(&rpc_error(-32603, &error.to_string()));
             return;
         }
@@ -1877,30 +2013,23 @@ pub(crate) async fn broadcast_a2a_call(
     // The a2a layer mints a UUID rpc id; the engine correlates on the generic
     // `CorrId` carried by the app frame.
     let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
+    let sent_corr = corr.clone();
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::REQ),
         to: Some(peer_key),
         corr: Some(corr.clone()),
     };
-    // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
-    // overflow the platform `Instant` and panic the event loop.
-    let max_timeout = std::time::Duration::from_secs(A2A_CALL_MAX_TIMEOUT_SECS);
-    if timeout > max_timeout {
-        tracing::warn!(
-            requested_secs = timeout.as_secs(),
-            capped_secs = A2A_CALL_MAX_TIMEOUT_SECS,
-            "a2a call timeout clamped to the maximum"
-        );
-    }
-    let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
+    let deadline = call_deadline(timeout);
     if let Some(unregistered) = app.register_a2a_waiter(A2aWaiter {
         corr,
         peer_key,
         deadline,
         responder,
         blob_group,
-        opens_task,
+        opens_task: opening.is_some(),
+        opening: opening.clone(),
     }) {
+        app.drop_opening(opening.as_ref());
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
@@ -1917,11 +2046,58 @@ pub(crate) async fn broadcast_a2a_call(
         sender,
     )
     .await;
+    let dispatched = DispatchedCall {
+        method,
+        peer_key,
+        corr: &sent_corr,
+        opening: opening.as_ref(),
+    };
+    settle_dispatch(sent, &dispatched, &params, app);
+}
+
+/// The deadline of a call: `timeout` from now, clamped before it is added to the `Instant`, since
+/// an unclamped client `timeout_secs` would overflow the platform `Instant` and panic the loop.
+fn call_deadline(timeout: std::time::Duration) -> tokio::time::Instant {
+    let max_timeout = std::time::Duration::from_secs(A2A_CALL_MAX_TIMEOUT_SECS);
+    if timeout > max_timeout {
+        tracing::warn!(
+            requested_secs = timeout.as_secs(),
+            capped_secs = A2A_CALL_MAX_TIMEOUT_SECS,
+            "a2a call timeout clamped to the maximum"
+        );
+    }
+    tokio::time::Instant::now() + timeout.min(max_timeout)
+}
+
+/// The call whose request was just sent, as [`settle_dispatch`] needs it.
+#[derive(Clone, Copy)]
+struct DispatchedCall<'caller> {
+    method: &'caller str,
+    peer_key: AuthorKey,
+    corr: &'caller habilis_network::protocol::CorrId,
+    opening: Option<&'caller crate::a2a::TaskId>,
+}
+
+/// Book the outcome of sending a call's request. A follow-up hands the task back to the worker at
+/// dispatch, so a reply that never arrives leaves no record parked on us with the check-in clock
+/// stopped. An opening that never left is refused now: parked, it would report a task that the
+/// worker never heard of.
+fn settle_dispatch(
+    sent: anyhow::Result<()>,
+    call: &DispatchedCall<'_>,
+    params: &serde_json::Value,
+    app: &mut A2aApp,
+) {
+    let DispatchedCall {
+        method,
+        peer_key,
+        corr,
+        opening,
+    } = *call;
     match sent {
-        // The follow-up hands the task back at dispatch: a reply that never arrives must not
-        // leave the record parked on us with the check-in clock stopped.
         Ok(()) => {
             if is_send_message(method)
+                && opening.is_none()
                 && let Some(task_id) = params["message"]["taskId"]
                     .as_str()
                     .and_then(crate::a2a::TaskId::from_uuid_str)
@@ -1933,6 +2109,16 @@ pub(crate) async fn broadcast_a2a_call(
                     Instant::now(),
                 );
             }
+        }
+        Err(error) if opening.is_some() => {
+            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a opening send failed");
+            if let Some(waiter) = app.take_a2a_waiter(corr) {
+                let refusal = serde_json::json!({
+                    "error": { "code": -32603, "message": error.to_string() }
+                });
+                waiter.responder.send_response(&refusal.to_string());
+            }
+            app.drop_opening(opening);
         }
         Err(error) if method == served::READER_GET => {
             tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
@@ -2959,6 +3145,165 @@ mod open_task_gate_tests {
         assert_eq!(
             other_name, None,
             "a call that names another peer is not redirected"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use habilis_network::protocol::{AuthorKey, Nickname};
+
+    use super::{CallPeer, stamp_send_message};
+    use crate::a2a::a2a_app::A2aApp;
+    use crate::a2a::task_record::TaskRole;
+    use crate::a2a::tuning::TASKS_PER_PEER_CAP;
+    use crate::a2a::{META_LABEL, TaskId, TaskState};
+
+    fn bob() -> CallPeer {
+        CallPeer {
+            key: AuthorKey::from([0xb0; 32]),
+            name: Some(Nickname::from("bob")),
+        }
+    }
+
+    fn send(message: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "message": message })
+    }
+
+    /// The daemon of the initiator mints the id and opens the record before the request leaves.
+    #[test]
+    fn an_opening_gets_an_id_a_seq_of_one_and_a_submitted_record() {
+        let mut app = A2aApp::new();
+        let mut params = send(&serde_json::json!({
+            "messageId": "m1",
+            "metadata": { META_LABEL: "docs" },
+        }));
+
+        let opened = stamp_send_message(&mut params, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+
+        assert_eq!(
+            params["message"]["taskId"],
+            opened.as_str(),
+            "the minted id rides the message"
+        );
+        assert_eq!(
+            params["message"]["metadata"]["mesh:seq"], 1,
+            "the first message of a task carries seq 1"
+        );
+        let rec = &app.tasks[&opened];
+        assert_eq!(
+            rec.state,
+            TaskState::Submitted,
+            "the record starts submitted"
+        );
+        assert_eq!(rec.role, TaskRole::Initiator, "this node opened it");
+        assert_eq!(
+            rec.label.as_deref(),
+            Some("docs"),
+            "the record keeps the label of the brief"
+        );
+        assert_eq!(rec.seq, 1, "the record counts the opening");
+    }
+
+    /// Each follow-up takes the next seq, and the record holds the last one stamped.
+    #[test]
+    fn each_follow_up_takes_the_next_seq() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+
+        for expected in [2, 3] {
+            let mut follow_up = send(&serde_json::json!({
+                "messageId": format!("m{expected}"),
+                "taskId": task_id.as_str(),
+            }));
+            let opened = stamp_send_message(&mut follow_up, &bob(), &mut app)
+                .expect("a follow-up on a held task is admitted");
+            assert!(opened.is_none(), "a follow-up opens no task");
+            assert_eq!(
+                follow_up["message"]["metadata"]["mesh:seq"], expected,
+                "the seq counts up"
+            );
+        }
+        assert_eq!(
+            app.tasks[&task_id].seq, 3,
+            "the record holds the last seq stamped"
+        );
+    }
+
+    /// A raw call that names an id this node holds no record for is refused here.
+    #[test]
+    fn a_follow_up_for_a_task_we_do_not_hold_is_refused() {
+        let mut app = A2aApp::new();
+        let mut params = send(&serde_json::json!({
+            "messageId": "m1",
+            "taskId": TaskId::random().as_str(),
+        }));
+
+        let error = stamp_send_message(&mut params, &bob(), &mut app)
+            .expect_err("no record means no follow-up");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert!(
+            app.tasks.is_empty(),
+            "a refused follow-up creates no record"
+        );
+    }
+
+    /// A follow-up on a task of another peer is not ours to send to this one.
+    #[test]
+    fn a_follow_up_to_another_peer_than_the_workers_is_refused() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+        let carol = CallPeer {
+            key: AuthorKey::from([0xc0; 32]),
+            name: Some(Nickname::from("carol")),
+        };
+        let mut follow_up = send(&serde_json::json!({
+            "messageId": "m2",
+            "taskId": task_id.as_str(),
+        }));
+
+        let error = stamp_send_message(&mut follow_up, &carol, &mut app)
+            .expect_err("the task belongs to bob");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert_eq!(
+            app.tasks[&task_id].seq, 1,
+            "the refused follow-up took no seq"
+        );
+    }
+
+    /// The per-peer quota binds the initiator too: an opening over it is refused at dispatch.
+    #[test]
+    fn an_opening_over_the_peer_quota_is_refused() {
+        let mut app = A2aApp::new();
+        for _ in 0..TASKS_PER_PEER_CAP {
+            let mut params = send(&serde_json::json!({ "messageId": "m" }));
+            stamp_send_message(&mut params, &bob(), &mut app)
+                .expect("an opening under the quota is admitted");
+        }
+        let mut over = send(&serde_json::json!({ "messageId": "over" }));
+
+        let error =
+            stamp_send_message(&mut over, &bob(), &mut app).expect_err("the quota is spent");
+
+        assert_eq!(error.code, -32004, "the refusal is the quota code");
+        assert_eq!(
+            app.tasks.len(),
+            TASKS_PER_PEER_CAP,
+            "the refused opening made no record"
+        );
+        assert!(
+            over["message"]["taskId"].is_null(),
+            "the refused message is not stamped"
         );
     }
 }

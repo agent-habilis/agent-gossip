@@ -5,7 +5,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use super::TaskId;
-use super::extensions::{META_LABEL, META_PROGRESS, META_STATUS_TEXT, META_WAITING_USER};
+use super::extensions::{META_LABEL, META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_WAITING_USER};
 use super::task_record::{TaskRecord, TaskRole};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
@@ -237,6 +237,7 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
         "mesh:role": role(rec.role),
         "mesh:ball": role(rec.ball()),
         "mesh:review": rec.review,
+        META_SEQ: rec.seq,
     });
     if rec.waiting_user {
         metadata[META_WAITING_USER] = Value::from(true);

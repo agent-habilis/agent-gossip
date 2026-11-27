@@ -139,6 +139,9 @@ pub(crate) struct TaskRecord {
     pub last_notice: Option<Instant>,
     /// The last beat of the worker, for the alarm line.
     pub peer_beat: Option<PeerBeat>,
+    /// The `mesh:seq` of the last message of the task: the initiator stamps it, 1 on the opening
+    /// and one more on each follow-up, and the worker keeps the highest it took in.
+    pub seq: u64,
 }
 
 /// What the worker's last beat said about its agent, and when it arrived.
@@ -179,6 +182,7 @@ impl TaskRecord {
             unanswered: None,
             last_notice: None,
             peer_beat: None,
+            seq: 0,
         }
     }
 
@@ -583,7 +587,12 @@ fn is_newer_than_waiting(rec: &TaskRecord, at: UnixSecs, order: Option<u64>) -> 
 /// old beat after the peer died. The bound is coarse on purpose, to tolerate
 /// clock skew between hosts.
 fn is_stale(frame: &Message) -> bool {
-    UnixSecs::now().since(frame.timestamp).as_secs() > task_timeout_secs()
+    is_stale_at(frame.timestamp)
+}
+
+/// Whether something sent at `sent_at` is older than one idle timeout.
+pub(crate) fn is_stale_at(sent_at: UnixSecs) -> bool {
+    UnixSecs::now().since(sent_at).as_secs() > task_timeout_secs()
 }
 
 /// Whether the check-in clock runs: only while the worker holds the ball. A

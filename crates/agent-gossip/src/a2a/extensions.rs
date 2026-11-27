@@ -31,6 +31,9 @@ pub(super) const META_WAITING_USER: &str = "mesh:waiting_user";
 /// legs of one wire second apart. Absent on a leg from a peer that does not
 /// send it, which then orders by the second alone.
 pub(super) const META_ORDER_MS: &str = "mesh:order_ms";
+/// The place of a message in its task, in `Message.metadata`: 1 on the opening, then one more on
+/// each follow-up. The initiator's daemon stamps it, and a worker serves no message without it.
+pub(super) const META_SEQ: &str = "mesh:seq";
 /// Seconds since the worker agent last checked in on a task, on a worker beat.
 /// The sender takes the smaller of it and the silence it measured itself.
 pub(super) const META_CHECKIN_AGE: &str = "mesh:checkin_age";

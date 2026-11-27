@@ -478,6 +478,29 @@ impl A2aApp {
         None
     }
 
+    /// Take back the record that an opening call made at dispatch, because the worker was never
+    /// reached or refused the task. The file of the call, held under the task id, goes to the next
+    /// sweep.
+    pub(crate) fn drop_opening(&mut self, opening: Option<&TaskId>) {
+        let Some(task_id) = opening else {
+            return;
+        };
+        self.tasks.remove(task_id);
+        self.orphan_blob(Some(ContentId::new(task_id.as_str())));
+    }
+
+    /// Take the parked call that `corr` names, so the caller can answer it now.
+    pub(crate) fn take_a2a_waiter(
+        &mut self,
+        corr: &habilis_network::protocol::CorrId,
+    ) -> Option<A2aWaiter> {
+        let index = self
+            .a2a_waiters
+            .iter()
+            .position(|waiter| waiter.corr == *corr)?;
+        Some(self.a2a_waiters.swap_remove(index))
+    }
+
     /// Resolve the waiter matching `corr` **from the peer we called** (`from`)
     /// with its JSON-RPC response `body`, and drop it. A response with no
     /// matching waiter, or one purporting to answer a call we made to a
@@ -497,6 +520,10 @@ impl A2aApp {
             .position(|waiter| waiter.corr == *corr && waiter.peer_key == *from_key)
         {
             let waiter = self.a2a_waiters.swap_remove(index);
+            // The worker refused the opening: the task the call made at dispatch goes.
+            if is_error_reply(body) {
+                self.drop_opening(waiter.opening.as_ref());
+            }
             let adoption = self.adopt_returned_task((from_key, from), body);
             // The registry refused the task the worker opened for us: no record is kept, so
             // the worker is told to cancel it rather than run it unseen, and the caller gets
@@ -854,6 +881,7 @@ impl A2aApp {
             .into_iter()
             .filter_map(|waiter| {
                 if waiter.peer_key == *peer_key {
+                    self.drop_opening(waiter.opening.as_ref());
                     self.orphan_blob(waiter.blob_group);
                     waiter.responder.send_peer_left(peer);
                     None
@@ -941,6 +969,11 @@ impl A2aResponder {
     }
 }
 
+/// Whether a peer's JSON-RPC response `body` is an error.
+fn is_error_reply(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body).is_ok_and(|value| !value["error"].is_null())
+}
+
 /// Parse a peer's JSON-RPC response `body` (`{"result":…}` | `{"error":…}`)
 /// into the `Result<Value, RpcError>` the localhost binding's HTTP handler
 /// returns. A malformed/absent body reads as an internal error.
@@ -1019,6 +1052,9 @@ pub(crate) struct A2aWaiter {
     /// Whether this call creates the task, so that a late reply's task is
     /// cancelled. A follow-up does not.
     pub(crate) opens_task: bool,
+    /// The task this call opened, whose record exists from dispatch: an error reply takes it
+    /// back. A follow-up opens none.
+    pub(crate) opening: Option<TaskId>,
 }
 
 #[cfg(test)]
@@ -1032,7 +1068,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
-    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::task_record::{AdoptInitiatorParams, TaskRecord, TaskRole, adopt_initiator};
     use crate::a2a::{TaskId, TaskState, tuning, wire};
     use crate::emission::{Output, OutputEvent};
 
@@ -1592,6 +1628,7 @@ mod tests {
             responder: A2aResponder::Typed(bob_tx),
             blob_group: None,
             opens_task: true,
+            opening: None,
         });
         app.a2a_waiters.push(super::A2aWaiter {
             corr: wire::corr_id("corr-carol"),
@@ -1600,6 +1637,7 @@ mod tests {
             responder: A2aResponder::Typed(carol_tx),
             blob_group: None,
             opens_task: true,
+            opening: None,
         });
 
         app.fail_a2a_waiters_for_peer((&bob_key(), &Nickname::from("bob")));
@@ -1644,6 +1682,7 @@ mod tests {
                 responder: A2aResponder::Typed(tx),
                 blob_group: None,
                 opens_task: true,
+                opening: None,
             });
         }
 
@@ -1682,6 +1721,7 @@ mod tests {
             responder: A2aResponder::Typed(tx),
             blob_group: None,
             opens_task: false,
+            opening: None,
         });
 
         app.fulfill_a2a_waiter(
@@ -1723,7 +1763,40 @@ mod tests {
             responder: A2aResponder::Typed(tx),
             blob_group: Some(ContentId::new(group)),
             opens_task: true,
+            opening: None,
         }
+    }
+
+    /// The worker refused the opening: the record the call made at dispatch goes, and its file
+    /// goes to the next sweep. A reply that is not an error leaves it.
+    #[test]
+    fn an_error_reply_takes_back_the_record_of_an_opening() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        app.tasks.insert(
+            task_id.clone(),
+            TaskRecord::open(
+                (bob_key(), Nickname::from("bob")),
+                TaskRole::Initiator,
+                TaskState::Submitted,
+                Instant::now(),
+            ),
+        );
+        let mut waiter = waiter_with_blob("corr-refused", "group-refused");
+        waiter.opening = Some(task_id.clone());
+        app.a2a_waiters.push(waiter);
+        let refusal = serde_json::json!({ "error": { "code": -32004, "message": "full" } });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-refused"),
+            (&bob_key(), &Nickname::from("bob")),
+            &refusal.to_string(),
+        );
+
+        assert!(
+            !app.tasks.contains_key(&task_id),
+            "a task that the worker refused is not ours to keep"
+        );
     }
 
     /// A first `a2a call --file` blob lives exactly as long as the task the
@@ -1991,6 +2064,7 @@ mod tests {
                 responder: A2aResponder::Typed(reply_tx),
                 blob_group: None,
                 opens_task: false,
+                opening: None,
             });
             node.fulfill_a2a_waiter(
                 &wire::corr_id(corr),

@@ -6,13 +6,14 @@ use habilis_network::embed::{
 };
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
-    AppTag, AuthorKey, DedupKey, Message, MessageBody, MessageKind, Nickname,
+    AppTag, AuthorKey, DedupKey, Message, MessageBody, MessageKind, Nickname, UnixSecs,
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder};
+use crate::a2a::extensions::META_SEQ;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
 use crate::a2a::rpc_error::{A2aOp, A2aRequest, RpcError};
@@ -860,7 +861,12 @@ async fn handle_a2a_req(
                         .await
                     }
                     Served::Ingest(payload) => {
-                        ingest_remote_message(&payload, (&requester_key, &requester), app, context)
+                        let remote = RemoteRequest {
+                            key: &requester_key,
+                            name: &requester,
+                            sent_at: message.timestamp,
+                        };
+                        ingest_remote_message(&payload, &remote, app, context)
                     }
                     Served::ShardRepair { group, missing } => {
                         // The ask has no reply: the requester parks no waiter and asks again on
@@ -1003,7 +1009,7 @@ async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLo
 /// coarse machine, surface the message to our skill, and return the
 /// authoritative `Task`.
 /// Refusal for an offer the registry has no room for, or `None` to admit.
-fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError> {
+pub(crate) fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError> {
     use crate::a2a::task_record::Admission;
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     // A2A has no "too many tasks" error, so this is an application code in the
@@ -1025,7 +1031,16 @@ fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError>
     }
 }
 
+/// Who sent a `message/send` over RPC, and when the frame that carried it was sent.
+#[derive(Clone, Copy)]
+struct RemoteRequest<'caller> {
+    key: &'caller AuthorKey,
+    name: &'caller Nickname,
+    sent_at: UnixSecs,
+}
+
 /// The task, whether the leg is new and the label of the brief, as [`apply_remote_leg`] applied it.
+#[derive(Debug)]
 struct RemoteLeg {
     task_id: crate::a2a::TaskId,
     news: bool,
@@ -1034,49 +1049,77 @@ struct RemoteLeg {
     brief: bool,
 }
 
+/// The `mesh:seq` the initiator stamped on a message: 1 on the opening, then one more on each
+/// follow-up. `None` when it is missing or not a positive integer.
+fn message_seq(payload: &crate::a2a::Message) -> Option<u64> {
+    let seq = payload.metadata.as_ref()?.get(META_SEQ)?.as_u64()?;
+    (seq >= 1).then_some(seq)
+}
+
 /// Check that `requester` may drive the task a `message/send` names, and apply the leg to the
-/// registry: a brief opens the record, a follow-up restarts the check-in clock. A relay can
-/// replay a follow-up, and only its first copy moves the clock.
+/// registry. The initiator minted the id and stamped `mesh:seq`: seq 1 opens the task, a later
+/// seq is a follow-up that restarts the check-in clock. A relay can replay either, and only the
+/// first copy moves the clock.
+///
+/// A task id that we do not hold, or that another peer holds, answers the same way, so the reply
+/// does not say which ids exist.
 ///
 /// # Errors
-/// A follow-up for an unknown task or from a peer that is not its party, or a brief over quota.
+/// A message with no `taskId` or `mesh:seq`, a follow-up for a task that is not ours to serve, a
+/// stale opening, or an opening over quota.
 fn apply_remote_leg(
     payload: &crate::a2a::Message,
-    (requester_key, requester): (&AuthorKey, &Nickname),
+    request: &RemoteRequest<'_>,
     app: &mut A2aApp,
     now: Instant,
 ) -> Result<RemoteLeg, RpcError> {
     use crate::a2a::task_record::LegKind;
-    let (task_id, kind) = match &payload.task_id {
-        Some(task_id) => (task_id.clone(), LegKind::Text),
-        None => (crate::a2a::TaskId::random(), LegKind::Offer),
+    let RemoteRequest {
+        key: requester_key,
+        name: requester,
+        sent_at,
+    } = *request;
+    let (Some(task_id), Some(seq)) = (payload.task_id.clone(), message_seq(payload)) else {
+        return Err(RpcError::invalid_params(
+            "SendMessage needs a taskId and a mesh:seq from 1",
+        ));
     };
-    // A follow-up (taskId set) may only be driven by the task's own party. The
-    // requester is signature-verified, but signature ≠ party: without this check
-    // any mesh member could drive and read a task they are not part of.
-    if kind == LegKind::Text {
-        match app.tasks.get(&task_id) {
-            None => {
+    let unknown =
+        || RpcError::invalid_params("SendMessage names a taskId with no task on this peer");
+    let live: Option<AuthorKey> = app.tasks.get(&task_id).map(|rec| rec.peer_key);
+    let closed: Option<AuthorKey> = app.closed_tasks.get(&task_id).map(|gone| gone.peer_key);
+    let holder = live.or(closed);
+    let kind = match (holder, seq) {
+        // The requester is signature-verified, but signature ≠ party: without this check any mesh
+        // member could drive and read a task they are not part of.
+        (Some(holder), _) if holder != *requester_key => return Err(unknown()),
+        // The opening again: the caller gets the snapshot and nothing else happens.
+        (Some(_), 1) => {
+            return Ok(RemoteLeg {
+                task_id,
+                news: false,
+                label: None,
+                brief: true,
+            });
+        }
+        (Some(_), _) if app.tasks.contains_key(&task_id) => LegKind::Text,
+        (Some(_) | None, _) if seq > 1 => return Err(unknown()),
+        (Some(_) | None, _) => {
+            // The opening is the one registry entry a remote peer mints directly. Refusing over
+            // the quota keeps `app.tasks` bounded and, just as importantly, keeps the sweep's
+            // per-expiry work bounded: it awaits a sealed unicast per expired task while holding
+            // the event loop, so an unbounded registry is a stall as well as a leak.
+            if task_record::is_stale_at(sent_at) {
                 return Err(RpcError::invalid_params(
-                    "SendMessage names a taskId with no task on this peer",
+                    "the opening is older than the task timeout",
                 ));
             }
-            Some(rec) if rec.peer_key != *requester_key => {
-                return Err(RpcError {
-                    code: -32003,
-                    message: "not a party to the task named by taskId".to_string(),
-                });
+            if let Some(error) = task_admission_error(app, requester_key) {
+                return Err(error);
             }
-            Some(_) => {}
+            LegKind::Offer
         }
-    } else if let Some(error) = task_admission_error(app, requester_key) {
-        // An offer (no taskId) is the one registry entry a remote peer mints
-        // directly. Refusing over the quota keeps `app.tasks` bounded and,
-        // just as importantly, keeps the sweep's per-expiry work bounded: it
-        // awaits a sealed unicast per expired task while holding the event
-        // loop, so an unbounded registry is a stall as well as a leak.
-        return Err(error);
-    }
+    };
     let label = status_update_params::task_label(payload);
     let message_id = payload.message_id.as_str();
     let applied = task_record::apply_leg(
@@ -1094,10 +1137,11 @@ fn apply_remote_leg(
             now,
         },
     );
-    if kind == LegKind::Offer
-        && let Some(rec) = app.tasks.get_mut(&task_id)
-    {
-        rec.label.clone_from(&label);
+    if let Some(rec) = app.tasks.get_mut(&task_id) {
+        if kind == LegKind::Offer {
+            rec.label.clone_from(&label);
+        }
+        rec.seq = rec.seq.max(seq);
     }
     let news = applied.news;
     Ok(RemoteLeg {
@@ -1157,7 +1201,7 @@ fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context:
 
 fn ingest_remote_message(
     payload: &crate::a2a::Message,
-    (requester_key, requester): (&AuthorKey, &Nickname),
+    request: &RemoteRequest<'_>,
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) -> Result<serde_json::Value, RpcError> {
@@ -1166,13 +1210,13 @@ fn ingest_remote_message(
         news,
         label,
         brief,
-    } = apply_remote_leg(payload, (requester_key, requester), app, Instant::now())?;
+    } = apply_remote_leg(payload, request, app, Instant::now())?;
     // A replayed message changes nothing the skill has not seen, so it neither surfaces nor
     // rings the bell; the caller still gets the task snapshot below.
     if news {
         let remote = RemoteMessage {
             payload,
-            requester: (requester_key, requester),
+            requester: (request.key, request.name),
             task_id: &task_id,
             label: label.as_deref(),
             brief,
@@ -1181,23 +1225,27 @@ fn ingest_remote_message(
     }
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
     // yields `{"task": <Task>}`.
-    app.tasks
-        .get(&task_id)
-        .map(|rec| serde_json::json!({ "task": rpc_error::task_object(&task_id, rec, context.mesh) }))
-        .ok_or_else(|| RpcError::internal("task record missing after ingest"))
+    rpc_error::get_task(app, &task_id, context.mesh).map(|task| serde_json::json!({ "task": task }))
 }
 
 #[cfg(test)]
 mod classify_tests {
+    use std::time::{Duration, Instant};
+
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
         AppFrameParams, AuthorKey, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
+        UnixSecs,
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-    use super::{classify, is_replayed_chat, seals, surface_chat, wakes};
+    use super::{
+        RemoteLeg, RemoteRequest, apply_remote_leg, classify, is_replayed_chat, seals,
+        surface_chat, wakes,
+    };
     use crate::a2a::a2a_app::A2aApp;
-    use crate::a2a::{TaskState, status_update_params, wire};
+    use crate::a2a::rpc_error::RpcError;
+    use crate::a2a::{TaskId, TaskState, status_update_params, tuning, wire};
     use crate::emission::OutputEvent;
 
     fn mesh() -> MeshId {
@@ -1420,7 +1468,7 @@ mod classify_tests {
         let status = status_update_params::status_update(
             &mesh(),
             status_update_params::StatusUpdateParams {
-                task_id: &crate::a2a::TaskId::random(),
+                task_id: &TaskId::random(),
                 state: TaskState::Working,
                 note,
                 metadata,
@@ -1532,7 +1580,7 @@ mod classify_tests {
     fn an_overdue_alarm_wakes_unless_the_worker_waits_on_its_user() {
         let overdue = |waiting_user: bool| OutputEvent::TaskOverdue {
             notice: crate::output_event::OverdueNotice {
-                task_id: crate::a2a::TaskId::random(),
+                task_id: TaskId::random(),
                 peer: Nickname::from("worker"),
                 label: None,
                 age_secs: 600,
@@ -1548,33 +1596,176 @@ mod classify_tests {
     /// check-in clock. The test goes through the same function the daemon calls.
     #[test]
     fn a_replayed_rpc_follow_up_does_not_move_the_clock() {
-        use std::time::{Duration, Instant};
-
-        use crate::a2a::{Message, Role};
-
         let mut app = A2aApp::new();
-        let requester_key = key("initiator");
-        let requester = Nickname::from("initiator");
         let start = Instant::now();
-        let brief = Message::text(Role::User, "build it");
-        let opened = super::apply_remote_leg(&brief, (&requester_key, &requester), &mut app, start)
+        let task_id = TaskId::random();
+        let opened = serve_at(&mut app, &stamped(Some(&task_id), Some(1)), start)
             .expect("a brief opens the task");
-        let mut follow_up = Message::text(Role::User, "also the docs");
-        follow_up.task_id = Some(opened.task_id.clone());
+        let follow_up = stamped(Some(&task_id), Some(2));
         let first = start + Duration::from_secs(10);
         let replay = start + Duration::from_secs(100);
-        let leg =
-            super::apply_remote_leg(&follow_up, (&requester_key, &requester), &mut app, first)
-                .expect("the follow-up names an open task");
+        let leg = serve_at(&mut app, &follow_up, first).expect("the follow-up names an open task");
         assert!(leg.news, "the first copy is new");
         let replayed =
-            super::apply_remote_leg(&follow_up, (&requester_key, &requester), &mut app, replay)
-                .expect("a replay is still a valid leg");
+            serve_at(&mut app, &follow_up, replay).expect("a replay is still a valid leg");
         assert!(!replayed.news, "the second copy is a replay");
         assert_eq!(
             app.tasks[&opened.task_id].last_skill_activity, first,
             "the replay left the clock where the first copy set it"
         );
+    }
+
+    /// A `SendMessage` as the initiator's daemon stamps it: the task id it minted and the seq.
+    fn stamped(task_id: Option<&TaskId>, seq: Option<u64>) -> crate::a2a::Message {
+        let mut message = crate::a2a::Message::text(crate::a2a::Role::User, "build it");
+        message.task_id = task_id.cloned();
+        message.metadata = seq.map(|seq| serde_json::json!({ super::META_SEQ: seq }));
+        message
+    }
+
+    /// Apply `message` from `peer` to `app` as an RPC sent `sent_at`, served at `now`.
+    fn serve_sent(
+        app: &mut A2aApp,
+        message: &crate::a2a::Message,
+        (peer, sent_at, now): (&str, UnixSecs, Instant),
+    ) -> Result<RemoteLeg, RpcError> {
+        let request = RemoteRequest {
+            key: &key(peer),
+            name: &Nickname::from(peer),
+            sent_at,
+        };
+        apply_remote_leg(message, &request, app, now)
+    }
+
+    /// Apply `message` from `peer` to `app` as a fresh, in-time RPC.
+    fn serve(
+        app: &mut A2aApp,
+        message: &crate::a2a::Message,
+        peer: &str,
+    ) -> Result<RemoteLeg, RpcError> {
+        let sent = (peer, UnixSecs::now(), Instant::now());
+        serve_sent(app, message, sent)
+    }
+
+    /// Apply `message` from the initiator to `app`, served at `now`.
+    fn serve_at(
+        app: &mut A2aApp,
+        message: &crate::a2a::Message,
+        now: Instant,
+    ) -> Result<RemoteLeg, RpcError> {
+        let sent = ("initiator", UnixSecs::now(), now);
+        serve_sent(app, message, sent)
+    }
+
+    /// The worker serves only what the initiator's daemon stamped: a task id and a `mesh:seq`.
+    #[test]
+    fn a_message_without_a_task_id_or_a_seq_is_refused() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+        for message in [stamped(None, Some(1)), stamped(Some(&task_id), None)] {
+            let error = serve(&mut app, &message, "initiator")
+                .expect_err("a message that lacks the task id or the seq has no place in a task");
+            assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        }
+        assert!(app.tasks.is_empty(), "a refused message opens nothing");
+    }
+
+    /// Seq 1 with an id that nobody holds opens the task under the initiator's id.
+    #[test]
+    fn an_opening_with_an_unheld_id_opens_the_task_under_that_id() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+
+        let opened = serve(&mut app, &stamped(Some(&task_id), Some(1)), "initiator")
+            .expect("an opening with an unheld id is admitted");
+
+        assert!(opened.news, "the first copy of the opening is new");
+        assert!(opened.brief, "the message is the brief");
+        let rec = &app.tasks[&task_id];
+        assert_eq!(
+            rec.state,
+            TaskState::Submitted,
+            "the opening leaves it submitted"
+        );
+        assert_eq!(rec.seq, 1, "the record keeps the seq of the opening");
+    }
+
+    /// A second opening for a held id from the same peer is a replay: it changes nothing.
+    #[test]
+    fn a_second_opening_from_the_same_peer_is_not_news() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+        serve(&mut app, &stamped(Some(&task_id), Some(1)), "initiator")
+            .expect("the first opening is admitted");
+
+        let again = serve(&mut app, &stamped(Some(&task_id), Some(1)), "initiator")
+            .expect("a duplicate opening still gets the snapshot");
+
+        assert!(!again.news, "a duplicate opening is not news");
+        assert_eq!(
+            app.tasks.len(),
+            1,
+            "a duplicate opening opens no second task"
+        );
+    }
+
+    /// A peer that does not hold the task gets the answer of an id that nobody holds, so the
+    /// reply does not say which ids exist.
+    #[test]
+    fn a_task_of_another_peer_answers_like_an_unknown_id() {
+        let mut app = A2aApp::new();
+        let held = TaskId::random();
+        serve(&mut app, &stamped(Some(&held), Some(1)), "initiator")
+            .expect("the opening is admitted");
+        let unknown = TaskId::random();
+        let nobody = serve(&mut app, &stamped(Some(&unknown), Some(2)), "stranger")
+            .expect_err("a follow-up for an unknown id is refused");
+
+        for seq in [1, 2] {
+            let stranger = serve(&mut app, &stamped(Some(&held), Some(seq)), "stranger")
+                .expect_err("a peer that is not the party is refused");
+            assert_eq!(
+                stranger.code, nobody.code,
+                "seq {seq}: the code is the same"
+            );
+            assert_eq!(
+                stranger.message, nobody.message,
+                "seq {seq}: the text is the same"
+            );
+        }
+        assert_eq!(
+            app.tasks[&held].peer,
+            Nickname::from("initiator"),
+            "the owner is unchanged"
+        );
+    }
+
+    /// Only an opening can create a task: a follow-up for an id that nobody holds is refused.
+    #[test]
+    fn a_follow_up_for_an_unheld_id_is_refused() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+
+        let error = serve(&mut app, &stamped(Some(&task_id), Some(2)), "initiator")
+            .expect_err("seq 2 has no task to follow up");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert!(app.tasks.is_empty(), "a refused follow-up creates no task");
+    }
+
+    /// A relay can hold an opening back for hours: past the task timeout it opens nothing.
+    #[test]
+    fn an_opening_older_than_the_task_timeout_is_refused() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+        let old = UnixSecs::now() - Duration::from_secs(tuning::task_timeout_secs() + 5);
+
+        let sent = ("initiator", old, Instant::now());
+        let error = serve_sent(&mut app, &stamped(Some(&task_id), Some(1)), sent)
+            .expect_err("a stale opening is refused");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert!(app.tasks.is_empty(), "a stale opening creates no task");
     }
 
     fn chat_from(identity: &habilis_network::protocol::Identity) -> Authored {
