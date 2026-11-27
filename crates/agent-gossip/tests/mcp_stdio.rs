@@ -34,11 +34,13 @@ impl McpClient {
     /// Spawn the MCP server without performing the handshake — for tests that
     /// assert on the `initialize` response itself.
     fn spawn_raw() -> Self {
+        Self::spawn_raw_with_args(&[])
+    }
+
+    fn spawn_raw_with_args(extra: &[&str]) -> Self {
         let mut command = test_cmd();
-        command
-            .arg("mcp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped());
+        command.arg("mcp").args(extra);
+        command.stdin(Stdio::piped()).stdout(Stdio::piped());
         let mut child: Child = command
             .stderr(Stdio::piped())
             .spawn()
@@ -62,27 +64,7 @@ impl McpClient {
     /// Spawn the MCP server with extra `mcp`-subcommand flags (e.g. the hidden
     /// `--directory-private` so the directory path runs on the loopback ladder).
     fn spawn_with_args(extra: &[&str]) -> Self {
-        let mut command = test_cmd();
-        command.arg("mcp").args(extra);
-        command.stdin(Stdio::piped()).stdout(Stdio::piped());
-        let mut child: Child = command
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn agent-gossip mcp");
-        let stdin = child
-            .stdin
-            .take()
-            .expect("the child was spawned with a piped stdin, so the handle is present");
-        let stdout = child
-            .stdout
-            .take()
-            .expect("the child was spawned with a piped stdout, so the handle is present");
-        let reader = BufReader::new(stdout);
-        let mut client = McpClient {
-            child,
-            stdin,
-            reader,
-        };
+        let mut client = Self::spawn_raw_with_args(extra);
         // Complete the MCP handshake once so tests only worry about
         // tool-call shapes.
         client.send(

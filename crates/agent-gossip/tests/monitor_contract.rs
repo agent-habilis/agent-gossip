@@ -252,6 +252,58 @@ fn three_peers(suffix: &str) -> (JsonNode, JsonNode, JsonNode, String) {
     (creator, joiner_a, joiner_b, mesh)
 }
 
+/// A creator and one worker, both ready. The creator must see the worker before it can offer a
+/// task, so the helper returns only after the `joined` presence of the worker.
+fn task_pair(
+    worker_nick: &str,
+    creator_flags: &[(&str, &str)],
+    worker_flags: &[(&str, &str)],
+) -> (JsonNode, JsonNode, String) {
+    let (creator, mesh) = JsonNode::create_with_flags(creator_flags);
+    let worker = JsonNode::join_with_flags(&mesh, worker_nick, worker_flags);
+    assert!(
+        creator.wait_ready(&mesh),
+        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
+    );
+    assert!(
+        worker.wait_ready(&mesh),
+        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
+    );
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the worker join");
+    (creator, worker, mesh)
+}
+
+/// Wait until `worker` surfaced `count` task messages: a status leg sent before the offer
+/// arrives names a task that the worker does not hold yet.
+fn await_offers(worker: &JsonNode, count: usize) {
+    let surfaced = wait_until(
+        || {
+            worker
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
+                .count()
+        },
+        count,
+        MSG_TIMEOUT,
+    );
+    assert!(
+        surfaced >= count,
+        "the worker surfaced {surfaced} of {count} task messages"
+    );
+}
+
 // ── tests ───────────────────────────────────────────────────────────────────
 
 /// The `ready` event has the expected JSON shape with `mesh`, `name`,
@@ -1237,45 +1289,11 @@ async fn test_task_unknown_peer_errors() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_idle_timeout_after_owner_dies() {
     let timers = &FAST_TASK_TIMERS;
-    let (creator, mesh) = JsonNode::create_with_flags(timers);
-    let mut joiner = JsonNode::join_with_flags(&mesh, "tk-bob", timers);
-    assert!(
-        creator.wait_ready(&mesh),
-        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
-    );
-    assert!(
-        joiner.wait_ready(&mesh),
-        "a joiner that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
-    );
-
-    // The creator must see the joiner before it can offer.
-    let saw_join = wait_until(
-        || {
-            creator
-                .presence_events()
-                .iter()
-                .filter(|value| value["subtype"] == "joined")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_join >= 1, "creator never saw the joiner join");
+    let (creator, mut joiner, mesh) = task_pair("tk-bob", timers, timers);
 
     // Creator creates the task; the worker (joiner) holds the ball and accepts.
     let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-bob", "port it");
-    let saw_offer = wait_until(
-        || {
-            joiner
-                .json_events()
-                .iter()
-                .filter(|value| value["event"] == "task" && value["kind"] == "message")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_offer >= 1, "joiner never surfaced the task message");
+    await_offers(&joiner, 1);
     common::cli_task_status(&mesh, "tk-bob", &tid, "working");
 
     // Both alive well past the 3s timeout: the joiner's keepalive must keep
@@ -1334,44 +1352,11 @@ async fn test_task_idle_timeout_after_owner_dies() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_completed_task_is_never_reaped() {
     let timers = &FAST_TASK_TIMERS;
-    let (creator, mesh) = JsonNode::create_with_flags(timers);
-    let worker = JsonNode::join_with_flags(&mesh, "tk-done", timers);
-    assert!(
-        creator.wait_ready(&mesh),
-        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
-    );
-    assert!(
-        worker.wait_ready(&mesh),
-        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
-    );
-
-    let saw_join = wait_until(
-        || {
-            creator
-                .presence_events()
-                .iter()
-                .filter(|value| value["subtype"] == "joined")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_join >= 1, "creator never saw the worker join");
+    let (creator, worker, mesh) = task_pair("tk-done", timers, timers);
 
     // The full report-back flow, exactly as the skill drives it.
     let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-done", "count to three");
-    let saw_offer = wait_until(
-        || {
-            worker
-                .json_events()
-                .iter()
-                .filter(|value| value["event"] == "task" && value["kind"] == "message")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_offer >= 1, "worker never surfaced the task message");
+    await_offers(&worker, 1);
 
     common::cli_task_status(&mesh, "tk-done", &tid, "working");
     common::cli_task_artifact(&mesh, "tk-done", &tid, "three");
@@ -1433,48 +1418,12 @@ async fn test_silent_tasks_survive_while_daemons_live() {
         ("--sweep-interval-secs", "1"),
     ];
     let worker_nick = "tk-silent";
-    let (creator, mesh) = JsonNode::create_with_flags(timers);
-    let worker = JsonNode::join_with_flags(&mesh, worker_nick, timers);
-    assert!(
-        creator.wait_ready(&mesh),
-        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
-    );
-    assert!(
-        worker.wait_ready(&mesh),
-        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
-    );
-
-    let saw_join = wait_until(
-        || {
-            creator
-                .presence_events()
-                .iter()
-                .filter(|value| value["subtype"] == "joined")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_join >= 1, "creator never saw the worker join");
+    let (creator, worker, mesh) = task_pair(worker_nick, timers, timers);
 
     let accept_question = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "decide");
     let long_command = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "build");
     let review = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "review");
-    let saw_offers = wait_until(
-        || {
-            worker
-                .json_events()
-                .iter()
-                .filter(|value| value["event"] == "task" && value["kind"] == "message")
-                .count()
-        },
-        3,
-        MSG_TIMEOUT,
-    );
-    assert!(
-        saw_offers >= 3,
-        "worker never surfaced all three task messages"
-    );
+    await_offers(&worker, 3);
     common::cli_task_status(&mesh, worker_nick, &long_command, "working");
     common::cli_task_status(&mesh, worker_nick, &review, "working");
     common::cli_task_artifact(&mesh, worker_nick, &review, "the result");
@@ -1543,43 +1492,10 @@ async fn test_silent_tasks_survive_while_daemons_live() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_a_repeated_working_does_not_reach_the_initiator() {
     let worker_nick = "tk-repeat";
-    let (creator, mesh) = JsonNode::create_with_flags(&[]);
-    let worker = JsonNode::join_with_flags(&mesh, worker_nick, &[]);
-    assert!(
-        creator.wait_ready(&mesh),
-        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
-    );
-    assert!(
-        worker.wait_ready(&mesh),
-        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
-    );
-
-    let saw_join = wait_until(
-        || {
-            creator
-                .presence_events()
-                .iter()
-                .filter(|value| value["subtype"] == "joined")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_join >= 1, "creator never saw the worker join");
+    let (creator, worker, mesh) = task_pair(worker_nick, &[], &[]);
 
     let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "build");
-    let saw_offer = wait_until(
-        || {
-            worker
-                .json_events()
-                .iter()
-                .filter(|value| value["event"] == "task" && value["kind"] == "message")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_offer >= 1, "worker never surfaced the task message");
+    await_offers(&worker, 1);
     for _ in 0..3 {
         common::cli_task_status(&mesh, worker_nick, &tid, "working");
     }
@@ -1639,44 +1555,11 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     // would then cancel the live task.
     let fast_reap = &FAST_TASK_TIMERS;
     let worker_nick = "tk-late";
-    let (creator, mesh) = JsonNode::create_with_flags(fast_reap);
-    let worker =
-        JsonNode::join_with_flags(&mesh, worker_nick, &[("--task-keepalive-secs", "3600")]);
-    assert!(
-        creator.wait_ready(&mesh),
-        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
-    );
-    assert!(
-        worker.wait_ready(&mesh),
-        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
-    );
-
-    let saw_join = wait_until(
-        || {
-            creator
-                .presence_events()
-                .iter()
-                .filter(|value| value["subtype"] == "joined")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_join >= 1, "creator never saw the worker join");
+    let (creator, worker, mesh) =
+        task_pair(worker_nick, fast_reap, &[("--task-keepalive-secs", "3600")]);
 
     let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "count");
-    let saw_offer = wait_until(
-        || {
-            worker
-                .json_events()
-                .iter()
-                .filter(|value| value["event"] == "task" && value["kind"] == "message")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_offer >= 1, "worker never surfaced the task message");
+    await_offers(&worker, 1);
     common::cli_task_status(&mesh, worker_nick, &tid, "working");
     common::cli_task_artifact(&mesh, worker_nick, &tid, "three");
     let _ = common::cli_task_followup(

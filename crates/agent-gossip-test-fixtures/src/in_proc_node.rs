@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use agent_gossip::a2a::status_update_params;
 use agent_gossip::api::{
-    A2aCallParams, CreateConfig, JoinConfig, MeshSession, SessionError, TaskArtifactParams,
-    TaskStatusParams,
+    A2aCallParams, CreateConfig, JoinConfig, JoinError, MeshSession, SessionError,
+    TaskArtifactParams, TaskStatusParams, TopicConfig,
 };
 use agent_gossip::{
     Channel, JoinTarget, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
@@ -54,12 +54,7 @@ impl InProcNode {
     ///
     /// Panics if the mesh cannot be created.
     pub async fn create(name: &str) -> Self {
-        init_test_tracing();
-        Self::with_session(
-            MeshSession::create(CreateConfig::new(test_mesh_name(name)))
-                .await
-                .expect("in-process create failed"),
-        )
+        Self::create_from(CreateConfig::new(test_mesh_name(name))).await
     }
 
     /// Create a new private mesh with an explicit nickname.
@@ -68,14 +63,8 @@ impl InProcNode {
     ///
     /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
     pub async fn create_with_nick(name: &str, nick: &str) -> Self {
-        init_test_tracing();
-        let config = CreateConfig::new(test_mesh_name(name))
-            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"));
-        Self::with_session(
-            MeshSession::create(config)
-                .await
-                .expect("in-process create failed"),
-        )
+        let config = CreateConfig::new(test_mesh_name(name)).with_nickname(test_nickname(nick));
+        Self::create_from(config).await
     }
 
     /// Create a new private, password-protected mesh.
@@ -84,13 +73,8 @@ impl InProcNode {
     ///
     /// Panics if the mesh cannot be created.
     pub async fn create_with_password(name: &str, password: &str) -> Self {
-        init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name)).with_password(password.to_owned());
-        Self::with_session(
-            MeshSession::create(config)
-                .await
-                .expect("in-process passworded create failed"),
-        )
+        Self::create_from(config).await
     }
 
     /// Create a mesh under an explicit active-view cap (a small cap forces a
@@ -100,15 +84,10 @@ impl InProcNode {
     ///
     /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
     pub async fn create_with_peers(name: &str, nick: &str, max_connections: usize) -> Self {
-        init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name))
-            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
+            .with_nickname(test_nickname(nick))
             .with_max_connections(max_connections);
-        Self::with_session(
-            MeshSession::create(config)
-                .await
-                .expect("in-process transport create failed"),
-        )
+        Self::create_from(config).await
     }
 
     /// Join `mesh` under an explicit active-view cap.
@@ -117,16 +96,24 @@ impl InProcNode {
     ///
     /// Panics if `mesh` or `nick` is invalid, or if the join fails.
     pub async fn join_with_peers(mesh: &str, nick: &str, max_connections: usize) -> Self {
+        let config = join_config(mesh, nick).with_max_connections(max_connections);
+        Self::join_from(config)
+            .await
+            .expect("in-process join failed")
+    }
+
+    async fn create_from(config: CreateConfig) -> Self {
         init_test_tracing();
-        let target: JoinTarget = mesh.parse().expect("valid test join target");
-        let config = JoinConfig::new(target)
-            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
-            .with_max_connections(max_connections);
         Self::with_session(
-            MeshSession::join(config)
+            MeshSession::create(config)
                 .await
-                .expect("in-process transport join failed"),
+                .expect("in-process create failed"),
         )
+    }
+
+    async fn join_from(config: JoinConfig) -> Result<Self, JoinError> {
+        init_test_tracing();
+        Ok(Self::with_session(MeshSession::join(config).await?))
     }
 
     fn with_session(mut session: MeshSession) -> Self {
@@ -148,15 +135,9 @@ impl InProcNode {
     ///
     /// Panics if `mesh` or `nickname` is invalid, or if the join fails.
     pub async fn join(mesh: &str, nickname: &str) -> Self {
-        init_test_tracing();
-        let target: JoinTarget = mesh.parse().expect("valid test join target");
-        let config = JoinConfig::new(target)
-            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
-        Self::with_session(
-            MeshSession::join(config)
-                .await
-                .expect("in-process join failed"),
-        )
+        Self::join_from(join_config(mesh, nickname))
+            .await
+            .expect("in-process join failed")
     }
 
     /// Join the public topic mesh derived from `string`, with an explicit
@@ -167,8 +148,7 @@ impl InProcNode {
     /// Panics if `nickname` is invalid, or if the topic join fails.
     pub async fn topic(string: &str, nickname: &str) -> Self {
         init_test_tracing();
-        let config = agent_gossip::api::TopicConfig::new(string.to_owned())
-            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
+        let config = TopicConfig::new(string.to_owned()).with_nickname(test_nickname(nickname));
         Self::with_session(
             MeshSession::topic(config)
                 .await
@@ -190,12 +170,8 @@ impl InProcNode {
         mesh: &str,
         nickname: &str,
         password: &str,
-    ) -> Result<Self, agent_gossip::api::JoinError> {
-        let target: JoinTarget = mesh.parse().expect("valid test join target");
-        let config = JoinConfig::new(target)
-            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"))
-            .with_password(password.to_owned());
-        Ok(Self::with_session(MeshSession::join(config).await?))
+    ) -> Result<Self, JoinError> {
+        Self::join_from(join_config(mesh, nickname).with_password(password.to_owned())).await
     }
 
     /// Broadcast a plain message to everyone; returns the new message id.
@@ -931,6 +907,15 @@ impl InProcNode {
         })
         .await
     }
+}
+
+fn test_nickname(nickname: &str) -> Nickname {
+    Nickname::try_new(nickname).expect("valid test nickname")
+}
+
+fn join_config(mesh: &str, nickname: &str) -> JoinConfig {
+    let target: JoinTarget = mesh.parse().expect("valid test join target");
+    JoinConfig::new(target).with_nickname(test_nickname(nickname))
 }
 
 /// The channel, the document and the self flag of a state change that the live stream captured.
