@@ -1,15 +1,18 @@
-//! Render the multi-file `skills/` sources into the single-file SKILL.md tree
-//! the binary embeds (`src/cli/agent.rs` `include_dir!($OUT_DIR/skills)`), and
+//! Render the multi-file `skills/` sources into the SKILL.md tree (and the
+//! `references/` files beside it) that the binary embeds (`src/cli/agent.rs` `include_dir!($OUT_DIR/skills)`), and
 //! emit a fingerprint of the *generated* output so editing a source or the
 //! renderer itself forces a rebuild (`include_dir!` is otherwise untracked on
 //! stable, and fingerprinting the sources would miss renderer-only changes).
 //!
-//! One `SKILL.md` per skill is the runtime contract: an agent invoking a skill
-//! gets the whole procedure in the file it was already handed — zero extra
-//! read round-trips. The sources stay multi-file for reuse; each SKILL.md
-//! template declares its own sources with `<!-- include path="..." -->`
-//! directives that `slot-template` expands at build time, so adding a skill
-//! needs no change here.
+//! One `SKILL.md` per skill is what an agent is handed, and agy loads only the
+//! first 24000 bytes of its body. So a `SKILL.md` holds what the agent needs
+//! before its first tool call, and the long rules sit in `references/<name>.md`
+//! files that the body says when to read. The sources stay multi-file for
+//! reuse; each SKILL.md template declares its own sources with
+//! `<!-- include path="..." -->` directives that `slot-template` expands at
+//! build time, and its reference files with
+//! `<!-- reference name="..." path="..." -->` lines that this script handles,
+//! so adding a skill needs no change here.
 //!
 //! Also stamps the build's git identity into `VERGEN_GIT_SHA` /
 //! `VERGEN_GIT_DIRTY`, which [`agent_gossip::version`] splices into every
@@ -82,8 +85,9 @@ fn skills_dir() -> PathBuf {
     Path::new(&manifest_dir).join("../../skills")
 }
 
-/// Expand every `skills/gossip-*/SKILL.md` template into `dest`, one
-/// self-contained `SKILL.md` per skill. `shared/` is never emitted.
+/// Expand every `skills/gossip-*/SKILL.md` template into `dest`: one `SKILL.md`
+/// per skill, and the `references/*.md` files that the template names.
+/// `shared/` is never emitted.
 fn render_skills(src: &Path, dest: &Path) {
     if dest.exists() {
         std::fs::remove_dir_all(dest)
@@ -105,14 +109,89 @@ fn render_skills(src: &Path, dest: &Path) {
             .expect("skill dir has a name")
             .to_string_lossy()
             .into_owned();
-        let rendered = slot_template::expand(&skill_dir.join("SKILL.md"), &[], &mut loader)
+        let template_path = skill_dir.join("SKILL.md");
+        let template = std::fs::read_to_string(&template_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", template_path.display()));
+        let (template, references) = take_references(&template, &skill);
+        let mut load_template = |path: &Path| {
+            if path.file_name().is_some_and(|name| name == "SKILL.md") {
+                Ok(template.clone())
+            } else {
+                loader(path)
+            }
+        };
+        let rendered = slot_template::expand(&template_path, &[], &mut load_template)
             .unwrap_or_else(|error| panic!("skills/{skill}/SKILL.md: {error}"));
         let out = dest.join(&skill);
         std::fs::create_dir_all(&out)
             .unwrap_or_else(|error| panic!("mkdir {}: {error}", out.display()));
         std::fs::write(out.join("SKILL.md"), rendered)
             .unwrap_or_else(|error| panic!("write {}/SKILL.md: {error}", out.display()));
+        for reference in references {
+            let body = slot_template::expand(&skill_dir.join(&reference.path), &[], &mut loader)
+                .unwrap_or_else(|error| {
+                    panic!("skills/{skill} reference {}: {error}", reference.name)
+                });
+            let folder = out.join("references");
+            std::fs::create_dir_all(&folder)
+                .unwrap_or_else(|error| panic!("mkdir {}: {error}", folder.display()));
+            let target = folder.join(format!("{}.md", reference.name));
+            std::fs::write(&target, body)
+                .unwrap_or_else(|error| panic!("write {}: {error}", target.display()));
+        }
     }
+}
+
+/// A file that a skill reads on demand, as the template names it with one own-line
+/// `<!-- reference name="..." path="..." -->`. The renderer writes it to
+/// `references/<name>.md` beside the `SKILL.md`.
+struct Reference {
+    name: String,
+    path: String,
+}
+
+/// Cut the `reference` directive lines out of a skill template, so they never
+/// reach the rendered `SKILL.md`, and return them in order.
+fn take_references(template: &str, skill: &str) -> (String, Vec<Reference>) {
+    let mut kept = String::with_capacity(template.len());
+    let mut references: Vec<Reference> = Vec::new();
+    for line in template.split_inclusive('\n') {
+        let opened = line.trim().strip_prefix("<!-- reference ");
+        let Some(interior) = opened.and_then(|rest| rest.strip_suffix("-->")) else {
+            kept.push_str(line);
+            continue;
+        };
+        let reference = Reference {
+            name: attribute(interior, "name", skill),
+            path: attribute(interior, "path", skill),
+        };
+        // The name becomes a file name: a slash would write outside `references/`,
+        // and a repeat would silently overwrite the file of the first.
+        let plain = |ch: char| ch.is_ascii_lowercase() || ch == '-';
+        assert!(
+            !reference.name.is_empty() && reference.name.chars().all(plain),
+            "skills/{skill}/SKILL.md: reference name {:?} must be lowercase letters and hyphens",
+            reference.name
+        );
+        assert!(
+            references.iter().all(|seen| seen.name != reference.name),
+            "skills/{skill}/SKILL.md: two references are named {:?}",
+            reference.name
+        );
+        references.push(reference);
+    }
+    (kept, references)
+}
+
+fn attribute(interior: &str, key: &str, skill: &str) -> String {
+    let opening = format!("{key}=\"");
+    let split = interior.split_once(opening.as_str());
+    let (_, after_opening) =
+        split.unwrap_or_else(|| panic!("skills/{skill}/SKILL.md: a reference lacks {key}"));
+    let (value, _) = after_opening
+        .split_once('"')
+        .unwrap_or_else(|| panic!("skills/{skill}/SKILL.md: {key} of a reference is not closed"));
+    value.to_owned()
 }
 
 /// Hash the generated tree and publish it as `AGENT_GOSSIP_EMBED_FINGERPRINT`.

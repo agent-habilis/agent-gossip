@@ -6,7 +6,7 @@ use habilis_network::runtime::state_file::{read_identity, read_session_entry};
 use habilis_network::runtime::{ipc, state_file};
 use habilis_network::util::process;
 
-use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
+use super::args::{BellCheckOpts, LeaveOpts, SessionOpts, StopProtocol};
 use super::bell;
 use super::discovery::Discovery;
 use super::target::Target;
@@ -380,16 +380,29 @@ fn is_ready(target: &Target) -> bool {
         })
 }
 
-/// The Claude Code Stop hook's probe. It answers in the hook's JSON protocol
+/// The Stop hook's probe. It answers in the hook's JSON protocol
 /// and returns whether it blocked, so the caller exits 3 and a shell
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
-/// turn, and Claude Code still reads the JSON.
+/// turn, and the harness still reads the JSON. agy wants a JSON object from
+/// every hook, so it gets `{}` whenever the check does not refuse the stop.
 pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
+    let blocked = check_bells(options);
+    if !blocked && options.protocol == StopProtocol::Antigravity {
+        println!("{{}}");
+    }
+    blocked
+}
+
+fn check_bells(options: &BellCheckOpts) -> bool {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
+        protocol,
     } = options;
+    if protocol == StopProtocol::Antigravity && !stop_may_be_refused(std::io::stdin().lock()) {
+        return false;
+    }
     let (owned, _) = owned_sessions(discover().live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
@@ -404,21 +417,51 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
                 "gossip bell not armed for {}: run the Receive loop (poll + re-arm) before ending the turn",
                 missing.join(", ")
             );
-            println!(
-                "{}",
-                serde_json::json!({ "decision": "block", "reason": reason })
-            );
+            println!("{}", stop_decision(protocol, &reason));
             return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
+fn stop_decision(protocol: StopProtocol, reason: &str) -> serde_json::Value {
+    let decision = match protocol {
+        StopProtocol::ClaudeCode => "block",
+        StopProtocol::Antigravity => "continue",
+    };
+    serde_json::json!({ "decision": decision, "reason": reason })
+}
+
+/// Whether an agy Stop payload is one the hook may refuse: the first stop at
+/// the normal end of a turn. A turn that a hook already continued would loop,
+/// and a cancel, an error or a limit is not the agent's to override. A payload
+/// that cannot prove a normal end counts as not refusable. agy keeps the
+/// hook's stdin open, so only the first JSON value is read, not the whole
+/// stream.
+fn stop_may_be_refused(payload: impl std::io::Read) -> bool {
+    let mut values =
+        serde_json::Deserializer::from_reader(payload).into_iter::<serde_json::Value>();
+    let Some(Ok(stop)) = values.next() else {
+        return false;
+    };
+    let reason = stop
+        .get("terminationReason")
+        .and_then(serde_json::Value::as_str);
+    let continued = stop
+        .get("continuationActive")
+        .and_then(serde_json::Value::as_bool);
+    reason == Some("NO_TOOL_CALL") && continued != Some(true)
+}
+
 #[cfg(test)]
 mod tests {
     use habilis_network::util::process;
 
-    use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
+    use super::{
+        Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, stop_decision,
+        stop_may_be_refused, unarmed,
+    };
+    use crate::cli::args::StopProtocol;
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
@@ -431,6 +474,92 @@ mod tests {
             pid,
             owner_pid: None,
         }
+    }
+
+    /// Claude Code stops a turn on `block`, agy on `continue`: the same
+    /// refusal in two protocols, so each one gets its own word.
+    #[test]
+    fn stop_decision_speaks_each_harness_protocol() {
+        let claude = stop_decision(StopProtocol::ClaudeCode, "no bell");
+        assert_eq!(
+            claude,
+            serde_json::json!({ "decision": "block", "reason": "no bell" }),
+            "Claude Code refuses the stop with `block`"
+        );
+        let agy = stop_decision(StopProtocol::Antigravity, "no bell");
+        assert_eq!(
+            agy,
+            serde_json::json!({ "decision": "continue", "reason": "no bell" }),
+            "agy refuses the stop with `continue`"
+        );
+    }
+
+    /// agy runs the Stop hook for every end of an execution loop, not only a
+    /// finished turn. `continue` after a cancel, an error or a limit would keep
+    /// an agent running that the user or the harness just stopped, and after a
+    /// refusal that agy already followed it would loop for ever.
+    #[test]
+    fn stop_may_be_refused_only_on_a_first_normal_end_of_turn() {
+        let stop = |reason: &str, active: bool| {
+            format!(
+                r#"{{"hookEventName":"Stop","terminationReason":"{reason}","continuationActive":{active}}}"#
+            )
+        };
+        let may = |payload: String| stop_may_be_refused(payload.as_bytes());
+        assert!(
+            may(stop("NO_TOOL_CALL", false)),
+            "a normal first stop is checked"
+        );
+        assert!(
+            !may(stop("NO_TOOL_CALL", true)),
+            "a continued turn is not refused again"
+        );
+        for reason in [
+            "USER_CANCELED",
+            "ERROR",
+            "MAX_INVOCATIONS",
+            "MAX_FORCED_INVOCATIONS",
+        ] {
+            assert!(
+                !may(stop(reason, false)),
+                "{reason} must never be answered with continue"
+            );
+        }
+        assert!(
+            !stop_may_be_refused(&b""[..]),
+            "no payload cannot prove a normal end"
+        );
+        assert!(
+            !stop_may_be_refused(&b"not json"[..]),
+            "an unreadable payload cannot prove a normal end"
+        );
+    }
+
+    /// A stdin that holds one payload and then stays open: a read past it
+    /// times out instead of returning the end of the stream.
+    struct OpenStdin<'bytes>(&'bytes [u8]);
+
+    impl std::io::Read for OpenStdin<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            let count = self.0.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&self.0[..count]);
+            self.0 = &self.0[count..];
+            Ok(count)
+        }
+    }
+
+    /// agy keeps the hook's stdin open until the hook answers, so waiting for
+    /// the end of the stream would stall the answer for the whole timeout.
+    #[test]
+    fn stop_payload_is_read_without_waiting_for_the_stream_to_end() {
+        let payload = br#"{"terminationReason":"NO_TOOL_CALL","continuationActive":false}"#;
+        assert!(
+            stop_may_be_refused(OpenStdin(payload)),
+            "the first JSON value is the whole payload, before any end of stream"
+        );
     }
 
     #[test]

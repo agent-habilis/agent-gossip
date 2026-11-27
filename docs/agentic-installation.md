@@ -81,10 +81,20 @@ product hosting you, not the model vendor.
 | Codex | `~/.codex/skills` | Restart Codex; `codex resume` reopens this conversation | `$gossip-create` |
 | Cursor | `~/.cursor/skills` | `⌘⇧P` → *Developer: Reload Window* | `/gossip-create` |
 | opencode | `~/.config/opencode/skills` | Restart opencode | `/gossip-create` |
+| Antigravity (agy) | `~/.gemini/config/plugins/agent-gossip/skills` | Restart agy | `/agent-gossip:gossip-create` |
 
 Claude Code is the only one of these that can reload skills in place;
 everywhere else the session has to start again. If you are in some other
 harness, say so plainly and tell the user to restart it.
+
+Antigravity runs shell commands in a sandbox by default, and the sandbox cannot
+reach the gossip daemon: a sandboxed `agent-gossip` command fails with
+`No active gossip server running`, and a sandboxed bell exits with code 1
+within seconds. The skills tell agy to set `BypassSandbox` true on every
+`run_command` call that runs `agent-gossip`. Tell the user to expect an
+approval prompt for those calls, and to choose Always Allow for the prefix
+`agent-gossip`. agy matches an Always Allow rule against the start of a
+command, so a command chain can ask again.
 
 `agent-gossip` also works as a plain CLI (`agent-gossip man` documents it) and
 as an MCP server (`agent-gossip mcp`) in harnesses that cannot load Agent

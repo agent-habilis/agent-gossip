@@ -9,6 +9,7 @@
 //! runs at near-release connect speeds.
 use std::collections::HashSet;
 use std::fs::{self, File};
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -3760,7 +3761,12 @@ fn wait_for_bell(session_pid: &str, armed: bool) {
 #[test]
 fn bell_check_and_session_track_the_bell_lock() {
     let _serial = serial_guard();
-    let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
+    let (decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
+    let _guard = DecoyGuard {
+        child: decoy,
+        pid: decoy_pid.clone(),
+        log,
+    };
 
     assert_eq!(
         session_report(&decoy_pid)["sessions"][0]["bell"],
@@ -3812,11 +3818,254 @@ fn bell_check_and_session_track_the_bell_lock() {
 
     let _ = settling_bell.kill();
     let _ = settling_bell.wait();
-    let _ = common::test_cmd()
-        .args(["leave", "--session-pid", &decoy_pid])
-        .output();
-    let _ = decoy.wait();
-    let _ = fs::remove_file(&log);
+}
+
+/// A decoy session that goes away even when an assertion fails first.
+struct DecoyGuard {
+    child: Child,
+    pid: String,
+    log: PathBuf,
+}
+
+impl Drop for DecoyGuard {
+    fn drop(&mut self) {
+        let _ = common::test_cmd()
+            .args(["leave", "--session-pid", &self.pid])
+            .output();
+        let _ = self.child.wait();
+        let _ = fs::remove_file(&self.log);
+    }
+}
+
+fn agy_stop(reason: &str, continuation_active: bool) -> String {
+    format!(
+        r#"{{"hookEventName":"Stop","terminationReason":"{reason}","continuationActive":{continuation_active}}}"#
+    )
+}
+
+/// agy refuses a stop with `continue`, and only for a first normal end of
+/// turn. A turn a hook already continued would loop, and a cancel, an error or
+/// a limit is the user's or the harness's stop to make. agy wants a JSON
+/// object from every hook, so each of those answers `{}`.
+///
+/// Measured once with agy 1.5.12 (`agy --print`): the hook's `$PPID` is the agy
+/// process, and its stdin holds `continuationActive` and `cwd` but no pid.
+#[test]
+fn bell_check_speaks_the_agy_protocol_and_refuses_only_a_normal_first_stop() {
+    let _serial = serial_guard();
+    let (decoy, decoy_pid, _mesh, nickname, log) = spawn_decoy("bell-agy");
+    let _guard = DecoyGuard {
+        child: decoy,
+        pid: decoy_pid.clone(),
+        log,
+    };
+
+    let first = bell_check_agy(&decoy_pid, &agy_stop("NO_TOOL_CALL", false));
+    assert_eq!(
+        first.status.code(),
+        Some(3),
+        "a first stop is refused: {first:?}"
+    );
+    let decision: serde_json::Value = serde_json::from_slice(&first.stdout)
+        .expect("bell-check prints JSON when it refuses the stop");
+    assert_eq!(decision["decision"], "continue", "agy keeps the turn going");
+    let reason = decision["reason"]
+        .as_str()
+        .expect("a refusal carries a reason");
+    assert!(
+        reason.contains("gossip bell not armed") && reason.contains(nickname.as_str()),
+        "the reason names the problem and the session: {reason}"
+    );
+
+    for (termination, active) in [
+        ("NO_TOOL_CALL", true),
+        ("USER_CANCELED", false),
+        ("ERROR", false),
+        ("MAX_INVOCATIONS", false),
+    ] {
+        let skipped = bell_check_agy(&decoy_pid, &agy_stop(termination, active));
+        assert!(
+            skipped.status.success() && skipped.stdout.trim_ascii() == b"{}",
+            "{termination} (continued: {active}) must answer an empty object: {skipped:?}"
+        );
+    }
+}
+
+/// With no session to check, the agy protocol still answers a JSON object.
+#[test]
+fn bell_check_answers_an_empty_object_to_agy_when_no_session_needs_a_bell() {
+    let mut idle = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let out = bell_check_agy(&idle.id().to_string(), &agy_stop("NO_TOOL_CALL", false));
+    assert!(
+        out.status.success() && out.stdout.trim_ascii() == b"{}",
+        "no session must answer an empty object: {out:?}"
+    );
+
+    let _ = idle.kill();
+    let _ = idle.wait();
+}
+
+/// The command that `plug` writes into the agy Stop hook.
+fn agy_hook_command() -> String {
+    let home = std::env::temp_dir().join(format!("agent-gossip-agy-hook-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&home);
+    fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+        .expect("the test temp directory is writable");
+    let plug = common::test_cmd()
+        .env("HOME", &home)
+        .args(["plug", "--agent", "antigravity"])
+        .output()
+        .expect("failed to run agent-gossip plug");
+    assert!(
+        plug.status.success(),
+        "the hook text comes from a plug that must succeed: {plug:?}"
+    );
+    let written = fs::read(home.join(".gemini/config/plugins/agent-gossip/hooks.json"))
+        .expect("plug stages hooks.json in the plugin folder of the scratch home");
+    let hooks: serde_json::Value = serde_json::from_slice(&written)
+        .expect("agy parses hooks.json, so plug must write valid JSON");
+    let command = hooks["agent-gossip"]["Stop"][0]["command"]
+        .as_str()
+        .expect("agy runs this string through sh, so plug must write one")
+        .to_owned();
+    let _ = fs::remove_dir_all(&home);
+    command
+}
+
+/// Run a hook command as agy does: `sh -c`, with the Stop payload on stdin. A
+/// throwaway shell sits between the test and the hook (the `:` keeps it from
+/// exec-ing the hook), so the hook's `$PPID` names a process with no daemons
+/// under it. The test process itself has the daemons of every other test.
+fn run_agy_hook(command: &str, path: &std::path::Path) -> std::process::Output {
+    let mut hook = Command::new("/bin/sh");
+    hook.args(["-c", "/bin/sh -c \"$1\"; :", "sh", command])
+        .env("PATH", path);
+    hook.stdin(Stdio::piped());
+    hook.stdout(Stdio::piped());
+    let mut child: Child = hook.spawn().expect("the platform has /bin/sh");
+    let mut stdin = child.stdin.take().expect("stdin is piped above");
+    std::io::Write::write_all(&mut stdin, agy_stop("NO_TOOL_CALL", false).as_bytes())
+        .expect("a shell that ignores stdin still has its pipe open");
+    drop(stdin);
+    child
+        .wait_with_output()
+        .expect("sh -c ends once stdin closes")
+}
+
+/// agy reads a hook's stdout as exactly one JSON object, so the hook must not
+/// print nothing, and must not print a second value after the first.
+fn the_one_json_object(stdout: &[u8]) -> serde_json::Value {
+    let parsed: Result<Vec<serde_json::Value>, _> = serde_json::Deserializer::from_slice(stdout)
+        .into_iter()
+        .collect();
+    let mut values = parsed.expect("agy cannot parse stdout that holds more than JSON");
+    assert_eq!(
+        values.len(),
+        1,
+        "the hook prints exactly one JSON value: {:?}",
+        String::from_utf8_lossy(stdout)
+    );
+    values.remove(0)
+}
+
+/// A missing or older agent-gossip cannot answer, and agy still wants an object.
+#[test]
+fn agy_hook_prints_an_empty_object_when_agent_gossip_is_missing_or_fails() {
+    let command = agy_hook_command();
+    let bin_dir =
+        std::env::temp_dir().join(format!("agent-gossip-agy-path-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&bin_dir);
+    fs::create_dir_all(&bin_dir).expect("the test temp directory is writable");
+
+    let missing = run_agy_hook(&command, &bin_dir);
+    assert_eq!(
+        the_one_json_object(&missing.stdout),
+        json!({}),
+        "no agent-gossip on PATH: {missing:?}"
+    );
+
+    let failing = ["/usr/bin/false", "/bin/false"]
+        .into_iter()
+        .find(|candidate| std::path::Path::new(candidate).exists())
+        .expect("the platform has a false command");
+    symlink(failing, bin_dir.join("agent-gossip")).expect("the test temp directory is writable");
+    let broken = run_agy_hook(&command, &bin_dir);
+    assert_eq!(
+        the_one_json_object(&broken.stdout),
+        json!({}),
+        "an agent-gossip that exits 1 with no output: {broken:?}"
+    );
+
+    let _ = fs::remove_dir_all(&bin_dir);
+}
+
+/// Through the real binary the hook prints what `bell-check` printed and
+/// nothing more: one `{}` when it passes, one refusal when it refuses.
+#[test]
+fn agy_hook_prints_one_object_from_the_real_bell_check() {
+    let _serial = serial_guard();
+    let command = agy_hook_command();
+    let real_dir = bin()
+        .parent()
+        .expect("the binary sits in a directory")
+        .to_path_buf();
+
+    let passing = run_agy_hook(&command, &real_dir);
+    assert_eq!(
+        the_one_json_object(&passing.stdout),
+        json!({}),
+        "no session of the test process needs a bell: {passing:?}"
+    );
+
+    let (decoy, decoy_pid, _mesh, nickname, log) = spawn_decoy("bell-agy-hook");
+    let _guard = DecoyGuard {
+        child: decoy,
+        pid: decoy_pid.clone(),
+        log,
+    };
+    let (before, after) = command
+        .split_once("\"$PPID\"")
+        .expect("the hook names the session by $PPID");
+    let aimed = format!("{before}{decoy_pid}{after}");
+    let refusing = run_agy_hook(&aimed, &real_dir);
+    let decision = the_one_json_object(&refusing.stdout);
+    assert_eq!(decision["decision"], "continue", "agy keeps the turn going");
+    let reason = decision["reason"]
+        .as_str()
+        .expect("a refusal carries a reason");
+    assert!(
+        reason.contains(nickname.as_str()),
+        "the reason names the session: {reason}"
+    );
+}
+
+fn bell_check_agy(session_pid: &str, stdin_payload: &str) -> std::process::Output {
+    let mut command = common::test_cmd();
+    command.args([
+        "bell-check",
+        "--protocol",
+        "antigravity",
+        "--session-pid",
+        session_pid,
+        "--grace-ms",
+        "0",
+    ]);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    let mut child: Child = command
+        .spawn()
+        .expect("the agent-gossip binary under test exists");
+    let mut stdin = child.stdin.take().expect("stdin is piped above");
+    std::io::Write::write_all(&mut stdin, stdin_payload.as_bytes())
+        .expect("bell-check stays alive until it has read its stdin");
+    drop(stdin);
+    child
+        .wait_with_output()
+        .expect("bell-check exits once stdin closes")
 }
 
 /// Gossip carries no directed traffic, so a directed A2A task that

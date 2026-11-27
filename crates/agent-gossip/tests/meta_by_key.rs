@@ -457,16 +457,23 @@ fn no_skill_joins_the_meta_document_by_nickname() {
     }
 }
 
-/// The text of a skill file with each `<!-- include path="..." -->` line replaced by the file it
-/// names, relative to the including file.
+/// The text of a skill file with each `<!-- include path="..." -->` and each
+/// `<!-- reference name="..." path="..." -->` line replaced by the file it names, relative to the
+/// including file. A reference is text the skill carries, in a file beside its `SKILL.md`.
 fn expanded(file: &std::path::Path) -> String {
     let text = std::fs::read_to_string(file)
         .unwrap_or_else(|error| panic!("{} is not readable text: {error}", file.display()));
     let directory = file.parent().expect("a skill file has a directory");
     let mut out = String::new();
     for line in text.lines() {
-        let after_tag = line.trim().strip_prefix("<!-- include path=\"");
-        let included = after_tag.and_then(|rest| rest.split('"').next());
+        let trimmed = line.trim();
+        let after_include = trimmed.strip_prefix("<!-- include path=\"");
+        let after_reference = trimmed
+            .strip_prefix("<!-- reference ")
+            .and_then(|rest| rest.split("path=\"").nth(1));
+        let included = after_include
+            .or(after_reference)
+            .and_then(|rest| rest.split('"').next());
         match included {
             Some(path) => out.push_str(&expanded(&directory.join(path))),
             None => out.push_str(line),

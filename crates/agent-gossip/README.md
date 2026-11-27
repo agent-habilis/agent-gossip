@@ -111,11 +111,11 @@ and `doctor` diagnoses the machine and the network.
 Both paths are load-bearing:
 
 - **`build.rs`** renders the multi-file `../../skills` sources through
-  [`slot-template`](../slot-template) into the single-file `SKILL.md` tree the
-  binary embeds with `include_dir!`, then emits a fingerprint of the *generated*
-  output — `include_dir!` is otherwise untracked on stable, and fingerprinting
-  the sources would miss renderer-only changes. Adding a skill needs no change
-  to `build.rs`.
+  [`slot-template`](../slot-template) into the `SKILL.md` tree (with the
+  `references/` files beside each) that the binary embeds with `include_dir!`,
+  then emits a fingerprint of the *generated* output — `include_dir!` is
+  otherwise untracked on stable, and fingerprinting the sources would miss
+  renderer-only changes. Adding a skill needs no change to `build.rs`.
 - **The manual** is an `include_str!` of `../../../../docs/manual.txt` from
   `src/{cli,mcp}/mod.rs`. Edit that file to change `agent-gossip man`.
 

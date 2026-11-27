@@ -68,7 +68,7 @@ pub(crate) enum Commands {
 
     /// Exit 3 when a gossip session of the calling agent has no bell armed.
     ///
-    /// The probe behind the skills' Claude Code Stop hook.
+    /// The probe behind the Stop hook of Claude Code and Antigravity.
     #[command(hide = true)]
     BellCheck {
         #[command(flatten)]
@@ -210,7 +210,7 @@ pub(crate) enum Commands {
 
     /// Plug the gossip integrations into your agents.
     ///
-    /// Targets Claude Code, pi, Codex, Cursor, and opencode. The skills are
+    /// Targets Claude Code, pi, Codex, Cursor, opencode, and Antigravity. The skills are
     /// embedded in the binary, so this needs no repo checkout. With no
     /// `--agent`, the detected agents are used; an agent that is not on this
     /// machine is skipped, never scaffolded. Ends by listing every supported

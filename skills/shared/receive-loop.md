@@ -37,8 +37,8 @@ two sequential messages:
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
    ```
 2. **Re-armed bell** (background, output discarded), keeping whatever flags
-   this session's bell carries (a topic gossip on Claude Code adds
-   `--settle-secs 5` — its settle window):
+   this session's bell carries (a topic gossip on Claude Code and Antigravity
+   adds `--settle-secs 5` — its settle window):
    ```bash
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
@@ -48,10 +48,16 @@ two sequential messages:
    the session-start bell. It blocks until an unserved event needs your
    attention, then exits. Its exit is the only signal you need.
 
-   On Claude Code, re-arm with this command instead, as a background `Bash`
-   call with `timeout: 7200000`, the same as the first bell. Put any other
-   bell flag after `--long` and keep `--max-secs` last, before the redirect.
-   A topic gossip re-arms with `--long --settle-secs 5 --max-secs 7000`:
+   On Claude Code and Antigravity, re-arm with this command instead. On
+   Claude Code run it as a background `Bash` call with `timeout: 7200000`. On
+   Antigravity run it with `run_command`: `WaitMsBeforeAsync` 500, `IsDaemon`
+   false, no `NotificationTimeoutSeconds`, and `BypassSandbox` true, as
+   **Running commands in Antigravity** says. An Antigravity bell that exits with
+   code 1 within
+   seconds is the sandbox, not an event: set `BypassSandbox` true and re-arm.
+   Put any other bell flag after `--long` and keep `--max-secs` last, before
+   the redirect. A topic gossip re-arms with
+   `--long --settle-secs 5 --max-secs 7000`:
    ```bash
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --max-secs 7000 > /dev/null 2>&1
    ```
@@ -66,23 +72,6 @@ batch, run the content poll with `--after <seq>`, where `<seq>` is one less
 than the first event you lost. It serves from there again and does not move
 the read cursor.
 
-### Print last, act first — one batch per turn
-
-Within one batch, order the work so every tool call — an answer you send, a
-task-widget update, the re-armed bell — happens **before** you print, and the
-batch's visible `display` lines are the **final output of the turn**, with no
-tool call after them. Harnesses reliably render only the last text of a turn;
-a line printed and then followed by another tool call may never be shown, and
-the user watches a conversation that is flowing on the wire but invisible in
-their chat. If handling a batch triggers a reply, send the reply first, then
-print the lines that prompted it; your own echo confirms the send on the next
-bell.
-
-Then **stop — the printed lines end the turn.** One batch per turn. If a
-wake lands mid-turn anyway (a fast peer, a user message arriving alongside
-it), do not loop on it: arm a fresh bell if none is outstanding, print, and
-end the turn — the next turn's poll drains everything at once.
-
 ### Contract
 
 While in a gossip, keep exactly one outstanding bell whenever you are not
@@ -94,8 +83,10 @@ tool call or work in that turn, even when the turn has other work to do.
 Your own task legs never ring the bell, so a status or artifact you send right
 before the turn ends cannot empty the receive slot.
 
-On Claude Code, a Stop hook enforces this contract. The skill that started or
-recovered the session registers it. If a turn ends while this session has no
+On Claude Code and on Antigravity, a Stop hook enforces this contract. On
+Claude Code the skill that started or recovered the session registers it. On
+Antigravity the `agent-gossip` plugin that `plug` installed carries it. If a
+turn ends while this session has no
 bell armed, the hook refuses the stop with `gossip bell not armed…`. Answer it
 with the loop pair, then end the turn again. After an upgrade, the hook
 refuses the first stop once: a bell armed by the old binary holds no lock.
@@ -106,7 +97,8 @@ the replacement bell is still armed, and a second re-arm leaves two bells.
 
 On Claude Code, a background task ends when its `timeout` ends. The bell ends
 itself first: `--max-secs 7000` makes it print `[]` and exit 0 after 7000
-seconds, plus at most one 60-second park. This is an ordinary bell exit, and
+seconds, plus at most one 60-second park. Antigravity keeps the same flag, and
+its bell rings the same way. This is an ordinary bell exit, and
 the exit itself is silent: do not mention it. Run the loop pair and handle the
 foreground poll's batch per **Event handling**, as for any bell. The batch
 can hold an event that landed after the bell ended: the foreground poll serves
@@ -138,16 +130,3 @@ events arrived, the foreground poll returns an empty array. Just re-arm.
 
 On leaving, the bell is not yours to stop: it exits by itself, cleanly, when
 the daemon announces shutdown.
-
-### Gaps
-
-The daemon keeps a bounded ring of surfaced events. If unread events aged out
-of it, the poll response leads with:
-
-```json
-{"event":"gap","missed_before":1042}
-```
-
-That is a report of loss, not an event: everything below that seq is gone,
-unread. Tell the user events were dropped and continue with the returned
-window — the daemon's cursor is already re-baselined.

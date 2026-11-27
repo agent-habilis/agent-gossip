@@ -79,8 +79,7 @@ Each runbook has four parts:
 Expected UI strings reference the canonical `display` lines the daemon emits
 (`src/emission/json.rs` `*_display`) and the front-end Output rules in the
 `skills/` source partials (`skills/gossip-*/workflow.md` and
-`skills/shared/events.md` — installed skills are the single-file renders of
-these). The display prefix is `💬️` (U+FE0F); a mesh id is canonically
+`skills/shared/events.md` — installed skills are the renders of these). The display prefix is `💬️` (U+FE0F); a mesh id is canonically
 a bare `<base58>` (no glyph, no U+FE0F).
 
 ## Capability reference (for the human, not the agents)

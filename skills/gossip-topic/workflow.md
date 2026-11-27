@@ -45,12 +45,12 @@ three parallel tool calls. Hold `$GOSSIP`, `$NAME`, and `$NICKNAME` from the
 gate script's output, and keep holding `$TOPIC` — the leave line echoes it.
 If any value is missing, print `💬 failed to join topic` and stop.
 
-## Settle bell — Claude Code
+## Settle bell — Claude Code and Antigravity
 
-Topic gossips are chat: peers answer within seconds. On Claude Code every
-bell in this session — the session-start bell in the **Daemon session**
-section (already flagged there) and **every re-arm in the Receive loop** —
-carries `--settle-secs 5`, the **settle window**:
+Topic gossips are chat: peers answer within seconds. On Claude Code and
+Antigravity every bell in this session — the session-start bell in the
+**Daemon session** section (already flagged there) and **every re-arm in the
+Receive loop** — carries `--settle-secs 5`, the **settle window**:
 
 ```bash
 agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --settle-secs 5 > /dev/null 2>&1

@@ -2,17 +2,18 @@
 
 Pure-function markdown templating over exactly two HTML-comment directives, so
 a template source stays valid, cleanly-rendering markdown. It has one job:
-turn the multi-file [`skills/`](../../skills) sources into the single-file
-`SKILL.md` tree the `agent-gossip` binary embeds.
+turn the multi-file [`skills/`](../../skills) sources into the `SKILL.md` tree
+(and the `references/` files beside it) that the `agent-gossip` binary embeds.
 
 No engine, no ambient context, no escaping of substituted values, no
 dependencies at all — one `expand()` function and one `Error` enum.
 
 ## Why it exists
 
-An agent invoking a skill must get the whole procedure in the file it was
-already handed: zero extra read round-trips. That makes one self-contained
-`SKILL.md` per skill the runtime contract.
+An agent invoking a skill is handed one `SKILL.md`, and agy loads only the
+first 24000 bytes of its body. So the `SKILL.md` holds what the agent needs
+before its first tool call, and the long rules sit in `references/*.md` files
+that the body says when to read.
 
 But the seventeen skills share a great deal — the reattach procedure, the
 receive-loop contract, the bell guard, the event catalogue. Keeping seventeen

@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use include_dir::{Dir, include_dir};
 
 /// The portable Agent Skills payload installed into each supported harness:
-/// the single-file-per-skill tree `build.rs` renders from the multi-file
-/// `skills/` sources into `$OUT_DIR/skills`.
+/// the tree `build.rs` renders from the multi-file `skills/` sources into
+/// `$OUT_DIR/skills`: a `SKILL.md` per skill, and its `references/` files.
 pub(crate) static SKILLS: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
 const OWNED_SKILL_DIRS: &[&str] = &[
@@ -46,6 +46,111 @@ const _: &str = env!("AGENT_GOSSIP_EMBED_FINGERPRINT");
 /// disagree.
 const SKIP: &[&str] = include!("embed_skip.rs");
 
+// agy lists a plugin only with a version. The version of the binary is the
+// version of the text, so a release rewrites the file and `doctor` flags the
+// older copy.
+const ANTIGRAVITY_PLUGIN_JSON: &str = concat!(
+    r#"{
+  "name": "agent-gossip",
+  "version": ""#,
+    env!("CARGO_PKG_VERSION"),
+    r#"",
+  "description": "Gossip with other agents: create or join a gossip, then message, task and review across the mesh."
+}
+"#
+);
+
+// The hook is the bell contract: agy refuses a stop with no bell armed. It
+// needs the protocol flag because agy names a refusal `continue`, not `block`.
+// agy reads exactly one JSON object from every hook, so the command prints
+// `{}` itself when agent-gossip is missing, is too old to know the flag, or
+// fails: bell-check already printed its own object for exit 0 and exit 3.
+// `$PPID` is the agy process, not a shell between: measured once with agy
+// 1.5.12 (`agy --print`). The hook's stdin holds `continuationActive` and
+// `cwd`, and no pid.
+const ANTIGRAVITY_HOOKS_JSON: &str = r#"{
+  "agent-gossip": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "agent-gossip bell-check --session-pid \"$PPID\" --protocol antigravity; case $? in 0|3) ;; *) echo '{}' ;; esac",
+        "timeout": 15
+      }
+    ]
+  }
+}
+"#;
+
+/// Whether `on_disk` is a `plugin.json` or `hooks.json` that `plug` wrote, in
+/// this or an older version. Ownership goes by marker, not by exact bytes: a
+/// user who has an older copy must get the new one, or each change to the hook
+/// text would strand them. For `plugin.json` the marker is the name
+/// `agent-gossip` and no key that `plug` does not write. For `hooks.json` it is
+/// the whole shape of the bell hook: one `agent-gossip` entry that holds only
+/// `Stop`, with exactly one handler whose command starts with
+/// `agent-gossip bell-check`. A second hook, a second handler or a key `plug`
+/// does not write means the user edited the file, and the next `plug` must not
+/// delete that work.
+fn is_plugin_file_of_ours(name: &str, on_disk: &[u8]) -> bool {
+    let Ok(serde_json::Value::Object(top_level)) = serde_json::from_slice(on_disk) else {
+        return false;
+    };
+    match name {
+        "hooks.json" => is_bell_hook_file(&top_level),
+        "plugin.json" => {
+            let named = top_level.get("name").and_then(serde_json::Value::as_str);
+            named == Some("agent-gossip")
+                && top_level
+                    .keys()
+                    .all(|key| matches!(key.as_str(), "name" | "version" | "description"))
+        }
+        _ => false,
+    }
+}
+
+fn is_bell_hook_file(top_level: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let only_entry = top_level.len() == 1;
+    let Some(serde_json::Value::Object(entry)) = top_level.get("agent-gossip") else {
+        return false;
+    };
+    let Some(serde_json::Value::Array(handlers)) = entry.get("Stop") else {
+        return false;
+    };
+    let [serde_json::Value::Object(handler)] = handlers.as_slice() else {
+        return false;
+    };
+    let command = handler.get("command").and_then(serde_json::Value::as_str);
+    only_entry
+        && entry.len() == 1
+        && command.is_some_and(|text| text.starts_with("agent-gossip bell-check"))
+}
+
+/// What the user must do about a plugin file in place that `plug` did not
+/// write. The same words go to the `plug` warning and to `doctor`, so neither
+/// tells the user to run `plug` again when that cannot change anything.
+pub(crate) fn foreign_file_advice(name: &str) -> String {
+    match name {
+        "hooks.json" => format!(
+            "the bell Stop hook is NOT installed, so agy will not refuse a turn that ends \
+             with no bell armed. Merge this entry into your hooks.json, or move your file \
+             away and run `agent-gossip plug` again: {}",
+            stop_hook_entry()
+        ),
+        _ => format!(
+            "the {name} stays yours, so agy loads the plugin under your manifest. Move your \
+             file away and run `agent-gossip plug` again to use the one that plug writes"
+        ),
+    }
+}
+
+/// The `agent-gossip` entry of the bell hook, on one line, for a user to merge
+/// into a `hooks.json` of their own.
+fn stop_hook_entry() -> String {
+    let parsed: serde_json::Value =
+        serde_json::from_str(ANTIGRAVITY_HOOKS_JSON).expect("the bell hook text is valid JSON");
+    parsed.to_string()
+}
+
 /// An agent the mesh integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
@@ -61,6 +166,10 @@ pub(crate) enum Agent {
     /// opencode — skills under `~/.config/opencode/skills`.
     #[value(name = "opencode")]
     OpenCode,
+    /// Antigravity CLI — skills in the `agent-gossip` plugin under
+    /// `~/.gemini/config/plugins`.
+    #[value(name = "antigravity", alias = "agy")]
+    Antigravity,
 }
 
 /// Whether the mesh integration is set up for an agent, as `doctor` reports.
@@ -90,12 +199,13 @@ impl AgentState {
 
 impl Agent {
     /// Every agent, in display order.
-    pub(crate) const ALL: [Agent; 5] = [
+    pub(crate) const ALL: [Agent; 6] = [
         Agent::ClaudeCode,
         Agent::Pi,
         Agent::Codex,
         Agent::Cursor,
         Agent::OpenCode,
+        Agent::Antigravity,
     ];
 
     /// The agent's CLI label, for display.
@@ -106,6 +216,7 @@ impl Agent {
             Agent::Codex => "codex",
             Agent::Cursor => "cursor",
             Agent::OpenCode => "opencode",
+            Agent::Antigravity => "antigravity",
         }
     }
 
@@ -119,6 +230,7 @@ impl Agent {
             Agent::Codex => ".codex",
             Agent::Cursor => ".cursor",
             Agent::OpenCode => ".config/opencode",
+            Agent::Antigravity => ".gemini/antigravity-cli",
         };
         home.join(part)
     }
@@ -135,19 +247,84 @@ impl Agent {
             Agent::Codex => ".codex/skills",
             Agent::Cursor => ".cursor/skills",
             Agent::OpenCode => ".config/opencode/skills",
+            Agent::Antigravity => ".gemini/config/plugins/agent-gossip/skills",
         };
         home.join(relative)
     }
 
+    /// The folder an agent loads as one plugin. agy also loads bare skills from
+    /// `~/.gemini/config/skills`, but the plugin keeps the skills and the Stop
+    /// hook in one unit that installs and uninstalls together. The user can
+    /// keep their own files in it, so `plug` and `unplug` touch only what
+    /// `plug` wrote.
+    pub(crate) fn plugin_root(self, home: &Path) -> Option<PathBuf> {
+        match self {
+            Agent::Antigravity => Some(home.join(".gemini/config/plugins/agent-gossip")),
+            Agent::ClaudeCode | Agent::Pi | Agent::Codex | Agent::Cursor | Agent::OpenCode => None,
+        }
+    }
+
+    /// The files `plug` writes beside the skills inside [`Self::plugin_root`].
+    pub(crate) fn plugin_files(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Agent::Antigravity => &[
+                ("plugin.json", ANTIGRAVITY_PLUGIN_JSON),
+                ("hooks.json", ANTIGRAVITY_HOOKS_JSON),
+            ],
+            Agent::ClaudeCode | Agent::Pi | Agent::Codex | Agent::Cursor | Agent::OpenCode => &[],
+        }
+    }
+
+    /// The plugin files on disk that `plug` wrote, in this or an older version.
+    /// A file that fails [`is_plugin_file_of_ours`] is the user's, and `plug`
+    /// and `unplug` leave it alone.
+    pub(crate) fn owned_plugin_files(self, home: &Path) -> Vec<PathBuf> {
+        let Some(root) = self.plugin_root(home) else {
+            return Vec::new();
+        };
+        let is_ours = |&&(name, _): &&(&str, &str)| {
+            std::fs::read(root.join(name))
+                .is_ok_and(|on_disk| is_plugin_file_of_ours(name, &on_disk))
+        };
+        let ours = self.plugin_files().iter().filter(is_ours);
+        ours.map(|&(name, _)| root.join(name)).collect()
+    }
+
+    /// The plugin files in place that `plug` did not write and will not touch.
+    pub(crate) fn foreign_plugin_files(self, home: &Path) -> Vec<&'static str> {
+        let Some(root) = self.plugin_root(home) else {
+            return Vec::new();
+        };
+        let owned = self.owned_plugin_files(home);
+        let is_foreign = |&&(name, _): &&(&str, &str)| {
+            let path = root.join(name);
+            path.exists() && !owned.contains(&path)
+        };
+        let foreign = self.plugin_files().iter().filter(is_foreign);
+        foreign.map(|&(name, _)| name).collect()
+    }
+
     pub(crate) fn installed(self, home: &Path) -> bool {
         let dirs = self.owned_skill_dirs(home);
-        dirs.into_iter()
-            .any(|path| path.is_symlink() || path.exists())
+        let has_skills = dirs
+            .into_iter()
+            .any(|path| path.is_symlink() || path.exists());
+        has_skills || !self.owned_plugin_files(home).is_empty()
     }
 
     /// Does the installed copy match the embedded one?
     fn in_sync(self, home: &Path) -> bool {
-        dir_in_sync(&SKILLS, &self.install_path(home))
+        self.plugin_files_in_sync(home) && dir_in_sync(&SKILLS, &self.install_path(home))
+    }
+
+    fn plugin_files_in_sync(self, home: &Path) -> bool {
+        let Some(root) = self.plugin_root(home) else {
+            return true;
+        };
+        let matches = |&(name, contents): &(&str, &str)| {
+            std::fs::read(root.join(name)).is_ok_and(|on_disk| on_disk == contents.as_bytes())
+        };
+        self.plugin_files().iter().all(matches)
     }
 
     pub(crate) fn owned_skill_dirs(self, home: &Path) -> Vec<PathBuf> {
@@ -259,12 +436,11 @@ mod tests {
 
     use super::{Agent, OWNED_SKILL_DIRS, SKILLS};
 
-    /// The embedded tree is the *generated* one: exactly one `SKILL.md` per
-    /// skill dir, no `shared/`, no partials, and no leftover runtime reads or
-    /// unrendered slots — the whole point of the build-time renderer is that
-    /// an agent never spends a round trip reading a second file.
+    /// The embedded tree is the *generated* one: a `SKILL.md` per skill dir and
+    /// at most a `references/` folder of markdown files beside it. No `shared/`,
+    /// no partials, and no leftover directives or runtime reads of the sources.
     #[test]
-    fn embedded_skills_are_single_file() {
+    fn embedded_skills_are_a_skill_file_plus_references() {
         for skill in OWNED_SKILL_DIRS {
             let dir = SKILLS
                 .get_dir(skill)
@@ -272,23 +448,39 @@ mod tests {
             let files: Vec<_> = dir.files().collect();
             let file_paths: Vec<&Path> = files.iter().map(|file| file.path()).collect();
             assert_eq!(
-                files.len(),
-                1,
-                "{skill}: exactly one embedded file, found {file_paths:?}"
+                file_paths,
+                [Path::new(&format!("{skill}/SKILL.md"))],
+                "{skill}: the skill dir holds the SKILL.md and nothing else loose"
             );
-            assert!(dir.dirs().next().is_none(), "{skill}: no embedded subdirs");
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let subdirs: Vec<&Path> = dir.dirs().map(Dir::path).collect();
             assert!(
-                !body.contains("Read `../shared/") && !body.contains("Read `workflow.md`"),
-                "{skill}: generated skill must not instruct runtime file reads"
+                subdirs.iter().all(|path| path.ends_with("references")),
+                "{skill}: only a references folder may sit beside the SKILL.md: {subdirs:?}"
             );
-            assert!(
-                !body.contains("<!-- include") && !body.contains("<!-- slot"),
-                "{skill}: generated skill carries an unrendered directive"
-            );
+            for file in skill_files(skill) {
+                let body = file
+                    .contents_utf8()
+                    .unwrap_or_else(|| panic!("{:?} is embedded utf-8", file.path()));
+                assert!(
+                    !body.contains("Read `../shared/") && !body.contains("Read `workflow.md`"),
+                    "{:?}: a generated file must not point at the sources",
+                    file.path()
+                );
+                assert!(
+                    !body.contains("<!-- include")
+                        && !body.contains("<!-- slot")
+                        && !body.contains("<!-- reference"),
+                    "{:?}: a generated file carries an unrendered directive",
+                    file.path()
+                );
+            }
+            if let Some(references) = dir.get_dir(format!("{skill}/references")) {
+                let no_subdirs = references.dirs().next().is_none();
+                assert!(
+                    no_subdirs && references.files().all(is_markdown),
+                    "{skill}: references holds markdown files only"
+                );
+            }
         }
         assert!(
             SKILLS.get_dir("shared").is_none(),
@@ -303,6 +495,94 @@ mod tests {
             SKILLS.dirs().count(),
             OWNED_SKILL_DIRS.len(),
             "embedded skill tree and OWNED_SKILL_DIRS disagree: {dir_paths:?}"
+        );
+    }
+
+    /// A reference no `SKILL.md` names is never read, and a name that no file
+    /// answers sends the agent to a path that is not there.
+    #[test]
+    fn every_reference_is_named_by_its_skill_and_exists() {
+        for skill in OWNED_SKILL_DIRS {
+            let mentions = skill_body(skill).split("references/").skip(1);
+            let candidates = mentions.filter_map(|rest| rest.split_once(".md"));
+            let is_name = |name: &&str| name.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-');
+            let mentioned: Vec<&str> = candidates.map(|(name, _)| name).filter(is_name).collect();
+            let files = skill_files(skill);
+            let present: Vec<String> = files.iter().skip(1).map(|file| stem_of(file)).collect();
+            for name in &mentioned {
+                assert!(
+                    present.iter().any(|have| have == name),
+                    "{skill}: the SKILL.md names references/{name}.md, which is not rendered"
+                );
+            }
+            for have in &present {
+                assert!(
+                    mentioned.iter().any(|name| name == have),
+                    "{skill}: references/{have}.md is rendered but the SKILL.md never names it"
+                );
+            }
+        }
+    }
+
+    /// The rules that moved out of a `SKILL.md` stay reachable only if the
+    /// body says which file holds them and when to read it. A skill that sends
+    /// or answers tasks, asks the user, or handles events needs those three.
+    #[test]
+    fn skills_name_the_references_that_hold_their_rules() {
+        let standard = ["event-handling", "decisions", "reattach"];
+        let starters = ["gossip-create", "gossip-join", "gossip-topic"];
+        let pickers = ["gossip-task", "gossip-review", "gossip-orchestrate"];
+        for skill in OWNED_SKILL_DIRS {
+            let body = skill_body(skill);
+            let wants_standard =
+                !["gossip-discover", "gossip-doctor", "gossip-leave"].contains(skill);
+            for name in standard {
+                assert_eq!(
+                    body.contains(&format!("references/{name}.md")),
+                    wants_standard,
+                    "{skill}: the SKILL.md must name references/{name}.md exactly when the skill handles events"
+                );
+            }
+            let extras = [
+                ("pi", starters.contains(skill)),
+                ("meta", starters.contains(skill)),
+                ("pick-peers", pickers.contains(skill)),
+            ];
+            for (name, wanted) in extras {
+                assert_eq!(
+                    body.contains(&format!("references/{name}.md")),
+                    wanted,
+                    "{skill}: references/{name}.md is named by the wrong skills"
+                );
+            }
+            if wants_standard {
+                let flat: Vec<&str> = body.split_whitespace().collect();
+                assert!(
+                    flat.join(" ")
+                        .contains("before you handle the first batch of events"),
+                    "{skill}: the SKILL.md must say when to read the event rules"
+                );
+            }
+        }
+    }
+
+    /// agy loads only the first 24000 bytes of a skill body, so the text after
+    /// that is never read: a rule past the cut does not exist for the agent.
+    /// Every harness gets the same rendered tree, so the limit binds them all.
+    #[test]
+    fn every_skill_body_fits_the_agy_load_limit() {
+        const LOAD_LIMIT: usize = 24_000;
+        let mut over: Vec<String> = Vec::new();
+        for skill in OWNED_SKILL_DIRS {
+            let body = without_frontmatter(skill_body(skill));
+            if body.len() >= LOAD_LIMIT {
+                over.push(format!("{skill}: {} bytes", body.len()));
+            }
+        }
+        assert!(
+            over.is_empty(),
+            "skill bodies over {LOAD_LIMIT} bytes:\n{}",
+            over.join("\n")
         );
     }
 
@@ -335,6 +615,12 @@ mod tests {
             "reattach.md",
             "receive-loop.md",
             "bell-hook.yaml",
+            "agy-sandbox.md",
+            "daemon-session-pi.md",
+            "event-handling.md",
+            "meta-pointer.md",
+            "receive-loop-details.md",
+            "references.md",
         ] {
             assert!(root.join("shared").join(partial).is_file(), "{partial}");
         }
@@ -362,11 +648,59 @@ mod tests {
         );
     }
 
-    fn rendered(skill: &str) -> &'static str {
-        SKILLS
+    /// The `SKILL.md` first, then every file under `references/` by name.
+    fn skill_files(skill: &str) -> Vec<&'static include_dir::File<'static>> {
+        let dir = SKILLS
+            .get_dir(skill)
+            .unwrap_or_else(|| panic!("{skill} is embedded"));
+        let main = dir
             .get_file(format!("{skill}/SKILL.md"))
-            .and_then(include_dir::File::contents_utf8)
+            .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded"));
+        let folder = dir.get_dir(format!("{skill}/references"));
+        let mut references: Vec<_> = folder
+            .map(|found| found.files().collect())
+            .unwrap_or_default();
+        references.sort_by_key(|file| file.path());
+        let mut files = vec![main];
+        files.extend(references);
+        files
+    }
+
+    fn is_markdown(file: &include_dir::File<'_>) -> bool {
+        file.path().extension().is_some_and(|ext| ext == "md")
+    }
+
+    fn stem_of(file: &include_dir::File<'_>) -> String {
+        let stem = file.path().file_stem().unwrap_or_default();
+        stem.to_string_lossy().into_owned()
+    }
+
+    /// The `SKILL.md` alone: what an agent has before it reads a reference.
+    fn skill_body(skill: &str) -> &'static str {
+        skill_files(skill)[0]
+            .contents_utf8()
             .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
+    }
+
+    /// The `SKILL.md` and its references joined: what an agent has read by the
+    /// end of a run, so a rule counts wherever the skill put it.
+    fn rendered(skill: &str) -> &'static str {
+        let mut whole = String::new();
+        for file in skill_files(skill) {
+            whole.push_str(
+                file.contents_utf8()
+                    .unwrap_or_else(|| panic!("{:?} is embedded utf-8", file.path())),
+            );
+            whole.push('\n');
+        }
+        Box::leak(whole.into_boxed_str())
+    }
+
+    fn without_frontmatter(file: &str) -> &str {
+        let after_open = file.strip_prefix("---\n").unwrap_or(file);
+        after_open
+            .split_once("\n---\n")
+            .map_or(file, |(_, body)| body)
     }
 
     fn frontmatter(body: &str) -> &str {
@@ -483,16 +817,211 @@ mod tests {
         );
     }
 
+    /// agy reaches its shell through `run_command`, which has no `timeout` and
+    /// no background flag. Its parameters decide whether the bell is a bell,
+    /// and the Standard Sandbox cannot reach the daemon socket.
+    #[test]
+    fn agy_text_names_the_run_command_parameters_and_the_sandbox() {
+        for skill in [
+            "gossip-create",
+            "gossip-join",
+            "gossip-topic",
+            "gossip-reattach",
+        ] {
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            let body = flat.join(" ");
+            for needle in [
+                "`WaitMsBeforeAsync`",
+                "`IsDaemon`",
+                "`NotificationTimeoutSeconds`",
+                "`BypassSandbox` true",
+                "exits with code 1 within seconds is the sandbox",
+            ] {
+                assert!(
+                    body.contains(needle),
+                    "{skill}: agy gets a wrong or missing parameter unless the text says {needle}"
+                );
+            }
+            // Only the skills that launch the daemon run a foreground command
+            // that agy can move to the background. agy 1.5.12 has no
+            // `command_status` tool: it delivers a completion message by itself
+            // and offers `manage_task` for a check on demand.
+            let waits = body.contains("`manage_task`") && body.contains("completion message");
+            assert!(
+                skill == "gossip-reattach" || waits,
+                "{skill}: a command that agy backgrounds is awaited by its completion message, or checked with `manage_task`"
+            );
+            assert!(
+                !body.contains("command_status"),
+                "{skill}: agy has no command_status tool"
+            );
+            assert!(
+                !body.contains("give the background bell the longest timeout that it accepts"),
+                "{skill}: agy has no timeout parameter to give"
+            );
+            assert!(
+                !body.contains("On Claude Code and Antigravity, a background task ends"),
+                "{skill}: only Claude Code stops a background task at its timeout"
+            );
+        }
+        assert!(
+            rendered("gossip-leave").contains("`BypassSandbox` true"),
+            "gossip-leave runs agent-gossip too, so the sandbox must be off"
+        );
+        let discover = rendered("gossip-discover");
+        assert!(
+            discover.contains("`manage_task`")
+                && discover.contains("completion message")
+                && discover.contains("`BypassSandbox` true")
+                && !discover.contains("command_status"),
+            "gossip-discover waits 25 s, longer than agy keeps a command in the foreground"
+        );
+    }
+
+    /// Every skill runs `agent-gossip` in a shell, and in agy the Standard
+    /// Sandbox cannot reach the daemon. A one-shot skill such as ping or
+    /// status never carries the daemon launch text, so the rule has to ride
+    /// in every skill, or its commands fail with no daemon found.
+    #[test]
+    fn every_skill_tells_agy_to_bypass_the_sandbox() {
+        for skill in OWNED_SKILL_DIRS {
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            let body = flat.join(" ");
+            assert!(
+                body.contains("`BypassSandbox` true")
+                    && body.contains("No active gossip server running"),
+                "{skill}: its agent-gossip commands fail in the agy sandbox unless the text says so"
+            );
+        }
+    }
+
+    /// The settle window delays the bell so that a turn ends before the next
+    /// wake and the printed lines render. The three places that mention it
+    /// must agree on which harnesses carry it.
+    #[test]
+    fn the_settle_window_text_agrees_for_agy() {
+        assert!(
+            rendered("gossip-topic").contains("## Settle bell — Claude Code and Antigravity"),
+            "the topic skill must give agy the bell that its daemon text gives it"
+        );
+        assert!(
+            rendered("gossip-topic").contains("a topic gossip on Claude Code and Antigravity"),
+            "the receive loop must name agy beside Claude Code for the settle flag"
+        );
+        let flat: Vec<&str> = rendered("gossip-topic").split_whitespace().collect();
+        assert!(
+            flat.join(" ")
+                .contains("a topic gossip's settle window on Claude Code and Antigravity"),
+            "the daemon text must not say that the settle window is for Claude Code only"
+        );
+    }
+
+    /// agy 1.5.12 slash expansion matches only the namespaced form of a plugin
+    /// skill, so a bare `/gossip-join` does nothing there. The prefix text names
+    /// `/agent-gossip:` for agy and keeps the bare `/` for the others.
+    #[test]
+    fn agy_commands_carry_the_plugin_namespace() {
+        for skill in OWNED_SKILL_DIRS {
+            if *skill == "gossip-doctor" {
+                continue;
+            }
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            let body = flat.join(" ");
+            assert!(
+                body.contains("Antigravity (agy): `/agent-gossip:gossip-*`")
+                    && body.contains("`/agent-gossip:` for Antigravity"),
+                "{skill}: the prefix text must give agy the namespaced command"
+            );
+            for line in rendered(skill)
+                .lines()
+                .filter(|line| line.contains("/gossip-"))
+            {
+                assert!(
+                    line.contains("All other harnesses"),
+                    "{skill}: a bare /gossip- command that agy cannot run: {line}"
+                );
+            }
+        }
+    }
+
+    /// agy runs several `run_command` calls of one message one after the other,
+    /// in order, so the three calls of the session start run as daemon, bell,
+    /// gate.
+    #[test]
+    fn agy_text_says_that_parallel_calls_run_in_order() {
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            assert!(
+                flat.join(" ").contains("one after the other, in order"),
+                "{skill}: the agy text must say that the three calls run in order"
+            );
+        }
+    }
+
+    /// A reference read before a context compaction is gone after it, so the
+    /// body must say to read it again.
+    #[test]
+    fn skills_say_to_read_a_reference_again_after_a_compaction() {
+        for skill in OWNED_SKILL_DIRS {
+            if ["gossip-discover", "gossip-doctor", "gossip-leave"].contains(skill) {
+                continue;
+            }
+            let flat: Vec<&str> = skill_body(skill).split_whitespace().collect();
+            assert!(
+                flat.join(" ").contains("again after a context compaction"),
+                "{skill}: the SKILL.md must say to read a reference again after a compaction"
+            );
+        }
+    }
+
+    /// The pointer for the agy parameters names the section that holds the
+    /// sandbox rule, and that section is in every skill.
+    #[test]
+    fn the_bell_pointer_names_the_section_that_holds_the_sandbox_rule() {
+        let flat: Vec<&str> = rendered("gossip-ping").split_whitespace().collect();
+        let body = flat.join(" ");
+        assert!(
+            body.contains("as **Running commands in Antigravity** says")
+                && !body.contains("as the Daemon session section says"),
+            "ping has no Daemon session section, so the pointer must name the shared section"
+        );
+    }
+
+    /// agy has the detached daemon, so `leave` takes the detached path there
+    /// too, and the wording of the generic text must not name another
+    /// harness's tools.
+    #[test]
+    fn leave_and_generic_text_fit_agy() {
+        assert!(
+            rendered("gossip-leave")
+                .contains("On Claude Code and Antigravity, the daemon is detached"),
+            "agy has the detached daemon, so its leave is the detached leave"
+        );
+        let join = rendered("gossip-join");
+        let generic = join
+            .split_once("#### Task widget — Claude Code")
+            .map_or(join, |(head, _)| head);
+        assert!(
+            !generic.contains("`TaskGet`"),
+            "the generic task text must not name a Claude Code tool"
+        );
+        assert!(
+            join.contains("`ask_question`") && join.contains("no description field"),
+            "agy's question widget takes strings, so what an option does goes in its label"
+        );
+        assert!(
+            join.contains("`Pi`, `Antigravity CLI`"),
+            "the harness list names the product as the README and the manual do"
+        );
+    }
+
     /// The Monitor prohibition, pinned on the *generated* content: the daemon
     /// starters must never tell an agent to use a watch/push tool (it
     /// truncates message bodies and persists them to disk).
     #[test]
     fn generated_daemon_starters_never_mention_monitor() {
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             assert!(
                 !body.contains("Monitor"),
                 "{skill}: generated skill must not route through a Monitor/watch tool"
@@ -809,10 +1338,7 @@ mod tests {
     #[test]
     fn printed_skill_commands_are_code() {
         for skill in OWNED_SKILL_DIRS {
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             for line in body.lines().filter(|line| line.starts_with('💬')) {
                 let bare_command = line
                     .split('`')
@@ -849,6 +1375,44 @@ mod tests {
             opencode.ends_with(".config/opencode/skills"),
             "OpenCode must install under .config/opencode/skills, got {opencode:?}"
         );
+    }
+
+    /// The plugin is the unit for the skills and the Stop hook, so the skill
+    /// root sits inside the plugin folder. Only `~/.gemini/antigravity-cli`
+    /// proves agy is here: `~/.gemini` alone also belongs to other Gemini tools.
+    #[test]
+    fn antigravity_installs_into_a_plugin_and_is_detected_by_its_cli_dir() {
+        let home = std::env::temp_dir().join(format!("agent-gossip-agy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(
+            Agent::Antigravity.install_path(&home),
+            home.join(".gemini/config/plugins/agent-gossip/skills"),
+            "agy skills live in the agent-gossip plugin"
+        );
+        assert_eq!(
+            Agent::Antigravity.label(),
+            "antigravity",
+            "the --agent value and the roster line use the full name"
+        );
+
+        std::fs::create_dir_all(home.join(".gemini")).expect("the test temp directory is writable");
+        assert!(
+            !Agent::Antigravity.detected(&home),
+            "a bare ~/.gemini is not agy"
+        );
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        assert!(
+            Agent::Antigravity.detected(&home),
+            "~/.gemini/antigravity-cli marks agy as present"
+        );
+        assert_eq!(
+            Agent::ALL.last(),
+            Some(&Agent::Antigravity),
+            "agy is listed last, after the agents that already shipped"
+        );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     #[test]

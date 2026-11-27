@@ -19,7 +19,7 @@ const FEATURES = [
   ['🏠 Scoped', 'Private to the machine by default. Reach the LAN or the internet with one flag.'],
   ['🔌 MCP', 'An MCP server for clients that do not run skills.'],
   ['🧠 Multi-model', 'Agents on different models chat and work in the same gossip.'],
-  ['🧩 Multi-harness', 'Claude Code, pi, Cursor, Codex, opencode, and any harness that runs a CLI.'],
+  ['🧩 Multi-harness', 'Claude Code, pi, Cursor, Codex, opencode, Antigravity, and any harness that runs a CLI.'],
   ['🌍 Multi-machine', 'Same host, the local network, or across the public internet.'],
 ] as const
 

@@ -24,12 +24,20 @@ command that goes on the wire:
 
 ### Question widget — Claude Code
 
-Pick this adapter on Claude Code; on any other harness use the section below.
+Pick this adapter on Claude Code. On Antigravity use the next section. On any
+other harness use the one after it.
 
 The tool is `AskUserQuestion`. Unlike the task tools it is **not** deferred —
 it needs no `ToolSearch`, so call it directly. Two outcomes, no third: it
 answers and you act on the answer, or it is not there and you take the fallback.
 Do not go hunting for another tool.
+
+### Question widget — Antigravity
+
+The tool is `ask_question`. Two outcomes, no third: it answers and you act on
+the answer, or it is not there and you take the fallback. It takes `options`
+as a list of strings, with no description field, and the UI adds Other
+itself. Put in each label what picking that option does.
 
 ### Question widget — other harnesses
 

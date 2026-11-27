@@ -157,14 +157,14 @@ context clear. This holds for a follow-up that opens a new task, and for a task
 that you send to fix a failure.
 
 After a context compaction or a day change, call the harness's native task-list
-operation, not peer-scoped A2A `ListTasks`. The list gives each row's id, subject
-and status, not the full task id or the counterparty. Read each row's description
-with `TaskGet` for those. Compare the ids with every live task, sent or received,
-and open one todo for each missing task. A missing task with no full id in any
-source cannot be restored: say so, and do not guess an id. Do not recover a task
-when only an untracked `task_stalled` event names it: the event is stale. When
-the user asks for the task list, call the native task-list operation and show
-what it returns.
+operation, not peer-scoped A2A `ListTasks`. The list gives each row's id,
+subject and status, not the full task id or the counterparty. Read each row's
+description with the harness's task-get operation for those. Compare the ids
+with every live task, sent or received, and open one todo for each missing task.
+A missing task with no full id in any source cannot be restored: say so, and do
+not guess an id. Do not recover a task when only an untracked `task_stalled`
+event names it: the event is stale. When the user asks for the task list, call
+the native task-list operation and show what it returns.
 
 A harness without a list operation cannot run these checks. Such a harness keeps
 the task ids and labels for every live task, including received tasks, in its
@@ -338,6 +338,9 @@ an id kept anywhere tidier cannot be found again after a gap marker, a
 reattach, or a compaction. Ignore `metadata`: no read path returns it.
 
 #### Task widget — other harnesses
+
+Antigravity (agy) has no todo tool. On Antigravity take the fallback above at
+once, and say so once at delegation time.
 
 Use the native todo/plan tool if one is loaded, driving the lifecycle above.
 Otherwise take the fallback.
