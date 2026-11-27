@@ -625,6 +625,20 @@ mod nickname_held_tests {
         );
     }
 
+    /// The line keeps the key order that `skills/shared/events.md` and the manual show.
+    #[test]
+    fn the_nickname_held_line_has_the_documented_key_order() {
+        let line = super::super::simple_event::event_json(&super::OutputEvent::NicknameHeld {
+            nickname: "calm-otter".to_owned(),
+        })
+        .expect("the event has a JSON line");
+        assert_eq!(
+            line,
+            r#"{"event":"nickname_held","nickname":"calm-otter","display":"`calm-otter` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one","is_visible":true}"#,
+            "the keys come as event, nickname, display"
+        );
+    }
+
     /// The poll shows the event with a display line, like the other visible events.
     #[test]
     fn the_nickname_held_line_has_a_display_line() {

@@ -80,6 +80,11 @@ enum SimpleEvent<'source> {
     Error {
         message: &'source str,
     },
+    NicknameHeld {
+        nickname: &'source str,
+        /// Pre-formatted line (see [`nickname_held_display`]).
+        display: String,
+    },
     EventsLost {
         lost: u64,
         /// Pre-formatted line (see [`events_lost_display`]).
@@ -331,6 +336,13 @@ fn task_stalled_event<'a>(
 /// `display` line for a `peer_return` event.
 fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
+}
+
+/// `display` line for a `nickname_held` event.
+fn nickname_held_display(nickname: &str) -> String {
+    format!(
+        "`{nickname}` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"
+    )
 }
 
 /// `display` line for an `events_lost` event.
@@ -915,14 +927,13 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
         }
-        OutputEvent::NicknameHeld { nickname } => serde_json::to_string(&serde_json::json!({
-            "event": "nickname_held",
-            "nickname": nickname,
-            "display": format!(
-                "`{nickname}` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"
-            ),
-        }))
-        .ok(),
+        OutputEvent::NicknameHeld { nickname } => {
+            serde_json::to_string(&SimpleEvent::NicknameHeld {
+                nickname,
+                display: nickname_held_display(nickname),
+            })
+            .ok()
+        }
         OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
             lost: *lost,
             display: events_lost_display(*lost),
