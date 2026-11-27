@@ -49,19 +49,17 @@ pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
     Ok(())
 }
 
-/// One ticket-directory change as a JSON line. `Found`/`Updated` both surface as
-/// `ticket_found` (upsert semantics); a departure is `ticket_lost`. The full
+/// One ticket-directory change as a JSON line. `Found` surfaces as `ticket_found`
+/// (upsert semantics); a departure is `ticket_lost`. The full
 /// ticket is the machine product — strip nothing.
 fn ticket_event_json(event: &TicketDirectoryEvent) -> String {
     let value = match event {
-        TicketDirectoryEvent::Found(listing) | TicketDirectoryEvent::Updated(listing) => {
-            serde_json::json!({
-                "event": "ticket_found",
-                "ticket": listing.ticket,
-                "label": listing.label,
-                "password": listing.password,
-            })
-        }
+        TicketDirectoryEvent::Found(listing) => serde_json::json!({
+            "event": "ticket_found",
+            "ticket": listing.ticket,
+            "label": listing.label,
+            "password": listing.password,
+        }),
         TicketDirectoryEvent::Lost(ticket) => serde_json::json!({
             "event": "ticket_lost",
             "ticket": ticket,

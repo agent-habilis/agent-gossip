@@ -10,6 +10,7 @@
 //! / [`TicketDirectory`]) wrap it around a directory [`MeshSession`].
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -71,13 +72,6 @@ pub(crate) struct TicketListing {
     last_seen: Instant,
 }
 
-/// The change one [`TicketListings::note`] made, keyed by the ticket string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TicketChange {
-    Found(String),
-    Updated(String),
-}
-
 /// The pure, network-free ticket collector.
 #[derive(Debug, Default)]
 pub(crate) struct TicketListings {
@@ -85,17 +79,11 @@ pub(crate) struct TicketListings {
 }
 
 impl TicketListings {
-    pub(crate) fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-
     /// Process one directory message body. A valid [`TicketAd`] whose ticket
-    /// decodes as an a2a ticket refreshes liveness; `Found` for a new ticket,
-    /// `Updated` only when the label changed, `None` for an unchanged re-ad, a
-    /// non-a2a ticket, or an unparseable body.
-    pub(crate) fn note(&mut self, body: &str, now: Instant) -> Option<TicketChange> {
+    /// decodes as an a2a ticket refreshes liveness; the listing for a new
+    /// ticket or a changed label, `None` for an unchanged re-ad, a non-a2a
+    /// ticket, or an unparseable body.
+    pub(crate) fn note(&mut self, body: &str, now: Instant) -> Option<&TicketListing> {
         let ad = TicketAd::parse(body)?;
         // The structural ticket decode is the validity gate (prefix + checksum).
         let password = A2aTicket::decode(&ad.ticket).ok()?.password;
@@ -103,16 +91,8 @@ impl TicketListings {
             .label
             .map(|label| label.chars().take(MAX_LABEL_CHARS).collect());
 
-        if let Some(listing) = self.entries.get_mut(&ad.ticket) {
-            listing.last_seen = now;
-            if listing.label == label {
-                return None;
-            }
-            listing.label = label;
-            return Some(TicketChange::Updated(ad.ticket));
-        }
-
-        if self.entries.len() >= MAX_LISTINGS
+        if !self.entries.contains_key(&ad.ticket)
+            && self.entries.len() >= MAX_LISTINGS
             && let Some((ticket, _)) = self
                 .entries
                 .iter()
@@ -121,16 +101,26 @@ impl TicketListings {
             let stalest = ticket.clone();
             self.entries.remove(&stalest);
         }
-        self.entries.insert(
-            ad.ticket.clone(),
-            TicketListing {
-                ticket: ad.ticket.clone(),
-                label,
-                password,
-                last_seen: now,
-            },
-        );
-        Some(TicketChange::Found(ad.ticket))
+        match self.entries.entry(ad.ticket) {
+            Entry::Occupied(occupied) => {
+                let listing = occupied.into_mut();
+                listing.last_seen = now;
+                if listing.label == label {
+                    return None;
+                }
+                listing.label = label;
+                Some(listing)
+            }
+            Entry::Vacant(vacant) => {
+                let ticket = vacant.key().clone();
+                Some(vacant.insert(TicketListing {
+                    ticket,
+                    label,
+                    password,
+                    last_seen: now,
+                }))
+            }
+        }
     }
 
     /// Drop every listing whose last ad is older than `ttl`, returning the
@@ -145,10 +135,6 @@ impl TicketListings {
             alive
         });
         expired
-    }
-
-    fn get(&self, ticket: &str) -> Option<&TicketListing> {
-        self.entries.get(ticket)
     }
 
     /// The current listings, sorted by label then ticket. Test-only: the live
@@ -211,8 +197,8 @@ pub(crate) fn spawn_ticket_advertiser(
 /// A ticket-directory change observed by a [`TicketDirectory`].
 #[derive(Debug, Clone)]
 pub(crate) enum TicketDirectoryEvent {
+    /// A new ticket, or a listed ticket whose label changed.
     Found(TicketListing),
-    Updated(TicketListing),
     Lost(String),
     /// The feed dropped this many events since the last one it sent, so the listing may be stale.
     EventsLost(u64),
@@ -251,7 +237,7 @@ impl TicketDirectory {
         let mesh = directory::directory_mesh(&name, resolved);
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
-        let mut listings = TicketListings::new();
+        let mut listings = TicketListings::default();
         let (events_tx, events_rx) = event_sink::event_feed();
 
         let task = tokio::spawn(async move {
@@ -263,21 +249,8 @@ impl TicketDirectory {
                     received = inbound.recv() => match received {
                         Ok(message) => {
                             let now = Instant::now();
-                            let event = {
-                                let change = listings.note(message.body.as_str(), now);
-                                let listing_of = |ticket: &str| listings.get(ticket).cloned();
-                                match change {
-                                    Some(TicketChange::Found(ticket)) => {
-                                        listing_of(&ticket).map(TicketDirectoryEvent::Found)
-                                    }
-                                    Some(TicketChange::Updated(ticket)) => {
-                                        listing_of(&ticket).map(TicketDirectoryEvent::Updated)
-                                    }
-                                    None => None,
-                                }
-                            };
-                            if let Some(event) = event {
-                                events_tx.publish(event);
+                            if let Some(listing) = listings.note(message.body.as_str(), now) {
+                                events_tx.publish(TicketDirectoryEvent::Found(listing.clone()));
                             }
                         }
                         // A slow consumer dropped inbound — listings self-heal on
@@ -303,7 +276,7 @@ impl TicketDirectory {
         })
     }
 
-    /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
+    /// Take the event stream (`Found` / `Lost`). Single-consumer:
     /// returns the receiver once, then `None`.
     pub(crate) fn events(&mut self) -> Option<event_sink::EventReceiver<TicketDirectoryEvent>> {
         self.events_rx.take()
@@ -347,7 +320,7 @@ mod tests {
     use habilis_network::iroh::{EndpointAddr, SecretKey};
     use habilis_network::protocol::LookupOpts;
 
-    use super::{TicketAd, TicketChange, TicketListings};
+    use super::{TicketAd, TicketListings};
     use crate::tunnel::a2a_ticket::A2aTicket;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
@@ -385,14 +358,11 @@ mod tests {
     #[test]
     fn note_found_then_updated_then_expire_lost() {
         let ticket = a2a_ticket(7, false);
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         let start = Instant::now();
 
         assert!(
-            matches!(
-                dir.note(&ad_body(&ticket, Some("one")), start),
-                Some(TicketChange::Found(_))
-            ),
+            dir.note(&ad_body(&ticket, Some("one")), start).is_some(),
             "the first ad is a new listing"
         );
         assert!(
@@ -404,13 +374,11 @@ mod tests {
             "an unchanged re-ad refreshes liveness without an event"
         );
         assert!(
-            matches!(
-                dir.note(
-                    &ad_body(&ticket, Some("two")),
-                    start + Duration::from_secs(30)
-                ),
-                Some(TicketChange::Updated(_))
-            ),
+            dir.note(
+                &ad_body(&ticket, Some("two")),
+                start + Duration::from_secs(30)
+            )
+            .is_some(),
             "a changed label is an update"
         );
         assert_eq!(
@@ -430,7 +398,7 @@ mod tests {
     #[test]
     fn passworded_ticket_listing_carries_the_flag() {
         let ticket = a2a_ticket(5, true);
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         dir.note(&ad_body(&ticket, Some("drop")), Instant::now());
         assert!(dir.snapshot()[0].password, "a password listing is flagged");
     }
@@ -439,7 +407,7 @@ mod tests {
     fn hostile_labels_are_truncated() {
         let ticket = a2a_ticket(9, false);
         let long = "x".repeat(10_000);
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         dir.note(&ad_body(&ticket, Some(&long)), Instant::now());
         assert_eq!(
             dir.snapshot()[0].label.as_ref().map(String::len),
@@ -450,7 +418,7 @@ mod tests {
 
     #[test]
     fn junk_and_malformed_tickets_are_ignored() {
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         assert!(
             dir.note("", Instant::now()).is_none(),
             "an empty note is ignored"
