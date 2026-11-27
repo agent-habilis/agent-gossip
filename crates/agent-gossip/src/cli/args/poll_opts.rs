@@ -224,8 +224,8 @@ mod tests {
         );
     }
 
-    /// `--after` is hidden from help but must keep parsing — it is the
-    /// debug/recovery replay and the old-protocol compatibility path.
+    /// `--after` is hidden from help but must keep parsing: it is the
+    /// debug and recovery replay, which the receive loop of the skills uses.
     #[test]
     fn hidden_after_still_parses() {
         let cli = parse(&[

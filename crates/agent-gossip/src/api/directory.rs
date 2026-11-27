@@ -294,11 +294,11 @@ impl Directory {
     }
 }
 
-/// habilis-network's `resolve_lookups` with the old `public` default: a networked
+/// habilis-network's `resolve_lookups` with a `public` default: a networked
 /// surface (a directory, a bridge) that names no lookup gets the all-on public
 /// preset. habilis-network moved that choice out to its callers. The lookups are
-/// baked into the gossip id, so this must resolve exactly as before, or peers
-/// on an older version land in a different directory.
+/// baked into the gossip id, so two peers that resolve them differently land
+/// in different directories.
 pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> LookupOpts {
     if public && !lookups.any() {
         LookupOpts::public_preset()

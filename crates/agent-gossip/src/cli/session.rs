@@ -144,18 +144,14 @@ struct Owner {
     pid: u32,
 }
 
-/// The live daemons that state their own pid. A daemon that predates the `pid` field
-/// cannot confirm an owner, so it is left out.
 async fn live_owners() -> Vec<Owner> {
     info_response::live_daemons()
         .await
         .into_iter()
-        .filter_map(|info| {
-            Some(Owner {
-                gossip: info.gossip,
-                nickname: info.nickname,
-                pid: info.pid?,
-            })
+        .map(|info| Owner {
+            gossip: info.gossip,
+            nickname: info.nickname,
+            pid: info.pid,
         })
         .collect()
 }
@@ -164,10 +160,7 @@ async fn live_owners() -> Vec<Owner> {
 ///
 /// Both halves matter. Matching only the mesh would still signal the wrong
 /// process when a stale file's pid has been reissued; matching only the pid
-/// would signal a live daemon that has nothing to do with the mesh named. A
-/// daemon predating this check answers without a `pid` and is treated as
-/// unconfirmed, which costs a stale entry a cleanup rather than risking a
-/// stranger's process.
+/// would signal a live daemon that has nothing to do with the mesh named.
 fn confirm_owner(owners: &[Owner], target: &Target) -> bool {
     owners.iter().any(|owner| {
         owner.pid == target.pid

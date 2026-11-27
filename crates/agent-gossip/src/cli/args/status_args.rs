@@ -14,7 +14,7 @@ pub(crate) struct StatusArgs {
     pub state: crate::a2a::TaskState,
     /// Optional message text (becomes the status message — a question, a
     /// completion summary, a failure reason).
-    #[arg(long = "text", alias = "note")]
+    #[arg(long = "text")]
     pub note: Option<String>,
     /// Mark the task as waiting on your own user, with the reason. Only
     /// valid with `--state working`; the next status clears it.

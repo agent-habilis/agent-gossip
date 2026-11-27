@@ -1322,7 +1322,7 @@ async fn test_silent_tasks_survive_while_daemons_live() {
 
 /// A peer's repeated `working` with no text changes nothing: the task is
 /// already `working`. Pre-fix each one surfaced to the initiator and woke its
-/// bell, which is what a 0.8/0.9 worker's manual beat loop still sends.
+/// bell.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_a_repeated_working_does_not_reach_the_initiator() {
     let worker_nick = "tk-repeat";
@@ -1384,13 +1384,15 @@ async fn test_a_repeated_working_does_not_reach_the_initiator() {
 async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     // The initiator reaps a closed record 3 s after close; the worker keeps its
     // own for the default 2 min, so it can still send on the task. The worker
-    // never beats inside the test: its first beat would make the initiator
-    // read 3 s of worker silence as death, and a slow approval hop under load
-    // would then cancel the live task.
+    // beats each second while the task is live, so the initiator does not read
+    // a slow approval hop as the death of the worker.
     let fast_reap = &FAST_TASK_TIMERS;
     let worker_nick = "tk-late";
-    let (creator, worker, mesh) =
-        task_pair(worker_nick, fast_reap, &[("--task-keepalive-secs", "3600")]);
+    let worker_beats = [
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, worker, mesh) = task_pair(worker_nick, fast_reap, &worker_beats);
 
     let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "count");
     await_offers(&worker, 1);
@@ -1746,7 +1748,7 @@ fn channel_wire_contract(channel: Channel) {
     assert_eq!(event["type"], label, "{label} event carries type:{label}");
     // The slice of an author replaces its old one, so the event holds no merge.
     assert!(
-        event["merge"].is_null(),
+        event.get("merge").is_none(),
         "{label} event has no merge, the engine replaces the slice of the author: {event}"
     );
     let creator_key = event["pubkey"]

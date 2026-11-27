@@ -389,7 +389,7 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
 }
 
 /// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
-/// beat from an old peer, or from a worker that never polled, reads as unknown.
+/// beat from a worker that never polled reads as unknown.
 #[must_use]
 pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
     let meta = update.metadata.as_ref()?;
@@ -430,7 +430,7 @@ pub fn status_metadata(waiting: Option<&str>, order_ms: u64) -> serde_json::Valu
     meta
 }
 
-/// The order value a status leg carries, when the peer sends one.
+/// The order value of a status leg. Only the cancel that a daemon sends on its own has none.
 #[must_use]
 pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
     update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
@@ -746,8 +746,7 @@ mod tests {
     }
 
     /// A status leg carries its order value next to the reason, and the reader
-    /// still finds the reason. A leg from a peer without the order value reads
-    /// as none.
+    /// still finds the reason. A leg without the order value reads as none.
     #[test]
     fn a_status_leg_carries_its_order_value_and_its_reason() {
         let task_id = crate::a2a::TaskId::random();

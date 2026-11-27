@@ -918,16 +918,20 @@ mod snapshots {
     }
 
     /// The `{"event":"state",…}` line a shared-state change emits on the
-    /// `--output json` stream: header + the applied `merge` document + the
-    /// newly-derived `document` + `display` + `self`. Field order is wire-pinned.
-    fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
-        let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
+    /// `--output json` stream: header + the newly-derived `document` + `display` +
+    /// `self`. Field order is wire-pinned.
+    fn snap_state(slice: &str, document: &serde_json::Value, is_self: bool) -> String {
         super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
-            &view(Message::fixture(MessageKind::State, &body)),
+            &view(Message::fixture(MessageKind::State, &slice_body(slice))),
             Some(document),
             is_self,
         )
+    }
+
+    /// The body of a slice frame, as the engine writes it.
+    fn slice_body(value: &str) -> String {
+        format!(r#"{{"version":1,"value":{value}}}"#)
     }
 
     /// Every peer's agent card, the shape a `meta` document holds.
@@ -958,14 +962,13 @@ mod snapshots {
 
     /// A `meta` event drops the derived document: it is every peer's agent
     /// card, ~4k tokens with four peers, and the skills read it on demand with
-    /// `meta get`. The merge and the display stay. Pre-fix every meta echo
-    /// repeated all cards, and polls after a join reached 30 KB.
+    /// `meta get`. The display stays. Pre-fix every meta echo repeated all
+    /// cards, and polls after a join reached 30 KB.
     #[test]
     fn a_meta_event_carries_no_document() {
-        let merge = serde_json::json!({"peers": {"aa": {"status": "busy"}}});
         let message = view(Message::fixture(
             MessageKind::State,
-            &format!(r#"{{"k":"merge","merge":{merge}}}"#),
+            &slice_body(r#"{"status":"busy"}"#),
         ));
         let document = four_card_meta_document();
         let line = super::super::simple_event::format_state_json(
@@ -980,23 +983,21 @@ mod snapshots {
             parsed.get("document").is_none(),
             "the large meta document stays in the state file, not in the event line: {line}"
         );
-        assert_eq!(parsed["merge"], merge, "the merge field is merge");
         assert!(
             parsed["display"]
                 .as_str()
                 .expect("the JSON field is a string in this test")
-                .contains("/peers/aa"),
-            "the display names the peer path"
+                .contains("changed shared state"),
+            "the display line stays on a meta event: {line}"
         );
     }
 
     /// Pin: a `state` event keeps its document; the MCP tools promise it.
     #[test]
     fn a_state_event_keeps_its_document() {
-        let merge = serde_json::json!({"turn": "b"});
         let message = view(Message::fixture(
             MessageKind::State,
-            &format!(r#"{{"k":"merge","merge":{merge}}}"#),
+            &slice_body(r#"{"turn":"b"}"#),
         ));
         let document = serde_json::json!({"turn": "b"});
         let line = super::super::simple_event::format_state_json(
@@ -1020,26 +1021,6 @@ mod snapshots {
             &serde_json::json!({"turn": "b", "n": 1}),
             false,
         ));
-    }
-
-    #[test]
-    fn state_display_sanitizes_peer_controlled_paths() {
-        // A peer-crafted merge key with a backtick (would break the markdown code
-        // span around the nick) and a newline (would forge a second line in the
-        // rendered markdown) must not reach the `display` verbatim.
-        let line = snap_state("{\"x`\\n<evil>\": 1}", &serde_json::json!({}), false);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&line).expect("the JSON text comes from the test itself");
-        let display = parsed["display"]
-            .as_str()
-            .expect("the JSON field is a string in this test");
-        assert!(!display.contains('\n'), "no newline injection: {display:?}");
-        assert_eq!(
-            display.matches('`').count(),
-            2,
-            "only the two nick-wrapping backticks remain: {display:?}"
-        );
-        assert!(display.contains("/x<evil>"), "sanitized path: {display:?}");
     }
 
     #[test]

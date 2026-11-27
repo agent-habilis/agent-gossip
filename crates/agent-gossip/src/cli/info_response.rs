@@ -8,8 +8,7 @@ pub(super) struct InfoResponse {
     pub(super) name: String,
     pub(super) nickname: String,
     pub(super) peer_count: usize,
-    /// `None` from a daemon that predates the field.
-    pub(super) pid: Option<u32>,
+    pub(super) pid: u32,
 }
 
 /// Ask every daemon socket on this machine to identify itself.

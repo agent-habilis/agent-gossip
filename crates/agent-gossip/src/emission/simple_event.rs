@@ -210,9 +210,8 @@ struct TaskProgressLine<'source> {
 }
 
 /// A `{"event":"state",...}` line for a shared-state change. Its own top-level
-/// event (not the `message` family) so skills branch on `event`. Carries the
-/// merge delta and, on the `state` channel, the freshly-derived document; field
-/// order is part of the wire format.
+/// event (not the `message` family) so skills branch on `event`. Carries, on the
+/// `state` channel, the freshly-derived document; field order is part of the wire format.
 #[derive(Serialize)]
 struct StateLine<'source> {
     event: &'static str,
@@ -223,7 +222,6 @@ struct StateLine<'source> {
     author: &'source str,
     pubkey: String,
     ts: i64,
-    merge: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     document: Option<&'source serde_json::Value>,
     display: String,
@@ -607,86 +605,16 @@ fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Val
     Some(value)
 }
 
-/// Make a peer-controlled merge path safe to splice into the `state` display.
-/// The path is built from attacker-influenced merge keys, and the display feeds
-/// a markdown renderer, so strip:
-/// - control characters (a `\n` would forge a second line; `MessageBody` permits
-///   newlines),
-/// - backticks (which would unbalance the code span around the nick), and
-/// - the markdown link/image metacharacters `[` `]` `(` `)` (so a path like
-///   `[click](https://evil)` can't render as a clickable link),
-///
-/// and cap the length so one key can't flood the line.
-fn sanitize_path(path: &str) -> String {
-    let visible = path
-        .chars()
-        .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'));
-    visible.take(80).collect()
-}
-
-/// The `changed …` clause for a `state` display, built from a `State` body's
-/// already-parsed merge document: the touched paths (sanitized, deduped, capped
-/// so the line stays bounded), or `shared state` when none are present. A
-/// top-level key with a non-empty object value is descended one level (so
-/// `{"scores":{"alice":{…}}}` reads `/scores/alice`, naming the changed entry
-/// rather than its every field); anything else names the top-level key. A `null`
-/// value (a delete) still counts as touched.
-fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
-    const MAX: usize = 6;
-    let mut paths: Vec<String> = Vec::new();
-    let mut push = |raw: String| {
-        let clean = sanitize_path(&raw);
-        if !clean.is_empty() && !paths.iter().any(|seen| seen == &clean) {
-            paths.push(clean);
-        }
-    };
-    if let Some(map) = merge.and_then(serde_json::Value::as_object) {
-        for (key, value) in map {
-            push_changed_paths(key, value, &mut push);
-        }
-    }
-    if paths.is_empty() {
-        "shared state".to_owned()
-    } else if paths.len() > MAX {
-        format!("{} (+{} more)", paths[..MAX].join(", "), paths.len() - MAX)
-    } else {
-        paths.join(", ")
-    }
-}
-
-/// Push the changed path(s) for one top-level `merge` entry. A non-empty
-/// object value names its changed members one level deep (`/peers/alice`);
-/// anything else names the top-level key.
-fn push_changed_paths(key: &str, value: &serde_json::Value, push: &mut impl FnMut(String)) {
-    if let serde_json::Value::Object(sub) = value
-        && !sub.is_empty()
-    {
-        for subkey in sub.keys() {
-            push(format!("/{key}/{subkey}"));
-        }
-        return;
-    }
-    push(format!("/{key}"));
-}
-
-/// The surfaced RFC 7386 delta inside a channel-event body: the new `change`
-/// form carries it under `m`; a legacy `merge` body under `merge`. `None` when
-/// absent (an internal write, or an opaque/unparseable body).
-fn body_merge(body: &str) -> Option<serde_json::Value> {
-    let parsed = serde_json::from_str::<serde_json::Value>(body).ok()?;
-    let merged = parsed.get("m").or_else(|| parsed.get("merge"));
-    merged.filter(|value| !value.is_null()).cloned()
-}
-
-/// `display` line for a `state` event: `` 💬️ `<author>` changed /board, /turn ``,
-/// or `💬️ you changed …` for your own write (`shared state` when the touched
-/// paths aren't known). A peer's nick is backtick-wrapped like every other event
-/// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
-fn state_display(author: &str, is_self: bool, what: &str) -> String {
+/// `display` line for a `state` event: `` 💬️ `<author>` changed shared state ``,
+/// or `💬️ you changed shared state` for your own write. A peer's nick is
+/// backtick-wrapped like every other event so the skill's markdown renderer keeps
+/// the `<nick>`; "you" is plain text. The slice of an author replaces its old
+/// slice, so the event holds no delta to name.
+fn state_display(author: &str, is_self: bool) -> String {
     if is_self {
-        format!("{DISPLAY_GLYPH} you changed {what}")
+        format!("{DISPLAY_GLYPH} you changed shared state")
     } else {
-        format!("{DISPLAY_GLYPH} `<{author}>` changed {what}")
+        format!("{DISPLAY_GLYPH} `<{author}>` changed shared state")
     }
 }
 
@@ -700,23 +628,16 @@ pub(super) fn poll_carries_document(channel: Channel) -> bool {
 }
 
 /// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
-/// header, the merge delta (pulled out of the `State` body), the freshly-derived
-/// `document`, the `display` line, and `self`.
+/// header, the freshly-derived `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
     channel: Channel,
     event: &Authored,
     document: Option<&serde_json::Value>,
     is_self: bool,
 ) -> String {
-    // The surfaced delta feeds both the `merge` field and the touched-paths
-    // `display` summary. It rides the change body under `m` (a legacy `merge`
-    // body under `merge`); an internal write carries none.
-    let merge = body_merge(event.body.as_str());
-    let what = state_change_summary(merge.as_ref());
     let label = channel.label();
     let author = event.author.as_str();
     let pubkey = event.key().to_string();
-    let merge_value = merge.unwrap_or(serde_json::Value::Null);
     stamp_visibility(
         serde_json::to_string(&StateLine {
             event: label,
@@ -726,9 +647,8 @@ pub(super) fn format_state_json(
             author,
             pubkey,
             ts: event.timestamp.as_secs(),
-            merge: merge_value,
             document: document.filter(|_| poll_carries_document(channel)),
-            display: state_display(author, is_self, &what),
+            display: state_display(author, is_self),
             is_self,
         })
         .expect("state event serialization should never fail"),

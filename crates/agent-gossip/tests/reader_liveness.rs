@@ -72,8 +72,7 @@ fn reads_of(mesh: &str, nickname: &str, id: &str) -> usize {
         .count()
 }
 
-/// `None` when the row has no `reader` key: the peer did not answer in time,
-/// or it runs an older version.
+/// `None` when the row has no `reader` key: the peer did not answer in time.
 fn reader_of(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
     let out: serde_json::Value =
         serde_json::from_str(&cli_peers(mesh, asker)).expect("peers prints JSON");

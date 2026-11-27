@@ -78,7 +78,7 @@ Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \
 Merge Patch: a JSON object merged in — keys are set, a null deletes, nested \
 objects merge, the root is never replaced). Every member folds the same gossiped \
 merge log to the same document. A peer's change arrives as an `event:\"state\"` \
-entry in `fetch_messages` carrying the `merge` and the newly-derived `document` — \
+entry in `fetch_messages` carrying the newly-derived `document` — \
 react to that (read `document`, decide, `apply_state_merge` back); your own changes \
 come back with `self:true` (don't act on them). To build a turn-based interaction, \
 put a turn marker in the document and act only when it is yours.
