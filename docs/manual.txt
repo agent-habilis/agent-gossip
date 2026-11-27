@@ -418,7 +418,11 @@ COMMANDS
                 GetTask
                     read one task you're a party to (--task-id). A task
                     between the peer and someone else answers the same
-                    "task not found" as an id that does not exist.
+                    "task not found" as an id that does not exist. The task
+                    metadata carries the last check-in as mesh:status_text
+                    (its text), mesh:done and mesh:total (its progress as
+                    N of 100) and mesh:label (the initiator's name for the
+                    task); a task that waits carries mesh:waiting.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
                     whole registry
@@ -479,7 +483,8 @@ COMMANDS
               channel and referenced as a Part.url ticket the receiver fetches
               with `a2a fetch` — for binaries too large to inline (--text is
               optional when --file is given). --file-name and --file-mime
-              override the advertised filename and MIME type.
+              override the advertised filename and MIME type. An empty
+              artifact (no --text and no --file) is refused.
 
        a2a expose --to URL [--lookup LOOKUPS] [--relay-url URLS]
                   [--advertise[=NAME]] [--password[=PW]]
@@ -1490,10 +1495,14 @@ JSON EVENTS
               on an older version sends no check-in age, so it never raises
               this event.
 
-                 {"event":"task_overdue","task_id":"<uuid>","peer":"word-word",
+                 {"event":"task_overdue","task_id":"<uuid>","peer":"calm-otter",
                   "label":"review the diff","age_secs":660,
                   "waiting_on":"user","not_picked_up":false,
-                  "display":"💬️ task overdue · `<peer>` · review the diff · no check-in for 11 min"}
+                  "bell":true,"last_poll_secs_ago":120,
+                  "display":"💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min · waiting on user · bell on, last poll 2 min ago"}
+
+              The keys waiting_on, bell and last_poll_secs_ago are optional:
+              each is absent when the worker did not report it.
 
        checkin_due
               The worker's daemon saw that the task owes a check-in: X after
@@ -1509,7 +1518,8 @@ JSON EVENTS
               a new task brief. Answer with a check-in.
 
                  {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
-                  "followup_seq":41,"followup_aged_out":false}
+                  "followup_seq":41,"followup_aged_out":false,
+                  "display":"💬️ check-in due · `<word-word>`"}
 
        state  The gossip's shared state changed (see the state command). Carries
               the view of the state AFTER the change: one slice for each member,
@@ -1682,7 +1692,11 @@ MCP SERVER
        task_status
               As the WORKER on a task you're serving, emit a TaskStatusUpdate.
               Args: task_id, state (working | input-required | completed |
-              failed | canceled), note. Drives the task forward.
+              failed | canceled), note (a non-blank text, required with
+              working), progress (a whole number from 0 to 100, required
+              with working and refused with any other state), waiting_on
+              (optional: a peer nickname or "user", only with working).
+              Drives the task forward; a working status is a check-in.
 
        task_artifact
               As the WORKER, return the task RESULT (a TaskArtifactUpdate).

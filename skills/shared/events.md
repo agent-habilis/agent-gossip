@@ -131,7 +131,10 @@ A task event that reports state — `task_timeout`, `task_progress`,
 as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
 silently — no todo, no printed line, no badge change, no recovery — and never
-read it as a signal about a task you are tracking. A directed `message` on an untracked id
+read it as a signal about a task you are tracking. `checkin_due` is never
+stale: for a `task_id` you hold no todo for, read the brief it names (the
+`followup_seq`) with `poll --after <seq-1>` and handle it as a new task brief,
+per the worker flow. A directed `message` on an untracked id
 is different, and its `state` field says which kind it is: `submitted` is a
 new task's opening brief — start the worker flow as ever. Any later state is
 a follow-up on a task you lost track of (the daemon still holds the record
@@ -196,7 +199,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 |---|---|---|
 | sent (initiator) | open it, in progress, owned by the worker | `waiting` |
 | accepted (worker) | open it, in progress | `working` |
-| `working`, `task_progress` | refresh it, still in progress | `working` |
+| a worker check-in, kind `status-update` `working` (not the `task_progress` beat) | refresh it, still in progress | `working` |
+| `task_progress` | liveness only: change nothing, the badge stays | unchanged |
 | `input-required`, kind `artifact-update` | leave it in progress; the result is in, awaiting your approval | `result` |
 | `input-required`, kind `status-update` | leave it in progress; surface the worker's question | `question` |
 | you asked a question (worker) | parked on the initiator | `asked` |
@@ -250,7 +254,8 @@ The `display` line reads:
 
 Each bracketed part appears only when it is set. Print it verbatim, set the
 badge `overdue`, and follow the initiator flow below. A line that says
-`waiting on user` does not wake you: show it, and do nothing else.
+`waiting on user` does not wake you: show it, keep the badge `waiting-user`
+(not `overdue`), and do nothing else.
 
 Whether a todo tool exists is a fact about the **session**, not the harness: the
 same machine can hand you one session with the tool and the next without it, and
@@ -317,7 +322,8 @@ into the `subject` (and `activeForm`) on every transition:
 
 | Task event | `TaskUpdate` |
 |---|---|
-| `working`, `task_progress` | badge `working`, keep `in_progress` |
+| a worker check-in, kind `status-update` `working` (not the `task_progress` beat) | badge `working`, keep `in_progress` |
+| `task_progress` | liveness only: no `TaskUpdate`, the badge stays (it must not overwrite `waiting-user`, `overdue` or `question`) |
 | `input-required`, kind `status-update` | badge `question`, keep `in_progress` |
 | `input-required`, kind `artifact-update` | badge `result`, keep `in_progress` |
 | you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
@@ -353,14 +359,18 @@ line, never in the subject.
 | 75–99 | ◕ (U+25D5) |
 | 100 | ● (U+25CF) |
 
-- It shows on `working`, `result` and `question` rows. `result` and `question`
-  keep the last value. `done` shows ●.
+- It shows on `working` rows, and `done` shows ●.
 - `waiting`, `dropped`, and a peer that reports no progress show no glyph.
   Never guess a ○.
 - The worker's own row shows its own progress the same way.
-- Rewrite the row (`subject` and `activeForm`) only when the glyph changes,
-  never on every check-in. The daemon wakes the initiator when a check-in moves
-  the progress into another quarter, so the glyph stays fresh.
+- Rewrite the row (`subject` and `activeForm`) only when the badge or the glyph
+  changes, never on every check-in. A change of badge at the same progress (a
+  `question` that goes back to `working`) rewrites the subject too. The daemon
+  wakes the initiator when a check-in moves the progress into another quarter,
+  so the glyph stays fresh.
+- The glyph goes with these badges: `working`, `result`, `question`, `asked`,
+  `sent`, `waiting-user` and `overdue` keep the last value. `waiting`, `dropped`
+  and a peer that reports no progress show none.
 
 Finding the row for an incoming `task_id`: `TaskList`, then match its short id
 against the last field of each subject. If more than one row matches, `TaskGet`
@@ -388,13 +398,21 @@ stays the bare nickname.
 
 Worker flow:
 
+0. A `checkin_due` event rings your bell, and it applies to a task you hold and
+   to one you do not. It is never stale. Read the follow-up it names, if any,
+   with `agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --after <seq-1>`
+   (`<seq-1>` is `followup_seq` minus one). If the task is one you hold no todo
+   for, that message is its opening brief: handle it as a new task brief, from
+   step 1. If the task is yours, answer with a check-in. If the event aged out
+   of the ring (`followup_aged_out`), send `--state input-required --text
+   "resend your last message"` on the task.
 1. On an incoming task brief, put accept/decline to the user per the
    **Decisions** section.
 2. Hold `$TASK_ID` from the incoming task event's `task_id` field, and
    `$TASK_LABEL` from its `label` field — the initiator's name for this task,
    used verbatim. Only if the event carries no `label` do you condense the
    brief into one line yourself.
-3. If accepted, open the todo at badge `working` and run:
+3. If accepted, open the todo at badge `working ○` (progress 0) and run:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "accepted: $PLAN" --progress 0
    ```
@@ -405,13 +423,8 @@ Worker flow:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$WHAT_CHANGED" --progress "$PERCENT"
    ```
-   The daemon beats do not count as a check-in. When a `checkin_due` event
-   rings your bell, answer it with a check-in. If it names a follow-up from the
-   initiator, read that message first, with `agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --after <seq-1>`.
-   If the event aged out of the ring, send `--state input-required --text
-   "resend your last message"` on the task. If `followup_seq` names the opening
-   offer of a task you never saw (a missed brief), read it the same way, with
-   `poll --after <seq-1>`, and handle it as a new task brief. Wrap every command you run in `timeout`, run anything that takes
+   The daemon beats do not count as a check-in. Answer a `checkin_due` event
+   with a check-in (see step 0). Wrap every command you run in `timeout`, run anything that takes
    more than 2 minutes in the background, and never wait in a shell loop: a
    command that blocks the turn is a check-in you cannot send.
 
@@ -421,7 +434,8 @@ Worker flow:
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$QUESTION_SUMMARY" --progress "$PERCENT" --waiting-on user
    ```
    Move the badge to `waiting-user`. The tag does not stop the clock: keep
-   sending check-ins while you wait. Do not name the initiator in
+   sending check-ins while you wait, and repeat `--waiting-on user` on every
+   one of them until the wait ends (a check-in without it clears the tag). Do not name the initiator in
    `--waiting-on`: a question to the initiator is an `input-required` status.
    The next check-in without `--waiting-on` clears the tag. When your user
    answers, send one and move the badge back to `working`.
