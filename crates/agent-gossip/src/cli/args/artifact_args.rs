@@ -18,9 +18,9 @@ pub(crate) struct ArtifactArgs {
     #[arg(long)]
     pub file: Option<std::path::PathBuf>,
     /// Filename to advertise for --file (defaults to the file's own name).
-    #[arg(long)]
+    #[arg(long, requires = "file")]
     pub file_name: Option<String>,
     /// MIME type to advertise for --file (e.g. application/pdf).
-    #[arg(long)]
+    #[arg(long, requires = "file")]
     pub file_mime: Option<String>,
 }

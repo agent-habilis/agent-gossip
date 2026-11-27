@@ -10,7 +10,5 @@ pub(super) async fn peers(options: PeersOpts) -> Result<()> {
     let command = IpcCommand::Peers {
         mesh: session.gossip,
     };
-    let response = super::send::send(&command, &session.nickname).await?;
-    println!("{response}");
-    Ok(())
+    super::reply::send_printed(&command, &session.nickname).await
 }

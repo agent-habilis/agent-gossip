@@ -261,7 +261,11 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         .into_iter()
         .map(|(target, signalled)| (target, signalled, false))
         .collect();
-    loop {
+    // A scan of every socket on the host is not free, so it runs only while a signalled daemon can still serve.
+    while outcomes
+        .iter()
+        .any(|(_, signalled, gone)| *signalled && !*gone)
+    {
         let still_serving = live_owners().await;
         let mut waiting = false;
         for (target, signalled, gone) in &mut outcomes {

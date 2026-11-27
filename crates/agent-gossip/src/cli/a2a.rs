@@ -13,7 +13,6 @@ use super::password_flag::PasswordFlag;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::tunnel::bridge;
 
-/// Post a message to a mesh via the running server's IPC socket.
 pub(super) async fn a2a(action: A2aAction) -> Result<()> {
     match action {
         A2aAction::Expose(args) => expose(args).await,
@@ -158,7 +157,7 @@ async fn status(args: StatusArgs) -> Result<()> {
         },
         task_id,
         state,
-        note,
+        text,
         waiting,
     } = args;
     crate::a2a::broadcast_params::WorkerLeg::parse(state, waiting.as_deref())
@@ -167,7 +166,7 @@ async fn status(args: StatusArgs) -> Result<()> {
         mesh,
         task_id,
         state,
-        note,
+        note: text,
         waiting,
     };
     send_and_print_id(&command, &nickname, "task status").await
