@@ -404,7 +404,9 @@ COMMANDS
                     returns {"task": <Task>}) or a follow-up into a task
                     (--task-id: an answer / approval / change; a follow-up
                     to a task that is already closed is not surfaced to the
-                    worker). --text composes
+                    worker, and a follow-up that reuses a messageId gets the
+                    task snapshot as its answer but is not shown to the
+                    worker again). --text composes
                     the A2A Message; --label names the task for both parties
                     (see below). --file attaches a file, on a new task or
                     a follow-up: it travels over the blob channel as a

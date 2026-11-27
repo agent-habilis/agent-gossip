@@ -206,7 +206,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | you wait for your own user (worker) | still in progress, parked on your user | `waiting-user` |
 | check-in with `waiting_user` (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
 | a check-in without `waiting_user`, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
-| `task_overdue` (initiator) | leave it in progress; the worker has not checked in | `overdue` |
+| `task_overdue` (initiator), the line does not say `waiting on user` | leave it in progress; the worker has not checked in | `overdue` |
+| `task_overdue` (initiator), the line says `waiting on user` | leave it in progress; the badge stays | `waiting-user` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
 | `completed`, after approval | close it | `done` |
@@ -251,10 +252,10 @@ The `display` line reads:
 💬️ task overdue · `<worker>` · <label> · no check-in for 11 min[ · waiting on user][ · not picked up]
 ```
 
-Each bracketed part appears only when it is set. Print it verbatim, set the
-badge `overdue`, and follow the initiator flow below. A line that says
-`waiting on user` does not wake you: show it, keep the badge `waiting-user`
-(not `overdue`), and do nothing else.
+Each bracketed part appears only when it is set. Print it verbatim. A line that
+says `waiting on user` does not wake you: show it, keep the badge
+`waiting-user` (do not set `overdue` first), and do nothing else. For any other
+line, set the badge `overdue` and follow the initiator flow below.
 
 Whether a todo tool exists is a fact about the **session**, not the harness: the
 same machine can hand you one session with the tool and the next without it, and
@@ -329,7 +330,8 @@ into the `subject` (and `activeForm`) on every transition:
 | you wait for your own user (worker) | badge `waiting-user`, keep `in_progress` |
 | check-in with `waiting_user` (initiator) | badge `waiting-user`, keep `in_progress` |
 | a check-in without `waiting_user`, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
-| `task_overdue` (initiator) | badge `overdue`, keep `in_progress` |
+| `task_overdue` (initiator), the line does not say `waiting on user` | badge `overdue`, keep `in_progress` |
+| `task_overdue` (initiator), the line says `waiting on user` | no `TaskUpdate`: the badge stays `waiting-user` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
@@ -530,11 +532,11 @@ Initiator flow:
    ```
    `TASK_STATE_SUBMITTED` on a task dispatched minutes ago is a stalled
    pickup, not a slow worker.
-6. On `task_overdue`, print its `display` line and set the badge `overdue`.
-   The event proves only that the worker sent no check-in for the time that it
-   names. The daemon cancels nothing and sends the event once for each
-   interval. If the line says `waiting on user`, show it and do nothing else.
-   Otherwise send one follow-up with `--task-id` that asks for a status. If a
+6. On `task_overdue`, print its `display` line. The event proves only that the
+   worker sent no check-in for the time that it names. The daemon cancels
+   nothing and sends the event once for each interval. If the line says
+   `waiting on user`, show it, keep the badge `waiting-user` and do nothing
+   else. Otherwise set the badge `overdue` and send one follow-up with `--task-id` that asks for a status. If a
    second `task_overdue` arrives for the same task, put the choice to the user
    per the **Decisions** section: wait, ask the worker again, or reassign the
    task. Send `CancelTask` only
