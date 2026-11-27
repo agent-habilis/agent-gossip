@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
-use super::info_response::live_daemons;
+use super::info_response;
 use crate::status as output;
 
 /// Budget for the machine net-report (build endpoint + first completed report).
@@ -309,7 +309,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
 
 async fn active_meshes_section() -> Section {
     let mut checks = Vec::new();
-    for info in live_daemons().await {
+    for info in info_response::live_daemons().await {
         let detail = format!(
             "{} · <{}> · {} {}",
             info.gossip,

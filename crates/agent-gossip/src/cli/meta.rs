@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::args::MetaAction;
 use super::parse_merge::parse_merge;
-use super::reply::send_printed;
+use super::reply;
 use crate::a2a::ipc_command::IpcCommand;
 
 /// Read or change the mesh's `meta` channel via the running daemon — the
@@ -23,5 +23,5 @@ pub(super) async fn meta(action: MetaAction) -> Result<()> {
             session.nickname,
         ),
     };
-    send_printed(&command, &nickname).await
+    reply::send_printed(&command, &nickname).await
 }

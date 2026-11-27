@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::args::TopologyOpts;
-use super::reply::send_accepted;
+use super::reply;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::topology_doc::{TopologyDoc, render, warnings};
 
@@ -11,7 +11,7 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
     let command = IpcCommand::Topology {
         mesh: options.session.gossip.clone(),
     };
-    let response = send_accepted(&command, &options.session.nickname).await?;
+    let response = reply::send_accepted(&command, &options.session.nickname).await?;
     if !options.draw {
         println!("{response}");
         return Ok(());
@@ -19,7 +19,7 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
     let peers_command = IpcCommand::Peers {
         mesh: options.session.gossip,
     };
-    let peers_response = send_accepted(&peers_command, &options.session.nickname).await?;
+    let peers_response = reply::send_accepted(&peers_command, &options.session.nickname).await?;
     let doc = TopologyDoc::assemble(
         options.session.nickname.as_str(),
         &serde_json::from_str(&peers_response)?,
