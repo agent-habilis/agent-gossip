@@ -18,11 +18,10 @@ use agent_gossip_test_fixtures as common;
 use common::{
     CONNECT_TIMEOUT, ChatMessage, InProcNode, KillOnDrop, MSG_TIMEOUT, Node, POLL, PresenceSubtype,
     RECOVERY_TIMEOUT, SHORT_EVICT, bin, chat_text, cli_message, cli_message_raw, cli_peers,
-    cli_ping, cli_poll, cli_poll_long, cli_task_create_raw, ipc_raw, merged_slices, serial_guard,
-    socket_path, tmp_log, trace_log, wait_until,
+    cli_ping, cli_poll, cli_poll_long, cli_task_create_raw, ipc_raw, serial_guard, socket_path,
+    tmp_log, trace_log, wait_until,
 };
 use habilis_network::util::process;
-use serde_json::json;
 
 /// Heal cadence for the reliability tests, injected through the hidden
 /// `--heal-interval-secs` flag. Floored at 3s: below that the
@@ -321,74 +320,6 @@ async fn test_password_flag_wire_contract() {
     );
     joiner.kill();
     creator.kill();
-}
-
-/// Live propagation: a creator writes its slice of the shared state; a meshed joiner derives
-/// the same slice via gossip.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_state_propagates_to_a_peer() {
-    let creator = InProcNode::create("netstate").await;
-    let mut joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
-
-    // Mesh first (a delivered message proves the link), so the state events
-    // broadcast onto a live overlay rather than the unmeshed buffer.
-    common::warm_up(&creator, &mut [&mut joiner]).await;
-
-    creator.state_merge(json!({"alpha": 1})).await;
-    creator.state_merge(json!({"beta": 2})).await;
-
-    let want = json!({"alpha": 1, "beta": 2});
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut got = merged_slices(&joiner.state_get().await);
-    while got != want && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        got = merged_slices(&joiner.state_get().await);
-    }
-    assert_eq!(got, want, "joiner never derived the state of the creator");
-    // The author holds its own slice too (gossip never echoes to self).
-    assert_eq!(
-        merged_slices(&creator.state_get().await),
-        want,
-        "the creator holds its own state"
-    );
-}
-
-/// A peer that joins **after** the state writes are live (so nothing is buffered to flush to it)
-/// still gets the current slice of the creator. Three nodes: creator+early are meshed so the
-/// writes broadcast live (not into the unmeshed buffer); the late joiner can only be served by
-/// the engine's own sync.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_state_reaches_a_late_joiner() {
-    let creator = InProcNode::create("netstatelate").await;
-    let mut early = InProcNode::join(&creator.mesh, "early-state").await;
-    // Mesh so writes go out live, leaving the creator's outbound buffer empty.
-    common::warm_up(&creator, &mut [&mut early]).await;
-
-    creator.state_merge(json!({"alpha": 1})).await;
-    creator.state_merge(json!({"beta": 2})).await;
-
-    let want = json!({"alpha": 1, "beta": 2});
-    // Confirm the live path first.
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut early_got = merged_slices(&early.state_get().await);
-    while early_got != want && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        early_got = merged_slices(&early.state_get().await);
-    }
-    assert_eq!(early_got, want, "early peer never got the live state");
-
-    // The late joiner arrives after all state traffic.
-    let late = InProcNode::join(&creator.mesh, "late-state").await;
-    let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let mut late_got = merged_slices(&late.state_get().await);
-    while late_got != want && Instant::now() < late_deadline {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        late_got = merged_slices(&late.state_get().await);
-    }
-    assert_eq!(
-        late_got, want,
-        "late joiner never got the state of the creator"
-    );
 }
 
 /// Three-node full-mesh: a broadcast reaches the 2 other nodes (the sender

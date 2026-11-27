@@ -77,31 +77,6 @@ impl InProcNode {
         Self::create_from(config).await
     }
 
-    /// Create a mesh under an explicit active-view cap (a small cap forces a
-    /// partial mesh, so directed traffic must reach non-neighbours).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
-    pub async fn create_with_peers(name: &str, nick: &str, max_connections: usize) -> Self {
-        let config = CreateConfig::new(test_mesh_name(name))
-            .with_nickname(test_nickname(nick))
-            .with_max_connections(max_connections);
-        Self::create_from(config).await
-    }
-
-    /// Join `mesh` under an explicit active-view cap.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `mesh` or `nick` is invalid, or if the join fails.
-    pub async fn join_with_peers(mesh: &str, nick: &str, max_connections: usize) -> Self {
-        let config = join_config(mesh, nick).with_max_connections(max_connections);
-        Self::join_from(config)
-            .await
-            .expect("in-process join failed")
-    }
-
     async fn create_from(config: CreateConfig) -> Self {
         init_test_tracing();
         Self::with_session(

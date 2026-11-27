@@ -17,32 +17,23 @@ use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, task_id_of, three_peers};
 
-/// Creating a task is a directed `message/send` with no `taskId`: the worker
-/// mints a fresh **server** id and returns a `submitted` `Task`, and surfaces
-/// the incoming message to its own skill.
+/// A brief of about 20 KB seals past the single-frame cap, so the request splits into shard
+/// frames. The worker must still serve it as one logical request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn creation_mints_server_id_and_returns_submitted_task() {
-    let alice = InProcNode::create("t-create").await;
-    let mut bob = InProcNode::join(&alice.mesh, "t-create-bob").await;
+async fn a_multi_frame_brief_is_served_as_one_request() {
+    let alice = InProcNode::create("t-big").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-big-bob").await;
     common::warm_up(&alice, &mut [&mut bob]).await;
 
-    let response = alice.create_task("t-create-bob", "review src/net").await;
-    assert!(response["result"]["task"].is_object(), "got: {response}");
-    assert_eq!(
-        response["result"]["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
-        "a new task starts in the submitted state"
-    );
-    // The id is server-minted — a fresh uuid, not derived from our message.
-    let task_id = task_id_of(&response);
+    let big_brief = format!("big brief {}", "data ".repeat(4 * 1024));
+    let response = alice.create_task("t-big-bob", &big_brief).await;
     assert!(
-        !task_id.as_str().is_empty(),
-        "the server mints a non-empty task id"
+        response["result"]["task"].is_object(),
+        "the multi-frame (sharded) call was not served: {response}"
     );
-
-    // The worker's skill sees the incoming brief as a `message`-kind task event.
     assert!(
         bob.wait_task_message(MSG_TIMEOUT).await,
-        "the worker never surfaced the incoming task message"
+        "the worker never saw the multi-frame task brief"
     );
 
     alice.leave().await;

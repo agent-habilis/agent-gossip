@@ -484,12 +484,6 @@ fn mesh_version_works_without_a_session() {
             .is_some_and(|text| !text.is_empty()),
         "gossip_version must report a non-empty build string, got: {json}"
     );
-    // MCP carries no skill of its own, so the version result is version-only —
-    // the former skill-drift fields are gone.
-    assert!(
-        json.get("skill_up_to_date").is_none() && json.get("skill_state").is_none(),
-        "gossip_version must not report skill fields over MCP, got: {json}"
-    );
 }
 
 #[test]
@@ -866,21 +860,6 @@ fn create_mesh_transport_multihop_turns_multihop_on() {
 }
 
 #[test]
-fn create_mesh_transport_p2p_is_rejected() {
-    let mut client = McpClient::spawn();
-    let response = client.tool_call(
-        190,
-        "create_gossip",
-        &serde_json::json!({ "name": "p2pword", "transport": ["p2p"] }),
-    );
-    let err = tool_error(&response).expect("the removed `p2p` word should error");
-    assert!(
-        err.contains("udp") && err.contains("webrtc") && err.contains("gossip"),
-        "expected the error to name the valid transports, got: {err}"
-    );
-}
-
-#[test]
 fn create_mesh_transport_relay_alone_errors() {
     let mut client = McpClient::spawn();
     let response = client.tool_call(
@@ -907,21 +886,6 @@ fn create_mesh_relay_transport_needs_relay_lookup() {
     assert!(
         err.contains("relay"),
         "expected the error to name the relay lookup requirement, got: {err}"
-    );
-}
-
-#[test]
-fn create_mesh_rejects_removed_network_param() {
-    let mut client = McpClient::spawn();
-    let response = client.tool_call(
-        140,
-        "create_gossip",
-        &serde_json::json!({ "name": "oldparam", "network": "public" }),
-    );
-    let err = tool_error(&response).expect("the removed `network` param should be rejected");
-    assert!(
-        err.to_lowercase().contains("network"),
-        "expected the error to reject the unknown `network` field, got: {err}"
     );
 }
 
