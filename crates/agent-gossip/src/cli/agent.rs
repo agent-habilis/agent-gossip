@@ -277,10 +277,7 @@ mod tests {
                 "{skill}: exactly one embedded file, found {file_paths:?}"
             );
             assert!(dir.dirs().next().is_none(), "{skill}: no embedded subdirs");
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             assert!(
                 !body.contains("Read `../shared/") && !body.contains("Read `workflow.md`"),
                 "{skill}: generated skill must not instruct runtime file reads"
@@ -367,6 +364,10 @@ mod tests {
             .get_file(format!("{skill}/SKILL.md"))
             .and_then(include_dir::File::contents_utf8)
             .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
+    }
+
+    fn is_bell(line: &str) -> bool {
+        line.starts_with("agent-gossip poll ") && line.contains("--long")
     }
 
     fn frontmatter(body: &str) -> &str {
@@ -489,10 +490,7 @@ mod tests {
     #[test]
     fn generated_daemon_starters_never_mention_monitor() {
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             assert!(
                 !body.contains("Monitor"),
                 "{skill}: generated skill must not route through a Monitor/watch tool"
@@ -537,9 +535,6 @@ mod tests {
                 line.contains(&format!("agent-gossip {sub} ")) && line.contains("--state-file")
             })
         }
-        fn is_bell(line: &str) -> bool {
-            line.starts_with("agent-gossip poll ") && line.contains("--long")
-        }
         fn assert_launch_shapes(path: &str, long_running: &[&str]) {
             let launches = long_running.iter().filter(|line| is_daemon_launch(line));
             for line in launches {
@@ -550,10 +545,7 @@ mod tests {
         let mut daemon_starters_checked = 0;
         for skill in OWNED_SKILL_DIRS {
             let path = format!("{skill}/SKILL.md");
-            let body = SKILLS
-                .get_file(&path)
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{path} is embedded"));
+            let body = rendered(skill);
 
             // `trim`, not `trim_end`: the re-armed bell sits inside a numbered
             // list, so it is indented in every skill that runs the receive loop.
@@ -666,12 +658,10 @@ mod tests {
     #[test]
     fn claude_code_bells_end_before_the_harness_limit() {
         let bells: fn(&str) -> Vec<&'static str> = |skill| {
-            let is_bell =
-                |line: &&str| line.starts_with("agent-gossip poll ") && line.contains("--long");
             rendered(skill)
                 .lines()
                 .map(str::trim)
-                .filter(is_bell)
+                .filter(|line| is_bell(line))
                 .collect()
         };
         for skill in OWNED_SKILL_DIRS {
@@ -711,26 +701,15 @@ mod tests {
     /// in meta, and `gossip-status` only shows what meta holds.
     #[test]
     fn peer_cwd_is_reported_and_shown() {
-        let body = |skill: &str| {
-            SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
-        };
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let merge: &str = body(skill)
-                .lines()
-                .find(|line| {
-                    line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"")
-                })
-                .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"));
+            let merge = ready_gate_merge(skill);
             assert!(
                 merge.contains("\"cwd\":"),
                 "{skill}: merge must report cwd: {merge}"
             );
         }
         assert!(
-            body("gossip-status").contains("| host | cwd |"),
+            rendered("gossip-status").contains("| host | cwd |"),
             "gossip-status must print a host and cwd column"
         );
     }
@@ -738,10 +717,9 @@ mod tests {
     fn ready_gate_merge(skill: &str) -> &'static str {
         let is_merge =
             |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");
-        let file = SKILLS.get_file(format!("{skill}/SKILL.md"));
-        let contents = file.and_then(include_dir::File::contents_utf8);
-        contents
-            .and_then(|body| body.lines().find(is_merge))
+        rendered(skill)
+            .lines()
+            .find(is_merge)
             .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"))
     }
 
@@ -790,10 +768,7 @@ mod tests {
     /// peer sees no table at all, and never its own model, host, or cwd.
     #[test]
     fn status_table_lists_self() {
-        let body = SKILLS
-            .get_file("gossip-status/SKILL.md")
-            .and_then(include_dir::File::contents_utf8)
-            .expect("gossip-status/SKILL.md is embedded utf-8");
+        let body = rendered("gossip-status");
         assert!(
             body.contains("`$NICKNAME (you)`"),
             "the status table must list the own peer as `you`"
@@ -809,10 +784,7 @@ mod tests {
     #[test]
     fn printed_skill_commands_are_code() {
         for skill in OWNED_SKILL_DIRS {
-            let body = SKILLS
-                .get_file(format!("{skill}/SKILL.md"))
-                .and_then(include_dir::File::contents_utf8)
-                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            let body = rendered(skill);
             for line in body.lines().filter(|line| line.starts_with('💬')) {
                 let bare_command = line
                     .split('`')
