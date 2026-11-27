@@ -435,6 +435,12 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
+        if args.text.trim().is_empty() && args.file.is_none() {
+            return Err(McpError::invalid_params(
+                "an artifact needs a text or a file",
+                None,
+            ));
+        }
         let file = args.file.map(std::path::PathBuf::from);
         let file_name: Option<String> = args.file_name.or_else(|| {
             let path_name = file.as_ref().and_then(|path| path.file_name());
