@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{AuthorKey, MeshId, MeshName, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, Nickname, UnixSecs};
 
 use crate::a2a::{TaskId, TaskState};
 
@@ -100,6 +100,8 @@ pub enum OutputEvent {
     TaskMessage {
         /// The id of the A2A message.
         id: String,
+        /// When the node surfaced the leg. A later poll prints the same time as the stream.
+        ts: UnixSecs,
         /// The id of the mesh.
         mesh: String,
         /// The nickname of the sender of the leg.

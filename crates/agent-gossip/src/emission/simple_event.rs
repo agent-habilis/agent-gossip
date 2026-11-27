@@ -7,9 +7,7 @@
 //! stdout forms stay byte-identical.
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{
-    AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype, UnixSecs,
-};
+use habilis_network::protocol::{AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason};
@@ -783,6 +781,7 @@ fn formatted_json(event: &OutputEvent) -> Option<String> {
         } => format_task_json(message, *is_self, to_name.as_ref()),
         OutputEvent::TaskMessage {
             id,
+            ts,
             mesh,
             author,
             author_key,
@@ -803,7 +802,7 @@ fn formatted_json(event: &OutputEvent) -> Option<String> {
             });
             let payload = message.as_deref().and_then(message_without_text);
             let pubkey = author_key.to_string();
-            let ts = UnixSecs::now().as_secs();
+            let ts = ts.as_secs();
             let line = TaskLine {
                 event: "task",
                 id,

@@ -913,6 +913,7 @@ fn ingest_remote_message(
     let peer = context.author.as_str().to_owned();
     app.output.task_message(emission::OutputEvent::TaskMessage {
         id,
+        ts: habilis_network::protocol::UnixSecs::now(),
         mesh,
         author,
         author_key: *requester_key,
@@ -1043,6 +1044,7 @@ mod classify_tests {
     fn task_message(is_self: bool) -> OutputEvent {
         OutputEvent::TaskMessage {
             id: String::from("m"),
+            ts: habilis_network::protocol::UnixSecs::ZERO,
             mesh: String::from("sw"),
             author: String::from("initiator"),
             author_key: key("initiator"),

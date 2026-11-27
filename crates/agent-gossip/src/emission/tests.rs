@@ -23,6 +23,7 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
     });
     let json = simple_event::event_json(&super::OutputEvent::TaskMessage {
         id: "frame-id".to_owned(),
+        ts: habilis_network::protocol::UnixSecs::ZERO,
         mesh: "mesh".to_owned(),
         author: "alice-bot".to_owned(),
         author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
@@ -54,6 +55,7 @@ fn a_task_message_line_names_the_key_of_its_sender_when_two_senders_share_a_name
     let line_from = |key: u8| {
         let leg = super::OutputEvent::TaskMessage {
             id: "frame-id".to_owned(),
+            ts: habilis_network::protocol::UnixSecs::ZERO,
             mesh: "mesh".to_owned(),
             author: "twin".to_owned(),
             author_key: habilis_network::protocol::AuthorKey::from([key; 32]),
@@ -1087,4 +1089,30 @@ mod prop {
             prop_assert!(!json.contains('\n'));
         }
     }
+}
+
+/// A task message line keeps the time of its leg. A reader that polls later gets the same `ts`
+/// as the stream printed, so the two lines of one event agree.
+#[test]
+fn a_task_message_line_keeps_the_time_of_its_leg() {
+    let leg = super::OutputEvent::TaskMessage {
+        id: "frame-id".to_owned(),
+        ts: habilis_network::protocol::UnixSecs::from_secs(1_700_000_000),
+        mesh: "mesh".to_owned(),
+        author: "alice-bot".to_owned(),
+        author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
+        peer: "calm-otter".to_owned(),
+        task_id: "task-id".to_owned(),
+        state: None,
+        text: "the brief".to_owned(),
+        label: None,
+        message: None,
+        is_self: false,
+    };
+    let line = simple_event::event_json(&leg).expect("a task leg has a JSON line");
+    assert_eq!(
+        parse(&line)["ts"],
+        1_700_000_000_i64,
+        "the line must carry the time of the leg, not the time of the render"
+    );
 }
