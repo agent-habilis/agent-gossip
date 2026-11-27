@@ -497,7 +497,7 @@ impl A2aApp {
             .position(|waiter| waiter.corr == *corr && waiter.peer_key == *from_key)
         {
             let waiter = self.a2a_waiters.swap_remove(index);
-            let adoption = self.adopt_returned_task((from_key, from), body);
+            let adoption = self.adopt_returned_task((from_key, from), body, waiter.restarts_clock);
             // The registry refused the task the worker opened for us: no record is kept, so
             // the worker is told to cancel it rather than run it unseen, and the caller gets
             // an error instead of a task it would then see cancelled with no output line.
@@ -533,7 +533,7 @@ impl A2aApp {
             .position(|entry| entry.awaits_reply(corr, from_key))
         {
             let entry = self.late_replies.swap_remove(index);
-            match self.adopt_returned_task((from_key, from), body) {
+            match self.adopt_returned_task((from_key, from), body, entry.late.restarts_clock) {
                 Adoption::Adopted(task_id) => {
                     self.cancel_task_opened_late(task_id, from_key, entry.late.opens_task);
                 }
@@ -560,7 +560,12 @@ impl A2aApp {
         (from_key, from): (&AuthorKey, &Nickname),
         body: &str,
     ) {
-        let adoption = self.adopt_returned_task((from_key, from), body);
+        let restarts_clock = self
+            .orphan_blobs
+            .get(orphan_index)
+            .and_then(|orphan| orphan.late_reply.as_ref())
+            .is_some_and(|late| late.restarts_clock);
+        let adoption = self.adopt_returned_task((from_key, from), body, restarts_clock);
         let Adoption::Adopted(task_id) = adoption else {
             if let Adoption::Refused(refused) = adoption {
                 let opened = self
@@ -734,6 +739,7 @@ impl A2aApp {
         &mut self,
         (peer_key, peer): (&AuthorKey, &Nickname),
         body: &str,
+        restarts_clock: bool,
     ) -> Adoption {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
             return Adoption::NoTask;
@@ -764,9 +770,7 @@ impl A2aApp {
                 peer,
                 task_state,
                 now: Instant::now(),
-                // A bare `Task` is a `GetTask` probe, which says nothing about the worker's
-                // agent; only the reply to a message we sent is a follow-up.
-                restarts_clock: result.get("task").is_some(),
+                restarts_clock,
             },
         );
         // The worker echoes the label of the brief, so the alarm can name the task.
@@ -807,6 +811,7 @@ impl A2aApp {
                         corr: waiter.corr,
                         peer_key: waiter.peer_key,
                         opens_task: waiter.opens_task,
+                        restarts_clock: waiter.restarts_clock,
                     });
                     self.push_orphan(waiter.blob_group.map(|group| OrphanBlob {
                         group,
@@ -961,6 +966,8 @@ struct LateReply {
     peer_key: AuthorKey,
     /// Whether the call opened the task: a first call did, a follow-up did not.
     opens_task: bool,
+    /// Whether the call was a `SendMessage`, whose reply restarts the check-in clock.
+    restarts_clock: bool,
 }
 
 /// The index of the entry that is due first.
@@ -1004,6 +1011,9 @@ pub(crate) struct A2aWaiter {
     /// Whether this call creates the task, so that a late reply's task is
     /// cancelled. A follow-up does not.
     pub(crate) opens_task: bool,
+    /// Whether the call is a `SendMessage`, new or follow-up. Only the reply to one restarts the
+    /// check-in clock; a probe such as `GetTask` does not, whatever the reply claims to be.
+    pub(crate) restarts_clock: bool,
 }
 
 #[cfg(test)]
@@ -1178,6 +1188,7 @@ mod tests {
                     corr: wire::corr_id(&format!("corr-{index}")),
                     peer_key: bob_key(),
                     opens_task: true,
+                    restarts_clock: true,
                 }),
             }));
         }
@@ -1577,6 +1588,7 @@ mod tests {
             responder: A2aResponder::Typed(bob_tx),
             blob_group: None,
             opens_task: true,
+            restarts_clock: true,
         });
         app.a2a_waiters.push(super::A2aWaiter {
             corr: wire::corr_id("corr-carol"),
@@ -1585,6 +1597,7 @@ mod tests {
             responder: A2aResponder::Typed(carol_tx),
             blob_group: None,
             opens_task: true,
+            restarts_clock: true,
         });
 
         app.fail_a2a_waiters_for_peer((&bob_key(), &Nickname::from("bob")));
@@ -1629,6 +1642,7 @@ mod tests {
                 responder: A2aResponder::Typed(tx),
                 blob_group: None,
                 opens_task: true,
+                restarts_clock: true,
             });
         }
 
@@ -1667,6 +1681,7 @@ mod tests {
             responder: A2aResponder::Typed(tx),
             blob_group: None,
             opens_task: false,
+            restarts_clock: true,
         });
 
         app.fulfill_a2a_waiter(
@@ -1708,6 +1723,7 @@ mod tests {
             responder: A2aResponder::Typed(tx),
             blob_group: Some(ContentId::new(group)),
             opens_task: true,
+            restarts_clock: true,
         }
     }
 
@@ -1951,6 +1967,56 @@ mod tests {
             app.take_call_blobs(&[task_id], Instant::now()),
             vec![ContentId::new("group-slow")],
             "the cancel is recorded"
+        );
+    }
+
+    /// Whether a reply restarts the check-in clock follows the request we sent, not what the reply
+    /// claims to be: a peer that wraps a `GetTask` reply as a `SendMessage` result must not hold
+    /// off the alarm.
+    #[test]
+    fn only_the_reply_to_a_send_message_restarts_the_check_in_clock() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_WORKING" } } }
+        })
+        .to_string();
+        let long_ago = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(600))
+            .expect("the test instant is far from the clock origin");
+        let answer = |node: &mut super::A2aApp, corr: &str, restarts_clock: bool| {
+            let (reply_tx, _reply_rx) = oneshot::channel();
+            node.a2a_waiters.push(super::A2aWaiter {
+                corr: wire::corr_id(corr),
+                peer_key: bob_key(),
+                deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(60),
+                responder: A2aResponder::Typed(reply_tx),
+                blob_group: None,
+                opens_task: false,
+                restarts_clock,
+            });
+            node.fulfill_a2a_waiter(
+                &wire::corr_id(corr),
+                (&bob_key(), &Nickname::from("bob")),
+                &reply,
+            );
+        };
+        // The first reply opens the record; the clock is then set back by hand.
+        answer(&mut app, "corr-open", true);
+        app.tasks
+            .get_mut(&task_id)
+            .expect("adopting the first reply creates the record that this test sets back")
+            .last_skill_activity = long_ago;
+
+        answer(&mut app, "corr-probe", false);
+        assert_eq!(
+            app.tasks[&task_id].last_skill_activity, long_ago,
+            "a probe wrapped as a task leaves the clock where it was"
+        );
+        answer(&mut app, "corr-follow-up", true);
+        assert!(
+            app.tasks[&task_id].last_skill_activity > long_ago,
+            "a follow-up just reached the worker, so its silence counts from now"
         );
     }
 

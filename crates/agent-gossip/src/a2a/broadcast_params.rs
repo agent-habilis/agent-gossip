@@ -1989,6 +1989,7 @@ pub(crate) async fn broadcast_a2a_call(
         responder,
         blob_group,
         opens_task,
+        restarts_clock: method == "SendMessage",
     }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
