@@ -205,8 +205,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | `input-required`, kind `status-update` | leave it in progress; surface the worker's question | `question` |
 | you asked a question (worker) | parked on the initiator | `asked` |
 | you wait for your own user (worker) | still in progress, parked on your user | `waiting-user` |
-| check-in with `waiting_on` `user` (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
-| a check-in without `waiting_on`, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
+| check-in with `waiting_user` (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
+| a check-in without `waiting_user`, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
 | `task_overdue` (initiator) | leave it in progress; the worker has not checked in | `overdue` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
@@ -236,7 +236,7 @@ and it does not say that the agent is working. It carries the last progress
 of the worker as `progress` (an integer from 0 to 100), and no status text.
 
 A **check-in** is a `working` status leg from the worker, with a text (what
-changed) and a progress (0 to 100), and optionally `waiting_on`. The worker
+changed) and a progress (0 to 100), and optionally `waiting_user`. The worker
 sends one at least every check-in interval (5 min by default). A check-in
 wakes you only when its progress moves into another quarter (0–24, 25–49,
 50–74, 75–99, 100). The first progress after none and the beats never wake you.
@@ -249,7 +249,7 @@ interval, then again every interval. It states a fact, and it cancels nothing.
 The `display` line reads:
 
 ```text
-💬️ task overdue · `<worker>` · <label> · no check-in for 11 min[ · waiting on <x>][ · not picked up]
+💬️ task overdue · `<worker>` · <label> · no check-in for 11 min[ · waiting on user][ · not picked up]
 ```
 
 Each bracketed part appears only when it is set. Print it verbatim, set the
@@ -328,8 +328,8 @@ into the `subject` (and `activeForm`) on every transition:
 | `input-required`, kind `artifact-update` | badge `result`, keep `in_progress` |
 | you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
 | you wait for your own user (worker) | badge `waiting-user`, keep `in_progress` |
-| check-in with `waiting_on` `user` (initiator) | badge `waiting-user`, keep `in_progress` |
-| a check-in without `waiting_on`, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
+| check-in with `waiting_user` (initiator) | badge `waiting-user`, keep `in_progress` |
+| a check-in without `waiting_user`, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
 | `task_overdue` (initiator) | badge `overdue`, keep `in_progress` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
@@ -428,16 +428,17 @@ Worker flow:
    more than 2 minutes in the background, and never wait in a shell loop: a
    command that blocks the turn is a check-in you cannot send.
 
-   Before you ask your own user a question, tell the initiator who you wait
-   for. Send a check-in with `--waiting-on user`:
+   Before you ask your own user a question, tell the initiator. Send a check-in
+   with `--waiting-on-user`:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$QUESTION_SUMMARY" --progress "$PERCENT" --waiting-on user
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$QUESTION_SUMMARY" --progress "$PERCENT" --waiting-on-user
    ```
    Move the badge to `waiting-user`. The tag does not stop the clock: keep
-   sending check-ins while you wait, and repeat `--waiting-on user` on every
-   one of them until the wait ends (a check-in without it clears the tag). Do not name the initiator in
-   `--waiting-on`: a question to the initiator is an `input-required` status.
-   The next check-in without `--waiting-on` clears the tag. When your user
+   sending check-ins while you wait, and repeat `--waiting-on-user` on every
+   one of them until the wait ends (a check-in without it clears the flag). To
+   wait on a peer, say so in `--text` (`--text "waiting on <peer> for X"`): the
+   flag is only for your user. A question to the initiator is an
+   `input-required` status. When your user
    answers, send one and move the badge back to `working`.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash

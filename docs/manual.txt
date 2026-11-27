@@ -41,7 +41,7 @@ SYNOPSIS
 
        agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
-                  [--progress PERCENT] [--waiting-on WHO]
+                  [--progress PERCENT] [--waiting-on-user]
 
        agent-gossip a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -422,7 +422,7 @@ COMMANDS
                     metadata carries the last check-in as mesh:status_text
                     (its text), mesh:progress (its progress, an integer
                     from 0 to 100) and mesh:label (the initiator's name for the
-                    task); a task that waits carries mesh:waiting.
+                    task); a task that waits on its user carries mesh:waiting_user.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
                     whole registry
@@ -449,7 +449,7 @@ COMMANDS
 
        a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state STATE [--text TEXT] [--progress PERCENT]
-                  [--waiting-on WHO]
+                  [--waiting-on-user]
               As the WORKER on a task you're serving, emit a TaskStatusUpdate
               (the A2A streaming plane): STATE is working (accept/resume),
               input-required (a question, or "please review" after an
@@ -468,13 +468,17 @@ COMMANDS
               question, an artifact or a terminal state also counts; the
               daemon beat never does.
 
-              --waiting-on WHO (only with --state working) tells the
-              initiator whom the task waits on: a peer nickname, or `user`
-              for the agent's own user. It sets the key mesh:waiting on the
-              task, which GetTask shows in the task metadata. The tag does
-              not stop the clock. The next check-in without --waiting-on
-              clears it. A task that waits on `user` is shown to the
-              initiator but does not wake it.
+              --waiting-on-user (a flag, only with --state working) tells
+              the initiator that the task waits on the agent's own user. It
+              sets the key mesh:waiting_user to true on the task, which
+              GetTask and ListTasks show in the task metadata; the key is
+              absent otherwise. It does not stop the clock: repeat it on
+              every check-in until the user answers. The next check-in
+              without it clears the flag. A task that waits on the user is
+              shown to the initiator but does not wake it. Waiting on a
+              peer is said only in --text. With any state other than
+              working it is refused: "waiting-on-user requires state
+              working".
 
        a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -1444,10 +1448,9 @@ JSON EVENTS
 
               A "status-update" leg that the worker sent with --progress
               additionally carries "progress" — a top-level integer from 0
-              to 100, absent when none. A leg sent with --waiting-on carries
-              "waiting_on" — a top-level string with the tag (control
-              characters removed, at most 120 characters). Both keys are
-              absent, not null, on every other status-update.
+              to 100, absent when none. A leg sent with --waiting-on-user carries
+              "waiting_user": true, a top-level key. Both keys are absent,
+              not null, on every other status-update.
               A check-in wakes the bell only when its progress quarter
               changes (0-24, 25-49, 50-74, 75-99, 100); the first progress
               after none and the beats never wake it. A question, an
@@ -1486,8 +1489,8 @@ JSON EVENTS
               2·X (10 minutes by default) after its last activity, and then
               sees it again every X. It states a fact and cancels nothing.
               Each part of the display after the age appears only when set:
-              the tag the worker gave in --waiting-on, `not picked up` when
-              the worker never accepted. The event is visible: print its
+              `waiting on user` when the worker set --waiting-on-user, and
+              `not picked up` when the worker never accepted. The event is visible: print its
               display line. It rings the bell, except when the worker waits
               on `user`: then it goes on the ring without a wake. It fires
               from the age of the last check-in alone, also before the first
@@ -1495,11 +1498,11 @@ JSON EVENTS
 
                  {"event":"task_overdue","task_id":"<uuid>","peer":"calm-otter",
                   "label":"review the diff","age_secs":660,
-                  "waiting_on":"user","not_picked_up":false,
+                  "waiting_user":true,"not_picked_up":false,
                   "display":"💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min · waiting on user"}
 
-              The key waiting_on is optional: it is absent when the worker
-              gave no tag.
+              The key waiting_user is true only while the worker waits on
+              its user, and is absent otherwise.
 
        checkin_due
               The worker's daemon saw that the task owes a check-in: X after
@@ -1691,8 +1694,8 @@ MCP SERVER
               Args: task_id, state (working | input-required | completed |
               failed | canceled), note (a non-blank text, required with
               working), progress (a whole number from 0 to 100, required
-              with working and refused with any other state), waiting_on
-              (optional: a peer nickname or "user", only with working).
+              with working and refused with any other state), waiting_on_user
+              (optional boolean, only with working).
               Drives the task forward; a working status is a check-in.
 
        task_artifact
