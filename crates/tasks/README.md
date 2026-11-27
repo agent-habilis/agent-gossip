@@ -62,8 +62,6 @@ justification travels with the command.
 - `man`: renders roff man pages into `target/man/`.
 - `logs`: prints the daemon log directory, creating it if missing.
 - `clean`: `cargo clean` plus the separate llvm-cov target dir.
-- `idle-cpu`: measures what an idle daemon costs, with the host event rate
-  beside the CPU figure.
 
 The `Task` enum variants in [`src/main.rs`](src/main.rs) are the source of
 truth, and their `///` doc comments *are* the `--help` text — there is no
