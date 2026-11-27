@@ -151,10 +151,8 @@ All three share one harness:
 that depends back on this crate (cargo permits the cycle because the back-edge
 is a dev-dependency).
 
-Three features, all off by default and never in a release build: `bench`
-(exposes the engine's hot paths to `benches/hot_paths.rs`), `adversarial`, and
-`dhat-heap` (installs dhat's allocator and makes the CLI quit path return
-cleanly so the profiler flushes).
+Two features, both off by default and never in a release build: `bench`
+(exposes the engine's hot paths to `benches/hot_paths.rs`) and `adversarial`.
 
 > **Almost no environment-variable config.** Every knob is a `const` in the engine's
 > `util::consts` — edit and commit to experiment. The few the suite must vary

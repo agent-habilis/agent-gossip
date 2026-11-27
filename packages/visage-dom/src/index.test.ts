@@ -740,8 +740,8 @@ test('a yield* delegate reaches the context through .call(this)', () => {
 })
 
 test('a plain helper takes the context as an ordinary argument', () => {
-  // The shape every `use*` in visage-router has: `this` at the call site, a
-  // normal parameter in the helper.
+  // The shape of a `use*` helper: `this` at the call site, a normal parameter
+  // in the helper.
   const Theme = context<string>('theme')
   const useTheme = (ctx: Ctx): string => ctx.inject(Theme)
 
