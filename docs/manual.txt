@@ -917,7 +917,8 @@ COMMANDS
               another nickname", and the first daemon is not touched. Two
               daemons on one state path cannot run either: the second fails
               at start with "another daemon still runs on this state file and
-              holds the member key {path}".
+              holds the member key {path} (pid {pid}): wait for it to exit and
+              retry, or use another nickname or --state-file".
               Exits 0 whether or not anything matched; prints:
 
                 {"ok":true,
