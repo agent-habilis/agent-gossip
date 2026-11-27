@@ -185,7 +185,10 @@ fn main() -> ExitCode {
             .execute()
             .map_err(|err| -> Box<dyn std::error::Error> { err.into() }),
     };
+    exit_code(outcome)
+}
 
+fn exit_code<E: std::fmt::Display>(outcome: Result<(), E>) -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -230,11 +233,5 @@ fn run_as_zig_multicall() -> Option<ExitCode> {
         return None;
     };
 
-    Some(match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            util::output::error(&error.to_string());
-            ExitCode::FAILURE
-        }
-    })
+    Some(exit_code(result))
 }

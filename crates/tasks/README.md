@@ -41,23 +41,29 @@ justification travels with the command.
 
 ## The tasks
 
-| Task | What it does |
-|---|---|
-| `test` | The suite. Two runs at different `--test-threads`, `--no-fail-fast`, then prunes stale `target/` artifacts |
-| `ci` | The full gate: `fmt --check` → `layering` → clippy → tests |
-| `lint` | `cargo clippy --workspace --all-targets -- -D warnings` |
-| `layering` | Fails if the engine crate names A2A or the application (see AGENTS.md) |
-| `fmt` | `cargo fmt --all` |
-| `proptest` | The property-based tests only (`prop_`) |
-| `coverage` | `cargo llvm-cov`, installing it on demand |
-| `bench` | Everything; `bench transfer` for the loopback soak alone; any other arg is a divan filter (e.g. `bench derive_secret`) |
-| `build` | The binary. Cross-compiles with `--target <triple>` or the `--arch` shorthand |
-| `run` | `cargo run --` with the rest forwarded (`cargo task run create`) |
-| `install` | `cargo install` from an absolute path, then reports what the installed binary *says* its version is |
-| `release` | Builds the release binary |
-| `man` | Renders roff man pages into `target/man/` |
-| `logs` | Prints the daemon log directory, creating it if missing |
-| `clean` | `cargo clean` plus the separate llvm-cov target dir |
+- `test`: the suite. Two runs at different `--test-threads`,
+  `--no-fail-fast`, then prunes stale `target/` artifacts.
+- `ci`: the full gate: `fmt --check` → clippy → bench check → rustdoc →
+  tests.
+- `lint`: `cargo clippy --workspace --all-targets --features
+  agent-gossip/adversarial -- -D warnings`.
+- `fmt`: `cargo fmt --all`.
+- `proptest`: the property-based tests only (`prop_`).
+- `coverage`: `cargo llvm-cov`, installing it on demand.
+- `bench`: everything; `bench transfer` for the loopback soak alone; any
+  other arg is a divan filter (e.g. `bench derive_secret`).
+- `build`: the binary. Cross-compiles with `--target <triple>` or the
+  `--arch` shorthand.
+- `run`: `cargo run --` with the rest forwarded (`cargo task run create`).
+- `install`: `cargo install` from an absolute path, then reports what the
+  installed binary *says* its version is.
+- `uninstall`: `cargo uninstall agent-gossip`.
+- `release`: builds the release binary.
+- `man`: renders roff man pages into `target/man/`.
+- `logs`: prints the daemon log directory, creating it if missing.
+- `clean`: `cargo clean` plus the separate llvm-cov target dir.
+- `idle-cpu`: measures what an idle daemon costs, with the host event rate
+  beside the CPU figure.
 
 The `Task` enum variants in [`src/main.rs`](src/main.rs) are the source of
 truth, and their `///` doc comments *are* the `--help` text — there is no
