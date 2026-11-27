@@ -11,9 +11,11 @@
 use anyhow::{Context, Result, bail};
 use habilis_network::iroh::EndpointAddr;
 use habilis_network::net::{endpoint_addr_from_json, endpoint_addr_to_json};
+use habilis_network::protocol::base58check::{
+    decode as base58check_decode, encode as base58check_encode,
+};
 use habilis_network::protocol::{LookupOpts, TicketSecret};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
-use sha2::{Digest, Sha256};
 
 use super::SECRET_LEN;
 
@@ -75,7 +77,7 @@ impl A2aTicket {
         if text.len() > MAX_TICKET_TEXT {
             bail!("a2a ticket text is larger than one frame");
         }
-        let framed = base58check_decode(text)?;
+        let framed = base58check_decode(text, "a2a ticket")?;
         if framed.len() > MAX_TICKET_BYTES {
             bail!("a2a ticket is larger than one frame");
         }
@@ -106,34 +108,6 @@ impl A2aTicket {
             password,
         })
     }
-}
-
-fn checksum(bytes: &[u8]) -> [u8; 4] {
-    let first = Sha256::digest(bytes);
-    let second = Sha256::digest(first);
-    let mut out = [0u8; 4];
-    out.copy_from_slice(&second[..4]);
-    out
-}
-
-fn base58check_encode(payload: &[u8]) -> String {
-    let mut with_checksum = payload.to_vec();
-    with_checksum.extend_from_slice(&checksum(payload));
-    bs58::encode(with_checksum).into_string()
-}
-
-fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
-    let decoded = bs58::decode(encoded)
-        .into_vec()
-        .context("invalid Base58 in a2a ticket")?;
-    if decoded.len() < 4 {
-        bail!("a2a ticket too short");
-    }
-    let (payload, received) = decoded.split_at(decoded.len() - 4);
-    if received != checksum(payload) {
-        bail!("invalid a2a ticket checksum");
-    }
-    Ok(payload.to_vec())
 }
 
 #[cfg(test)]

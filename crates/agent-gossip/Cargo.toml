@@ -65,7 +65,6 @@ unicode-width = "0.2"
 anyhow.workspace = true
 rustix = { version = "1", default-features = false, features = ["process"] }
 uuid.workspace = true
-sha2.workspace = true
 bytes.workspace = true
 bs58.workspace = true
 serde.workspace = true
@@ -107,6 +106,7 @@ habilis-network = { workspace = true, features = ["blob", "test-fixtures"] }
 agent-gossip-test-fixtures = { path = "../agent-gossip-test-fixtures" }
 proptest.workspace = true
 insta.workspace = true
+sha2.workspace = true
 # The in-process harness (`agent_gossip_test_fixtures::InProcNode`) drives
 # `api::MeshSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version. `test-util` is for
