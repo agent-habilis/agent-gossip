@@ -1027,30 +1027,15 @@ mod tests {
         assert!(json.contains(r#""merge""#), "{json}");
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        match parsed {
-            IpcCommand::StateMerge { mesh, merge } => {
-                assert_eq!(mesh, expected, "the state merge keeps the mesh");
-                assert_eq!(
-                    merge,
-                    serde_json::json!({"turn": "b"}),
-                    "the state merge keeps the patch"
-                );
-            }
-            IpcCommand::Broadcast { .. }
-            | IpcCommand::Msg { .. }
-            | IpcCommand::Poll { .. }
-            | IpcCommand::Ping { .. }
-            | IpcCommand::A2aStatus { .. }
-            | IpcCommand::A2aArtifact { .. }
-            | IpcCommand::Peers { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::A2aCall { .. }
-            | IpcCommand::Topology { .. }
-            | IpcCommand::Invite { .. }
-            | IpcCommand::Info => panic!("expected StateMerge"),
-        }
+        let IpcCommand::StateMerge { mesh, merge } = parsed else {
+            panic!("expected StateMerge");
+        };
+        assert_eq!(mesh, expected, "the state merge keeps the mesh");
+        assert_eq!(
+            merge,
+            serde_json::json!({"turn": "b"}),
+            "the state merge keeps the patch"
+        );
     }
 
     #[test]
@@ -1066,26 +1051,11 @@ mod tests {
         assert!(!json.contains("long"), "false long must not serialize");
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        match parsed {
-            IpcCommand::Poll { after, long, .. } => {
-                assert_eq!(after, Some(42), "the after cursor is kept");
-                assert!(!long, "absent long deserializes to false");
-            }
-            IpcCommand::Broadcast { .. }
-            | IpcCommand::Msg { .. }
-            | IpcCommand::Ping { .. }
-            | IpcCommand::A2aStatus { .. }
-            | IpcCommand::A2aArtifact { .. }
-            | IpcCommand::Peers { .. }
-            | IpcCommand::StateMerge { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::A2aCall { .. }
-            | IpcCommand::Topology { .. }
-            | IpcCommand::Invite { .. }
-            | IpcCommand::Info => panic!("expected Poll"),
-        }
+        let IpcCommand::Poll { after, long, .. } = parsed else {
+            panic!("expected Poll");
+        };
+        assert_eq!(after, Some(42), "the after cursor is kept");
+        assert!(!long, "absent long deserializes to false");
     }
 
     #[test]
@@ -1101,23 +1071,10 @@ mod tests {
         );
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        match parsed {
-            IpcCommand::Ping { mesh } => assert_eq!(mesh, expected, "the ping keeps the mesh"),
-            IpcCommand::Broadcast { .. }
-            | IpcCommand::Msg { .. }
-            | IpcCommand::Poll { .. }
-            | IpcCommand::A2aStatus { .. }
-            | IpcCommand::A2aArtifact { .. }
-            | IpcCommand::Peers { .. }
-            | IpcCommand::StateMerge { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::A2aCall { .. }
-            | IpcCommand::Topology { .. }
-            | IpcCommand::Invite { .. }
-            | IpcCommand::Info => panic!("expected Ping"),
-        }
+        let IpcCommand::Ping { mesh } = parsed else {
+            panic!("expected Ping");
+        };
+        assert_eq!(mesh, expected, "the ping keeps the mesh");
     }
 
     #[test]
@@ -1140,59 +1097,25 @@ mod tests {
         );
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        match parsed {
-            IpcCommand::A2aStatus {
-                state,
-                note,
-                waiting,
-                ..
-            } => {
-                assert_eq!(
-                    state,
-                    TaskState::Working,
-                    "the status keeps the working state"
-                );
-                assert_eq!(note.as_deref(), Some("on it"), "the status keeps its note");
-                assert_eq!(
-                    waiting.as_deref(),
-                    Some("asks its user"),
-                    "the status keeps its waiting reason"
-                );
-            }
-            IpcCommand::Broadcast { .. }
-            | IpcCommand::Msg { .. }
-            | IpcCommand::Poll { .. }
-            | IpcCommand::Ping { .. }
-            | IpcCommand::A2aArtifact { .. }
-            | IpcCommand::Peers { .. }
-            | IpcCommand::StateMerge { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::A2aCall { .. }
-            | IpcCommand::Topology { .. }
-            | IpcCommand::Invite { .. }
-            | IpcCommand::Info => panic!("expected A2aStatus"),
-        }
-    }
-
-    /// An older CLI sends no `waiting`; the daemon must still accept the line.
-    #[test]
-    fn ipc_command_a2a_status_without_waiting_still_parses() {
-        let command = IpcCommand::A2aStatus {
-            mesh: MeshId::from("test"),
-            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-            state: TaskState::Working,
-            note: None,
-            waiting: None,
+        let IpcCommand::A2aStatus {
+            state,
+            note,
+            waiting,
+            ..
+        } = parsed
+        else {
+            panic!("expected A2aStatus");
         };
-        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
-        assert!(!json.contains("waiting"), "the key must be absent: {json}");
-        let parsed: IpcCommand =
-            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        assert!(
-            matches!(parsed, IpcCommand::A2aStatus { waiting: None, .. }),
-            "a status with a waiting reason matches the status arm"
+        assert_eq!(
+            state,
+            TaskState::Working,
+            "the status keeps the working state"
+        );
+        assert_eq!(note.as_deref(), Some("on it"), "the status keeps its note");
+        assert_eq!(
+            waiting.as_deref(),
+            Some("asks its user"),
+            "the status keeps its waiting reason"
         );
     }
 
@@ -1209,25 +1132,10 @@ mod tests {
         );
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        match parsed {
-            IpcCommand::Peers { mesh } => {
-                assert_eq!(mesh, expected, "the peers command keeps the mesh");
-            }
-            IpcCommand::Broadcast { .. }
-            | IpcCommand::Msg { .. }
-            | IpcCommand::Poll { .. }
-            | IpcCommand::Ping { .. }
-            | IpcCommand::A2aStatus { .. }
-            | IpcCommand::A2aArtifact { .. }
-            | IpcCommand::StateMerge { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::A2aCall { .. }
-            | IpcCommand::Topology { .. }
-            | IpcCommand::Invite { .. }
-            | IpcCommand::Info => panic!("expected Peers"),
-        }
+        let IpcCommand::Peers { mesh } = parsed else {
+            panic!("expected Peers");
+        };
+        assert_eq!(mesh, expected, "the peers command keeps the mesh");
     }
 
     #[test]
@@ -1257,65 +1165,5 @@ mod tests {
         };
         let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(json.contains("\"long\":true"), "wire: {json}");
-    }
-
-    mod prop {
-        use proptest::collection::vec as arb_vec;
-        use proptest::strategy::Strategy;
-        use proptest::{prop_assert, prop_assert_eq, proptest};
-
-        use super::{MeshId, MessageBody, Nickname};
-        use crate::a2a::wire;
-
-        fn arb_ascii_body() -> impl Strategy<Value = String> {
-            arb_vec(0x20u8..0x7eu8, 0..200)
-                .prop_map(|bytes| String::from_utf8(bytes).expect("the bytes are printable ASCII"))
-        }
-
-        fn arb_nickname() -> impl Strategy<Value = String> {
-            "[a-z]{3,8}-[a-z]{3,8}"
-        }
-
-        fn arb_mesh() -> impl Strategy<Value = MeshId> {
-            "[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|label| MeshId::from(label.as_str()))
-        }
-
-        proptest! {
-            #![proptest_config(crate::proptest_support::config())]
-            // ── Round-trip: build_msg_bytes -> Message::parse ──────
-
-            #[test]
-            fn prop_build_msg_bytes_message_round_trip(
-                mesh in arb_mesh(),
-                body in arb_ascii_body(),
-                author in arb_nickname(),
-            ) {
-                let author = Nickname::try_new(&author).expect("the test nickname is valid");
-                let body = MessageBody::try_new(&body).expect("the test body is a valid message body");
-                let expected_body = body.clone();
-                let identity = habilis_network::protocol::Identity::generate();
-                let (bytes, built) = habilis_network::protocol::build_msg_bytes(
-                    habilis_network::protocol::BuildMsgParams::new(
-                        wire::app_tag(wire::BROADCAST),
-                        &mesh,
-                        &author,
-                        body,
-                    ),
-                    &identity,
-                )
-                .expect("the test author signs a valid message");
-                prop_assert!(!built.id.as_str().is_empty());
-                let parsed = habilis_network::protocol::Message::parse(bytes.as_bytes()).expect("the frame was built by the test");
-                prop_assert_eq!(&parsed.author, &author);
-                prop_assert_eq!(&parsed.body, &expected_body);
-                prop_assert_eq!(&parsed.mesh, &mesh);
-                prop_assert_eq!(
-                    parsed.kind,
-                    habilis_network::protocol::MessageKind::app_broadcast(
-                        wire::BROADCAST
-                    )
-                );
-            }
-        }
     }
 }

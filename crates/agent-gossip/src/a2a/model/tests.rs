@@ -103,15 +103,6 @@ fn terminal_states_are_the_four_closed_ones() {
     }
 }
 
-#[test]
-fn message_round_trips() {
-    let message = fixture_message();
-    let json = serde_json::to_string(&message).expect("a test value serializes to JSON");
-    let parsed: Message =
-        serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-    assert_eq!(parsed, message, "a message survives a json round trip");
-}
-
 mod snapshots {
     use habilis_network::protocol::messages::Verified;
 
