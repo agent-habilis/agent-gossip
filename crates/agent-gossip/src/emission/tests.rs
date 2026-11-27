@@ -1036,7 +1036,7 @@ mod snapshots {
     fn state_display_sanitizes_peer_controlled_paths() {
         // A peer-crafted merge key with a backtick (would break the markdown code
         // span around the nick) and a newline (would forge a second line in the
-        // human eprintln feed) must not reach the `display` verbatim.
+        // rendered markdown) must not reach the `display` verbatim.
         let line = snap_state("{\"x`\\n<evil>\": 1}", &serde_json::json!({}), false);
         let parsed: serde_json::Value =
             serde_json::from_str(&line).expect("the JSON text comes from the test itself");

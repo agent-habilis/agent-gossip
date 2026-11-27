@@ -15,11 +15,10 @@ use super::{
 use crate::a2a::task_record::StallNotice;
 use crate::a2a::{node, wire};
 
-/// Per-event-loop output destination. Replaces the former
-/// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
-/// sessions (library api, tests) can run with independent output
-/// instead of racing a first-write-wins `OnceLock`. Threaded by
-/// `&Output` (not `Copy` — `Capture` holds a channel sender).
+/// Per-event-loop output destination, not a process global: several
+/// in-process sessions (library api, tests) run with independent
+/// output. Threaded by `&Output` (not `Copy` — `Capture` holds a
+/// channel sender).
 #[derive(Debug, Clone)]
 pub(crate) enum Output {
     /// Write to the process stdout/stderr in the given mode (CLI /
@@ -275,9 +274,9 @@ impl Output {
         });
     }
 
-    /// Surface a shared-state change: the human ` … changed shared state`
-    /// line, the structured `state` event for the agent API (poll / `--output
-    /// json` / api `events()`), and the surfaced-ring mirror. F5: a *self*
+    /// Surface a shared-state change: the structured `state` event for the
+    /// agent API (poll / `--output json` / api `events()`), and the
+    /// surfaced-ring mirror. F5: a *self*
     /// change goes to poll/UI but is **never** delivered to the api `events()`
     /// reaction channel, so an agent is never woken by its own patch (alternation
     /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the

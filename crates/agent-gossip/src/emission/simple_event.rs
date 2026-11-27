@@ -1,8 +1,8 @@
 //! The JSON wire layer: the serde shapes for every line the daemon
 //! emits on stdout (consumed by the `/mesh` skill and any `--output
 //! json` client) plus the serializers that render them. Field
-//! order/naming is part of the wire format — documented in AGENTS.md,
-//! pinned by the insta snapshots in `tests`. The `Output` sink in the
+//! order/naming is part of the wire format — pinned by the insta
+//! snapshots in `tests`. The `Output` sink in the
 //! parent module renders through these so the captured-event and
 //! stdout forms stay byte-identical.
 
@@ -95,7 +95,7 @@ enum SimpleEvent<'source> {
 }
 
 /// Common prefix for every `{"event":"message",...}` line. Field
-/// order is part of the wire format (see AGENTS.md).
+/// order is part of the wire format.
 #[derive(Serialize)]
 struct MessageHeader<'source> {
     pub event: &'static str,
@@ -246,9 +246,7 @@ fn message_header<'a>(message: &'a Authored, ty: &'static str) -> MessageHeader<
 /// model never composes or re-types a body. Nicks are wrapped in literal
 /// backticks: the skill renders into markdown, where a bare `<nick>` is
 /// stripped as an HTML tag, and the code span prevents that. The body is
-/// embedded **raw** (never trimmed, escaped, or re-spaced). This is
-/// JSON-only — the Human/terminal sink renders separately (ANSI, no
-/// backticks).
+/// embedded **raw** (never trimmed, escaped, or re-spaced).
 ///
 /// `to` is the msg addressee, and the `→` it renders is the only
 /// thing distinguishing a private line from a gossip-wide one on screen.
@@ -300,8 +298,7 @@ fn task_progress_display(author: &str, to: &str) -> String {
 }
 
 /// `display` line for a presence event: `` 💬️ `<author>` has joined `` /
-/// `` 💬️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
-/// backtick rationale.
+/// `… has left`. See [`msg_display`] for the backtick rationale.
 fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
     format!("{DISPLAY_GLYPH} `<{author}>` has {subtype}")
 }
@@ -408,9 +405,8 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
 
 /// Append `"is_visible":<b>` as the last field of an already-rendered event
 /// object. Spliced (like `seq` in [`surfaced_event_json`]) rather than added
-/// to every line struct: one stamp point per render path keeps the stream and
-/// poll forms byte-identical, and re-parsing to a `Value` would reorder the
-/// pinned fields.
+/// to every line struct; re-parsing to a `Value` would reorder the pinned
+/// fields.
 fn stamp_visibility(line: String, is_visible: bool) -> String {
     match line.strip_suffix('}') {
         Some(body) => format!("{body},\"is_visible\":{is_visible}}}"),
@@ -421,8 +417,8 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Format a presence message as JSON.
 ///
 /// Serializes the struct directly because the documented wire format
-/// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
-/// `ts`, …) and `Value::to_string` would sort keys alphabetically.
+/// pins the field order (`event`, `id`, `type`, `gossip`, `author`,
+/// `pubkey`, `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(
     message: &Authored,
     subtype: PresenceSubtype,
@@ -603,7 +599,7 @@ fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Val
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
 /// The path is built from attacker-influenced merge keys, and the display feeds
-/// both a markdown renderer and a raw terminal `eprintln`, so strip:
+/// a markdown renderer, so strip:
 /// - control characters (a `\n` would forge a second line; `MessageBody` permits
 ///   newlines),
 /// - backticks (which would unbalance the code span around the nick), and
