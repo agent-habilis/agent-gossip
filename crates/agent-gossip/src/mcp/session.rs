@@ -3,7 +3,7 @@
 //! server, tool handlers, and arg/result types live in [`super`]; only the
 //! session plumbing lives here, reused from `api` rather than duplicated.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use habilis_network::protocol::AuthorKey;
@@ -19,8 +19,9 @@ use crate::api::{
 pub(crate) struct Session {
     pub(super) core: InProcessSession,
     own_key: AuthorKey,
-    /// Implicit `after` seq cursor for [`Session::fetch_messages`].
-    last_delivered_seq: Mutex<Option<u64>>,
+    /// Implicit `after` seq cursor for [`Session::fetch_messages`]. It starts at 0, the
+    /// before-anything cursor.
+    last_delivered_seq: AtomicU64,
 }
 
 /// Our author key, or the setup failure that a stopped event loop leaves behind. A session
@@ -67,7 +68,7 @@ impl Session {
         Self {
             core,
             own_key,
-            last_delivered_seq: Mutex::new(None),
+            last_delivered_seq: AtomicU64::new(0),
         }
     }
 
@@ -88,36 +89,17 @@ impl Session {
     /// # Errors
     /// Fails if the event loop has stopped.
     pub(super) async fn fetch_messages(&self, after: Option<u64>, long: bool) -> Result<PollBatch> {
-        let batch = self.core.fetch(self.effective_after(after), long).await?;
+        // Never `None`: MCP keeps its own per-session cursor, so it always speaks the
+        // explicit-seq protocol. The daemon-side read cursor and its waking-only bell
+        // semantics belong to the cursor-less CLI `poll` alone.
+        let cursor = after.unwrap_or_else(|| self.last_delivered_seq.load(Ordering::Relaxed));
+        let batch = self.core.fetch(Some(cursor), long).await?;
         if after.is_none()
             && let Some(seq) = batch.events.last().map(|item| item.seq)
         {
-            self.advance_cursor_to(seq);
+            self.last_delivered_seq.store(seq, Ordering::Relaxed);
         }
         Ok(batch)
-    }
-
-    /// Explicit cursor wins; otherwise fall back to the implicit one, which
-    /// starts at 0 (the before-anything cursor). Never `None`: MCP keeps its
-    /// own per-session cursor, so it always speaks the explicit-seq protocol —
-    /// the daemon-side read cursor and its waking-only bell semantics belong
-    /// to the cursor-less CLI `poll` alone.
-    fn effective_after(&self, explicit: Option<u64>) -> Option<u64> {
-        explicit
-            .or_else(|| {
-                *self.last_delivered_seq.lock().expect(
-                    "the cursor lock is never held across a panic, so it cannot be poisoned",
-                )
-            })
-            .or(Some(0))
-    }
-
-    fn advance_cursor_to(&self, seq: u64) {
-        *self
-            .last_delivered_seq
-            .lock()
-            .expect("the cursor lock is never held across a panic, so it cannot be poisoned") =
-            Some(seq);
     }
 
     /// Clean shutdown — delegates to the core's `leave`.
