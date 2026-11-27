@@ -28,6 +28,7 @@ For a user:
 - A `state` or `meta` event has no `merge` key. It was always null. Its
   `display` line always reads `changed shared state`.
 - `a2a status` loses the `--note` alias of `--text`.
+- `plug --agent` loses the `claude` alias of `claude-code`.
 - The fallbacks for peers of version 0.8 and 0.9 are removed. A task whose
   peer sends no keepalive for the task timeout is cancelled, also when that
   peer never sent a keepalive. A status leg with no `mesh:order_ms` value

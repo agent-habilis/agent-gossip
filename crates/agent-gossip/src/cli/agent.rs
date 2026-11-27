@@ -50,7 +50,7 @@ const SKIP: &[&str] = include!("embed_skip.rs");
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
     /// Claude Code — skills under `~/.claude/skills`.
-    #[value(name = "claude-code", alias = "claude")]
+    #[value(name = "claude-code")]
     ClaudeCode,
     /// pi — skills under `~/.pi/agent/skills`.
     Pi,
