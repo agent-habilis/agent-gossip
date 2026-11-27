@@ -10,8 +10,7 @@ pub(crate) struct MeshRef {
     pub(crate) nickname: Nickname,
     /// Our author key in hex: the slot of our entry in the meta document. An MCP client has no
     /// `ready` output to read it from.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) pubkey: Option<String>,
+    pub(crate) pubkey: String,
 }
 
 impl From<&Session> for MeshRef {
@@ -19,12 +18,11 @@ impl From<&Session> for MeshRef {
         // `MeshRef` is the serialized tool output; the wire shape
         // keeps `name` a plain string.
         let name: String = session.core.name().as_str().to_owned();
-        let pubkey: Option<String> = Some(session.own_key().to_string());
         MeshRef {
             gossip: session.core.mesh_id().clone(),
             name,
             nickname: session.core.nickname().clone(),
-            pubkey,
+            pubkey: session.own_key().to_string(),
         }
     }
 }
