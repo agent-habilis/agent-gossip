@@ -223,15 +223,6 @@ impl Drop for JsonNode {
     }
 }
 
-// ── CLI helpers ─────────────────────────────────────────────────────────────
-
-// Thin shims over `common::cli_*`. Monitor tests send via IPC to an
-// already-running daemon; success is asserted.
-
-fn cli_send(mesh: &str, nickname: &str, body: &str) -> String {
-    common::cli_message_checked(mesh, nickname, body)
-}
-
 // ── test fixtures ──────────────────────────────────────────────────────────
 
 /// Spawn a 3-peer mesh (1 creator + 2 joiners) and wait for overlay to stabilise.
@@ -722,7 +713,7 @@ fn test_creator_departure_peers_survive() {
     // post-disruption delivery: the creator may have been the relay hub
     // between the two joiners, so re-meshing waits on the heal cadence —
     // budget it with `RECOVERY_TIMEOUT`, not the steady-state `MSG_TIMEOUT`.
-    cli_send(&mesh, "survive-alpha", "still-here");
+    let _ = common::cli_message_checked(&mesh, "survive-alpha", "still-here");
     let delivered = wait_until(|| joiner_b.broadcast_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         delivered >= 1,
@@ -807,7 +798,7 @@ fn test_creator_departure_four_peers_survive() {
     assert!(count >= 3, "creator did not see all 3 joiners");
 
     // Verify cross-joiner messaging works before killing creator.
-    cli_send(&mesh, "four-alpha", "mesh-check");
+    let _ = common::cli_message_checked(&mesh, "four-alpha", "mesh-check");
     let mesh_count = wait_until(
         || {
             joiner_c
@@ -836,14 +827,14 @@ fn test_creator_departure_four_peers_survive() {
     // Verify cross-peer messaging still works. Post-disruption deliveries
     // (the creator just left) re-mesh on the heal cadence, so they get
     // `RECOVERY_TIMEOUT` rather than the steady-state `MSG_TIMEOUT`.
-    cli_send(&mesh, "four-alpha", "post-creator-msg");
+    let _ = common::cli_message_checked(&mesh, "four-alpha", "post-creator-msg");
     let post_count = wait_until(|| joiner_b.broadcast_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         post_count >= 1,
         "joiner_b did not receive message after creator left"
     );
 
-    cli_send(&mesh, "four-beta", "post-creator-relay");
+    let _ = common::cli_message_checked(&mesh, "four-beta", "post-creator-relay");
     let relay_count = wait_until(
         || {
             joiner_c
@@ -1054,7 +1045,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
         ghost.wait_ready(&mesh),
         "the ghost must be live before it is silenced, or the test checks no ghost at all"
     );
-    let _ = cli_send(&mesh, &ghost.nickname, "ghost-hist");
+    let _ = common::cli_message_checked(&mesh, &ghost.nickname, "ghost-hist");
     assert!(
         wait_until(
             || creator
@@ -1081,7 +1072,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     // Positive control: the still-present creator must surface, proving
     // the late joiner is meshed and the horizon — not connectivity — is
     // what hides the ghost.
-    let _ = cli_send(&mesh, &creator.nickname, "live-after");
+    let _ = common::cli_message_checked(&mesh, &creator.nickname, "live-after");
     assert!(
         wait_until(
             || {
@@ -1764,7 +1755,7 @@ async fn test_poll_record_matches_stream_line() {
     std::thread::sleep(Duration::from_secs(3));
 
     // Joiner sends; the creator surfaces it on its stream and can poll it.
-    cli_send(&mesh, &joiner.nickname, "parity body");
+    let _ = common::cli_message_checked(&mesh, &joiner.nickname, "parity body");
 
     // Find the creator's stream line for this message.
     let deadline = Instant::now() + MSG_TIMEOUT;
