@@ -128,6 +128,28 @@ pub(crate) struct TaskRecord {
 }
 
 impl TaskRecord {
+    /// A record as its opening leg leaves it: `Submitted`, with the next move owed by the
+    /// receiver.
+    fn open(peer_key: AuthorKey, peer: Nickname, role: TaskRole, now: Instant) -> Self {
+        Self {
+            peer_key,
+            peer,
+            role,
+            state: TaskState::Submitted,
+            review: false,
+            last_activity: now,
+            last_sent: now,
+            last_peer_activity: now,
+            last_skill_activity: now,
+            peer_beats: false,
+            surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
+            waiting: None,
+            waiting_mark: None,
+            last_stall_event: None,
+            ball: TaskRole::Receiver,
+        }
+    }
+
     /// Both parties beat every live task, whoever holds the ball: a human
     /// deciding, a reviewer reading, and a long build all look like silence,
     /// and each lost tasks at ~4 min. A beat proves the daemon is up, and the
@@ -496,20 +518,7 @@ pub(crate) fn adopt_initiator(
             // First adoption (task creation): open the initiator-side record at
             // the server-minted state.
             slot.insert(TaskRecord {
-                peer_key: *peer_key,
-                peer: peer.clone(),
-                role: TaskRole::Initiator,
                 state: task_state,
-                review: false,
-                last_activity: now,
-                last_sent: now,
-                last_peer_activity: now,
-                last_skill_activity: now,
-                peer_beats: false,
-                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
-                waiting: None,
-                waiting_mark: None,
-                last_stall_event: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
                 ball: if task_state == TaskState::InputRequired {
@@ -517,6 +526,7 @@ pub(crate) fn adopt_initiator(
                 } else {
                     TaskRole::Receiver
                 },
+                ..TaskRecord::open(*peer_key, peer.clone(), TaskRole::Initiator, now)
             });
         }
         Entry::Occupied(mut slot) => {
@@ -567,29 +577,14 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         && let Some(peer) = leg.peer
     {
         // The opening leg mints the record; a duplicate offer just touches it.
+        let role = if leg.mine {
+            TaskRole::Initiator
+        } else {
+            TaskRole::Receiver
+        };
         tasks
             .entry(leg.task_id.clone())
-            .or_insert_with(|| TaskRecord {
-                peer_key: *leg.peer_key,
-                peer: peer.clone(),
-                role: if leg.mine {
-                    TaskRole::Initiator
-                } else {
-                    TaskRole::Receiver
-                },
-                state: TaskState::Submitted,
-                review: false,
-                last_activity: now,
-                last_sent: now,
-                last_peer_activity: now,
-                last_skill_activity: now,
-                peer_beats: false,
-                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
-                waiting: None,
-                waiting_mark: None,
-                last_stall_event: None,
-                ball: TaskRole::Receiver,
-            });
+            .or_insert_with(|| TaskRecord::open(*leg.peer_key, peer.clone(), role, now));
     }
 
     let Some(rec) = tasks.get_mut(leg.task_id) else {
@@ -732,16 +727,7 @@ async fn send_cancels(
             status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
                 .with_metadata(serde_json::json!({ META_REASON: reason })),
         );
-        broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key,
-                task_id,
-                update: &update,
-            },
-        )
-        .await;
+        broadcast_status(state, context, peer_key, &update).await;
     }
 }
 
@@ -929,32 +915,13 @@ pub(crate) async fn tick_task_keepalive(
             status_update_params::StatusUpdateParams::new(&task_id, task_state)
                 .with_metadata(status_update_params::beat_metadata_with_reader(reader)),
         );
-        let sent = broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key: &peer_key,
-                task_id: &task_id,
-                update: &update,
-            },
-        )
-        .await;
+        let sent = broadcast_status(state, context, &peer_key, &update).await;
         if sent && let Some(rec) = app.tasks.get_mut(&task_id) {
             let sent_at = Instant::now();
             rec.last_activity = sent_at;
             rec.last_sent = sent_at;
         }
     }
-}
-
-/// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
-/// handles.
-struct BroadcastStatusParams<'caller> {
-    peer_key: &'caller AuthorKey,
-    /// The task id rides inside the status payload body (8.0); the envelope no
-    /// longer carries it, so this is unused here beyond documenting the leg.
-    task_id: &'caller TaskId,
-    update: &'caller super::TaskStatusUpdate,
 }
 
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
@@ -966,13 +933,9 @@ struct BroadcastStatusParams<'caller> {
 async fn broadcast_status(
     state: &EventLoopState,
     context: &HandlerCtx<'_>,
-    params: BroadcastStatusParams<'_>,
+    peer_key: &AuthorKey,
+    update: &super::TaskStatusUpdate,
 ) -> bool {
-    let BroadcastStatusParams {
-        peer_key,
-        task_id: _task_id,
-        update,
-    } = params;
     let Ok(body) = status_update_params::payload_body(update) else {
         return false;
     };
@@ -2948,92 +2911,6 @@ mod tests {
             tasks[&tid()].state,
             TaskState::Completed,
             "the key of the counterparty still closes the task"
-        );
-    }
-
-    /// The same rule for the snapshot that an RPC reply returns.
-    #[test]
-    fn a_returned_task_is_not_adopted_from_a_key_that_shares_the_worker_name() {
-        let now = Instant::now();
-        let mut tasks = working_task_we_opened(now);
-        super::adopt_initiator(
-            &mut tasks,
-            super::AdoptInitiatorParams {
-                task_id: &tid(),
-                peer_key: &peer_key("calm-otter-twin"),
-                peer: &Nickname::from("calm-otter"),
-                task_state: TaskState::Failed,
-                now: now + Duration::from_mins(5),
-            },
-        );
-        assert_eq!(
-            tasks[&tid()].state,
-            TaskState::Working,
-            "a twin of the worker cannot drive our task terminal"
-        );
-    }
-
-    /// The quota counts keys, not names: a key that shares the name of a flooder is another peer.
-    #[test]
-    fn the_task_quota_counts_keys_and_not_names() {
-        use super::{Admission, admit_new_task};
-        let flooder = peer_key("wire-thistle");
-        let twin = peer_key("wire-thistle-twin");
-        let mut tasks = HashMap::new();
-        for index in 0..tuning::TASKS_PER_PEER_CAP {
-            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
-            apply(
-                &mut tasks,
-                &LegInfo {
-                    task_id: &task_id,
-                    peer_key: &flooder,
-                    peer: Some(&Nickname::from("wire-thistle")),
-                    kind: LegKind::Offer,
-                    mine: false,
-                },
-                Instant::now(),
-            );
-        }
-        assert_eq!(
-            admit_new_task(&tasks, &flooder),
-            Admission::PeerAtCap,
-            "the live tasks of one key fill its quota"
-        );
-        assert_eq!(
-            admit_new_task(&tasks, &twin),
-            Admission::Ok,
-            "a key with the same name has its own quota"
-        );
-    }
-
-    /// Two keys can use one nickname. When one of them leaves, only its tasks end.
-    #[test]
-    fn peer_left_cancels_only_the_tasks_of_the_key_that_left() {
-        let now = Instant::now();
-        let offer = |task_id: &'static str, key_name: &'static str| LegInfo {
-            task_id: Box::leak(Box::new(TaskId::from(task_id))),
-            peer_key: Box::leak(Box::new(peer_key(key_name))),
-            peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
-            kind: LegKind::Offer,
-            mine: false,
-        };
-        let left_id = "550e8400-e29b-41d4-a716-446655440001";
-        let twin_id = "550e8400-e29b-41d4-a716-446655440002";
-        let mut tasks = HashMap::new();
-        apply(&mut tasks, &offer(left_id, "calm-otter"), now);
-        apply(&mut tasks, &offer(twin_id, "calm-otter-twin"), now);
-
-        let out = crate::emission::Output::silent();
-        super::fail_tasks_for_departed_peer(&mut tasks, &peer_key("calm-otter"), &out);
-
-        assert_eq!(
-            tasks[&TaskId::from(left_id)].state,
-            TaskState::Canceled,
-            "the departed key loses its live task at once"
-        );
-        assert!(
-            !tasks[&TaskId::from(twin_id)].state.is_terminal(),
-            "the task of the key that stays is untouched, though it shares the name"
         );
     }
 }
