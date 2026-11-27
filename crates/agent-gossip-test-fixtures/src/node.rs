@@ -185,6 +185,17 @@ impl Node {
             .count()
     }
 
+    /// Whether the child still runs. A child that exited is reaped by this call.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// The process id of the daemon, for a test that signals it or reads its files.
+    #[must_use]
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Send SIGINT to the child process (triggers the ctrl-c handler).
     pub fn sigint(&self) {
         self.signal("-INT");
@@ -229,7 +240,7 @@ impl Node {
     // timing symptom. INT and KILL stay lenient: a test may signal a child
     // that has already exited.
     fn signal(&self, signature: &str) {
-        let pid = self.child.id();
+        let pid = self.pid();
         let status = Command::new("kill")
             .args([signature, &pid.to_string()])
             .status();

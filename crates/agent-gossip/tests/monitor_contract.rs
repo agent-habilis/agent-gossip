@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, PresenceSubtype, RECOVERY_TIMEOUT,
-    serial_guard, socket_path, tmp_log, wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Node, POLL, PresenceSubtype, RECOVERY_TIMEOUT,
+    serial_guard, tmp_log, wait_until,
 };
 
 /// A 3 s task idle timeout with a 1 s keepalive and a 1 s sweep, so a reap shows in seconds.
@@ -30,206 +30,49 @@ const FAST_TASK_TIMERS: [(&str, &str); 3] = [
     ("--sweep-interval-secs", "1"),
 ];
 
-/// Parse a JSON stdout line as a `ready` event, returning its
-/// `(mesh, name, nickname)` fields, or `None` if the line isn't a `ready`
-/// event (or isn't JSON at all).
-fn parse_ready_event(line: &str) -> Option<(String, String, String)> {
-    let parsed = serde_json::from_str::<serde_json::Value>(line).ok()?;
-    if parsed["event"] != "ready" {
-        return None;
-    }
-    let mesh = parsed["gossip"].as_str()?.to_string();
-    let name = parsed["name"].as_str()?.to_string();
-    let nickname = parsed["nickname"].as_str()?.to_string();
-    Some((mesh, name, nickname))
-}
+/// The `--output json` stream of a subprocess daemon, read from the log of its [`Node`].
+trait JsonStream {
+    /// Every JSON line that the daemon printed so far.
+    fn json_events(&self) -> Vec<serde_json::Value>;
 
-/// Scan a JSON-mode log's full contents so far for the `ready` event,
-/// filling in `mesh`/`name`/`nickname` once found.
-fn scan_ready_events(
-    content: &str,
-    mesh: &mut Option<String>,
-    name: &mut Option<String>,
-    nickname: &mut Option<String>,
-) {
-    for line in content.lines() {
-        if let Some((parsed_mesh, parsed_name, parsed_nickname)) = parse_ready_event(line) {
-            *mesh = Some(parsed_mesh);
-            *name = Some(parsed_name);
-            *nickname = Some(parsed_nickname);
-        }
+    /// The `{"event":"message"}` lines: chat and presence both carry that event.
+    fn message_events(&self) -> Vec<serde_json::Value> {
+        let mut events = self.json_events();
+        events.retain(|value| value["event"] == "message");
+        events
+    }
+
+    /// Gossip-wide chat (type=broadcast), not presence and not the peer-addressed `msg`.
+    fn broadcast_events(&self) -> Vec<serde_json::Value> {
+        let mut events = self.message_events();
+        events.retain(|value| value["type"] == "broadcast");
+        events
+    }
+
+    fn presence_events(&self) -> Vec<serde_json::Value> {
+        let mut events = self.message_events();
+        events.retain(|value| value["type"] == "presence");
+        events
     }
 }
 
-/// A node running in JSON output mode, with stdout captured to a log file.
-struct JsonNode {
-    child: Child,
-    log: PathBuf,
-    pub nickname: String,
-}
-
-impl JsonNode {
-    /// Spawn `agent-gossip create`, wait for the
-    /// `ready` event, and return the node + mesh identifier.
-    fn create() -> (Self, String) {
-        Self::create_with_flags(&[])
-    }
-
-    /// Like [`create`](Self::create) but passes extra hidden tuning flags to
-    /// the spawned daemon as `(flag, value)` pairs (e.g. shortened eviction
-    /// timings).
-    fn create_with_flags(flags: &[(&str, &str)]) -> (Self, String) {
-        let log = tmp_log("json-create");
-        let file = fs::File::create(&log).expect("the test temp dir is writable");
-        let stdout = Stdio::from(
-            file.try_clone()
-                .expect("the log file handle can be cloned for stdout"),
-        );
-        let mut command = common::test_cmd();
-        command
-            .args(["create", "--name", "jtest", "--lookup", "loopback"])
-            .args(common::flag_args(flags));
-        let child: Child = command
-            .stdout(stdout)
-            .stderr(Stdio::from(file))
-            .spawn()
-            .expect("the test binary exists and a spawn of create only fails if the OS is out of processes");
-
-        let deadline = Instant::now() + CONNECT_TIMEOUT;
-        let mut mesh = None;
-        let mut name = None;
-        let mut nickname = None;
-
-        while Instant::now() < deadline && (mesh.is_none() || nickname.is_none() || name.is_none())
-        {
-            let content = fs::read_to_string(&log).unwrap_or_default();
-            scan_ready_events(&content, &mut mesh, &mut name, &mut nickname);
-            if mesh.is_none() || nickname.is_none() || name.is_none() {
-                std::thread::sleep(POLL);
-            }
-        }
-
-        let mesh_id = mesh.expect("timed out waiting for ready event with mesh");
-        let name = name.expect("timed out waiting for ready event with name");
-        let nick = nickname.expect("timed out waiting for ready event with nickname");
-        assert_eq!(name, "jtest", "ready event must surface the create --name");
-        (
-            JsonNode {
-                child,
-                log,
-                nickname: nick,
-            },
-            mesh_id,
-        )
-    }
-
-    /// Spawn `agent-gossip join <mesh> --nickname <nickname>`.
-    fn join(mesh: &str, nickname: &str) -> Self {
-        Self::join_with_flags(mesh, nickname, &[])
-    }
-
-    /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
-    /// spawned daemon as `(flag, value)` pairs.
-    fn join_with_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
-        let log = tmp_log(&format!("json-{nickname}"));
-        let file = fs::File::create(&log).expect("the test temp dir is writable");
-        let stdout = Stdio::from(
-            file.try_clone()
-                .expect("the log file handle can be cloned for stdout"),
-        );
-        let mut command = common::test_cmd();
-        command
-            .args(["join", mesh, "--nickname", nickname])
-            .args(common::flag_args(flags));
-        let child: Child = command
-            .stdout(stdout)
-            .stderr(Stdio::from(file))
-            .spawn()
-            .expect("the test binary exists and a spawn of join only fails if the OS is out of processes");
-        JsonNode {
-            child,
-            log,
-            nickname: nickname.to_string(),
-        }
-    }
-
-    fn wait_ready(&self, mesh: &str) -> bool {
-        let sock = socket_path(mesh, &self.nickname);
-        let deadline = Instant::now() + CONNECT_TIMEOUT;
-        while Instant::now() < deadline {
-            if std::path::Path::new(&sock).exists() {
-                return true;
-            }
-            std::thread::sleep(POLL);
-        }
-        eprintln!(
-            "wait_ready timed out for {} (looking for {})",
-            self.nickname, sock
-        );
-        false
-    }
-
-    /// Read all JSON lines from the log file.
+impl JsonStream for Node {
     fn json_events(&self) -> Vec<serde_json::Value> {
-        let content = fs::read_to_string(&self.log).unwrap_or_default();
-        content
-            .lines()
+        let content = self.log_contents();
+        let lines = content.lines();
+        lines
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
             .collect()
-    }
-
-    /// Filter events to only `{"event":"message"}` entries.
-    fn message_events(&self) -> Vec<serde_json::Value> {
-        self.json_events()
-            .into_iter()
-            .filter(|value| value["event"] == "message")
-            .collect()
-    }
-
-    /// Filter to gossip-wide chat (type=broadcast), not presence and not the
-    /// peer-addressed `msg`.
-    fn broadcast_events(&self) -> Vec<serde_json::Value> {
-        self.message_events()
-            .into_iter()
-            .filter(|value| value["type"] == "broadcast")
-            .collect()
-    }
-
-    /// Filter to presence events.
-    fn presence_events(&self) -> Vec<serde_json::Value> {
-        self.message_events()
-            .into_iter()
-            .filter(|value| value["type"] == "presence")
-            .collect()
-    }
-
-    fn sigint(&self) {
-        let _ = Command::new("kill")
-            .args(["-2", &self.child.id().to_string()])
-            .status();
-    }
-
-    /// Check if the process is still running (has not exited).
-    fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-}
-
-impl Drop for JsonNode {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = fs::remove_file(&self.log);
     }
 }
 
 // ── test fixtures ──────────────────────────────────────────────────────────
 
 /// Spawn a 3-peer mesh (1 creator + 2 joiners) and wait for overlay to stabilise.
-fn three_peers(suffix: &str) -> (JsonNode, JsonNode, JsonNode, String) {
-    let (creator, mesh) = JsonNode::create();
-    let joiner_a = JsonNode::join(&mesh, &format!("mon-{suffix}-a"));
-    let joiner_b = JsonNode::join(&mesh, &format!("mon-{suffix}-b"));
+fn three_peers(suffix: &str) -> (Node, Node, Node, String) {
+    let (creator, mesh) = Node::create_named("jtest");
+    let joiner_a = Node::join(&mesh, &format!("mon-{suffix}-a"));
+    let joiner_b = Node::join(&mesh, &format!("mon-{suffix}-b"));
 
     assert!(
         creator.wait_ready(&mesh),
@@ -249,9 +92,9 @@ fn task_pair(
     worker_nick: &str,
     creator_flags: &[(&str, &str)],
     worker_flags: &[(&str, &str)],
-) -> (JsonNode, JsonNode, String) {
-    let (creator, mesh) = JsonNode::create_with_flags(creator_flags);
-    let worker = JsonNode::join_with_flags(&mesh, worker_nick, worker_flags);
+) -> (Node, Node, String) {
+    let (creator, mesh) = Node::create_flags("jtest", creator_flags);
+    let worker = Node::join_flags(&mesh, worker_nick, worker_flags);
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -277,7 +120,7 @@ fn task_pair(
 
 /// Wait until `worker` surfaced `count` task messages: a status leg sent before the offer
 /// arrives names a task that the worker does not hold yet.
-fn await_offers(worker: &JsonNode, count: usize) {
+fn await_offers(worker: &Node, count: usize) {
     let surfaced = wait_until(
         || {
             worker
@@ -296,6 +139,21 @@ fn await_offers(worker: &JsonNode, count: usize) {
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
+
+/// The `ready` line of a subprocess daemon surfaces the `create --name`.
+#[test]
+fn test_ready_line_surfaces_the_create_name() {
+    let (creator, _mesh) = Node::create_named("jtest");
+    let events = creator.json_events();
+    let ready = events
+        .iter()
+        .find(|value| value["event"] == "ready")
+        .expect("the fixture returns only after the daemon printed its ready line");
+    assert_eq!(
+        ready["name"], "jtest",
+        "ready event must surface the create --name"
+    );
+}
 
 /// The `ready` event has the expected JSON shape with `mesh`, `name`,
 /// and `nickname`.
@@ -661,9 +519,9 @@ fn test_creator_departure_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
     let _serial = serial_guard();
-    let (creator, mesh) = JsonNode::create();
-    let mut joiner_a = JsonNode::join(&mesh, "survive-alpha");
-    let mut joiner_b = JsonNode::join(&mesh, "survive-beta");
+    let (creator, mesh) = Node::create_named("jtest");
+    let mut joiner_a = Node::join(&mesh, "survive-alpha");
+    let mut joiner_b = Node::join(&mesh, "survive-beta");
 
     assert!(
         creator.wait_ready(&mesh),
@@ -716,8 +574,8 @@ fn test_creator_departure_peers_survive() {
 /// When the creator is hard-killed, joiners should stay alive.
 #[test]
 fn test_creator_hard_kill_peers_survive() {
-    let (mut creator, mesh) = JsonNode::create();
-    let mut joiner_a = JsonNode::join(&mesh, "hk-alpha");
+    let (mut creator, mesh) = Node::create_named("jtest");
+    let mut joiner_a = Node::join(&mesh, "hk-alpha");
 
     assert!(
         creator.wait_ready(&mesh),
@@ -739,8 +597,8 @@ fn test_creator_hard_kill_peers_survive() {
     assert!(count >= 1, "creator did not see joiner");
 
     // Hard kill — no graceful `left` message.
-    let _ = creator.child.kill();
-    let _ = creator.child.wait();
+    creator.kill();
+    creator.wait_exit();
     std::thread::sleep(Duration::from_secs(3));
 
     assert!(
@@ -756,10 +614,10 @@ fn test_creator_departure_four_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
     let _serial = serial_guard();
-    let (creator, mesh) = JsonNode::create();
-    let mut joiner_a = JsonNode::join(&mesh, "four-alpha");
-    let mut joiner_b = JsonNode::join(&mesh, "four-beta");
-    let mut joiner_c = JsonNode::join(&mesh, "four-gamma");
+    let (creator, mesh) = Node::create_named("jtest");
+    let mut joiner_a = Node::join(&mesh, "four-alpha");
+    let mut joiner_b = Node::join(&mesh, "four-beta");
+    let mut joiner_c = Node::join(&mesh, "four-gamma");
 
     assert!(
         creator.wait_ready(&mesh),
@@ -908,7 +766,7 @@ fn test_hard_kill_triggers_peer_timeout() {
     let (mesh, creator_nick) = ready.expect("creator never emitted ready");
 
     // Spawn a joiner we can kill.
-    let mut victim = JsonNode::join(&mesh, "victim-alpha");
+    let mut victim = Node::join(&mesh, "victim-alpha");
     assert!(
         victim.wait_ready(&mesh),
         "a victim that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
@@ -930,8 +788,8 @@ fn test_hard_kill_triggers_peer_timeout() {
     assert!(got_two, "state file never reached peer_count=2");
 
     // Hard-kill the victim.
-    let _ = victim.child.kill();
-    let _ = victim.child.wait();
+    victim.kill();
+    victim.wait_exit();
 
     // With env-overridden timeouts (3s + 1s) the eviction should land
     // well under 10s; give 15s for CI jitter.
@@ -1016,7 +874,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
         ("--sweep-interval-secs", "1"),
     ];
 
-    let (creator, mesh) = JsonNode::create_with_flags(&short_evict);
+    let (creator, mesh) = Node::create_flags("jtest", &short_evict);
     assert!(
         creator.wait_ready(&mesh),
         "without a live creator the mesh does not exist, so the ghost test proves nothing"
@@ -1025,7 +883,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     // A peer joins, talks, then is hard-killed — all before the late
     // joiner exists. The creator logs its `joined` + `msg`, so
     // anti-entropy will later relay both to the late joiner.
-    let mut ghost = JsonNode::join(&mesh, "jh-ghost");
+    let mut ghost = Node::join(&mesh, "jh-ghost");
     assert!(
         ghost.wait_ready(&mesh),
         "the ghost must be live before it is silenced, or the test checks no ghost at all"
@@ -1043,15 +901,15 @@ fn test_pre_join_ghost_peer_never_surfaces() {
         ) >= 1,
         "creator never logged the ghost's history (anti-entropy source missing)"
     );
-    let _ = ghost.child.kill();
-    let _ = ghost.child.wait();
+    ghost.kill();
+    ghost.wait_exit();
     drop(ghost);
 
     // Whole-second timestamps: keep the ghost's history strictly an
     // earlier second than the late join (off the 1s boundary).
     std::thread::sleep(Duration::from_secs(2));
 
-    let late = JsonNode::join_with_flags(&mesh, "jh-late", &short_evict);
+    let late = Node::join_flags(&mesh, "jh-late", &short_evict);
     assert!(late.wait_ready(&mesh), "late joiner never ready");
 
     // Positive control: the still-present creator must surface, proving
@@ -1265,7 +1123,7 @@ async fn test_task_unknown_peer_errors() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_idle_timeout_after_owner_dies() {
     let timers = &FAST_TASK_TIMERS;
-    let (creator, mut joiner, mesh) = task_pair("tk-bob", timers, timers);
+    let (creator, joiner, mesh) = task_pair("tk-bob", timers, timers);
 
     // Creator creates the task; the worker (joiner) holds the ball and accepts.
     let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-bob", "port it");
@@ -1284,7 +1142,7 @@ async fn test_task_idle_timeout_after_owner_dies() {
     );
 
     // Kill the ball-owner. Its keepalive stops; the creator's debounce fires.
-    let _ = joiner.child.kill();
+    joiner.kill();
     let timed_out: usize = wait_until(
         || {
             creator
@@ -1355,7 +1213,7 @@ async fn test_completed_task_is_never_reaped() {
     // the old 2 s keepalive cap + timeout (3s) + a sweep tick (1s), with headroom.
     tokio::time::sleep(Duration::from_secs(12)).await;
 
-    let reaped = |node: &JsonNode| {
+    let reaped = |node: &Node| {
         node.json_events()
             .iter()
             .filter(|value| {
@@ -1409,7 +1267,7 @@ async fn test_silent_tasks_survive_while_daemons_live() {
 
     // Each task paired with the skill status legs it really carried.
     let tasks = [(&accept_question, 0), (&long_command, 1), (&review, 1)];
-    let reaped = |node: &JsonNode, tid: &str| {
+    let reaped = |node: &Node, tid: &str| {
         node.json_events()
             .iter()
             .filter(|value| {
@@ -1727,8 +1585,8 @@ async fn test_peers_roster_shape() {
 /// shape, emit `display` verbatim, whether reading the stream or polling.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_poll_record_matches_stream_line() {
-    let (creator, mesh) = JsonNode::create();
-    let joiner = JsonNode::join(&mesh, "parity-joiner");
+    let (creator, mesh) = Node::create_named("jtest");
+    let joiner = Node::join(&mesh, "parity-joiner");
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -1788,8 +1646,8 @@ async fn test_poll_record_matches_stream_line() {
 /// *and* in its poll buffer.
 #[test]
 fn test_ping_report_is_pollable() {
-    let (creator, mesh) = JsonNode::create_with_flags(&[("--ping-window-secs", "2")]);
-    let joiner = JsonNode::join_with_flags(&mesh, "ping-pollee", &[]);
+    let (creator, mesh) = Node::create_flags("jtest", &[("--ping-window-secs", "2")]);
+    let joiner = Node::join_flags(&mesh, "ping-pollee", &[]);
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -1841,8 +1699,8 @@ fn test_ping_report_is_pollable() {
 /// Run for both channels (`state`, `meta`) end to end.
 fn channel_wire_contract(channel: Channel) {
     let label = common::channel_subcommand(channel);
-    let (creator, mesh) = JsonNode::create();
-    let joiner = JsonNode::join(&mesh, &format!("wc-{label}-joiner"));
+    let (creator, mesh) = Node::create_named("jtest");
+    let joiner = Node::join(&mesh, &format!("wc-{label}-joiner"));
     assert!(creator.wait_ready(&mesh), "creator never served");
     assert!(joiner.wait_ready(&mesh), "joiner never served");
     // Let the two daemons mesh so the merge gossips live to the joiner.
@@ -1980,7 +1838,7 @@ fn assert_success(out: &std::process::Output, what: &str) {
 }
 
 /// The worker's `message` event on `task_id` that carries a file part.
-fn await_file_message(worker: &JsonNode, task_id: &str) -> serde_json::Value {
+fn await_file_message(worker: &Node, task_id: &str) -> serde_json::Value {
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         let found: Option<serde_json::Value> = worker.json_events().into_iter().find(|value| {
@@ -2034,8 +1892,8 @@ fn assert_fetches(url: &str, bytes: &[u8]) {
 /// cannot show. agent-graph sends a missing graph folder back this way.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_followup_carries_a_file() {
-    let (creator, mesh) = JsonNode::create();
-    let worker = JsonNode::join(&mesh, "tf-file");
+    let (creator, mesh) = Node::create_named("jtest");
+    let worker = Node::join(&mesh, "tf-file");
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -2087,8 +1945,8 @@ async fn test_task_followup_carries_a_file() {
 /// gave, with no empty text part after it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_first_call_carries_a_file() {
-    let (creator, mesh) = JsonNode::create();
-    let worker = JsonNode::join(&mesh, "tf-first");
+    let (creator, mesh) = Node::create_named("jtest");
+    let worker = Node::join(&mesh, "tf-first");
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -2148,8 +2006,8 @@ async fn test_task_first_call_carries_a_file() {
 /// resolved against the caller's directory before it crosses the socket.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_call_file_path_is_relative_to_the_caller() {
-    let (creator, mesh) = JsonNode::create();
-    let worker = JsonNode::join(&mesh, "tf-rel");
+    let (creator, mesh) = Node::create_named("jtest");
+    let worker = Node::join(&mesh, "tf-rel");
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -2194,7 +2052,7 @@ async fn test_call_file_path_is_relative_to_the_caller() {
 /// file is copied into the blob store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_call_file_to_unknown_peer_spools_nothing() {
-    let (creator, mesh) = JsonNode::create();
+    let (creator, mesh) = Node::create_named("jtest");
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -2234,8 +2092,8 @@ async fn test_call_file_to_unknown_peer_spools_nothing() {
 /// with exit 1 and a message that names the problem.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_call_file_errors_exit_non_zero() {
-    let (creator, mesh) = JsonNode::create();
-    let worker = JsonNode::join(&mesh, "tf-err");
+    let (creator, mesh) = Node::create_named("jtest");
+    let worker = Node::join(&mesh, "tf-err");
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
@@ -2325,9 +2183,9 @@ fn decline(mesh: &str, nickname: &str, task_id: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_same_file_on_two_tasks_outlives_the_first() {
     let fast_reap = FAST_TASK_TIMERS;
-    let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
-    let first = JsonNode::join_with_flags(&mesh, "tf-share-a", &fast_reap);
-    let second = JsonNode::join_with_flags(&mesh, "tf-share-b", &fast_reap);
+    let (creator, mesh) = Node::create_flags("jtest", &fast_reap);
+    let first = Node::join_flags(&mesh, "tf-share-a", &fast_reap);
+    let second = Node::join_flags(&mesh, "tf-share-b", &fast_reap);
     for node in [&creator, &first, &second] {
         assert!(
             node.wait_ready(&mesh),
@@ -2405,8 +2263,8 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     let fast_reap = FAST_TASK_TIMERS;
-    let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
-    let worker = JsonNode::join_with_flags(&mesh, "tf-late", &fast_reap);
+    let (creator, mesh) = Node::create_flags("jtest", &fast_reap);
+    let worker = Node::join_flags(&mesh, "tf-late", &fast_reap);
     assert!(
         creator.wait_ready(&mesh),
         "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"

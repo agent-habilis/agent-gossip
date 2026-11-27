@@ -7,14 +7,11 @@
 //! redirect is pinned by `cli::agent::tests::long_running_gossip_commands_discard_stdout_and_stderr`)
 //! and read content back through `poll`, which must never truncate.
 
-use std::fs;
 use std::process::{Child, Stdio};
 use std::time::Instant;
 
 use agent_gossip_test_fixtures as common;
-use common::{
-    CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, cli_message_checked, cli_poll, park_bell, test_cmd, tmp_log,
-};
+use common::{MSG_TIMEOUT, Node, POLL, cli_message_checked, cli_poll, park_bell, test_cmd};
 
 /// Long enough to exceed any plausible notification cap, and to make a partial
 /// write obvious rather than subtle.
@@ -24,7 +21,6 @@ fn long_body() -> String {
 
 struct Daemon {
     child: Child,
-    log: Option<std::path::PathBuf>,
     /// Held only to keep the read end open: dropping it would SIGPIPE the
     /// daemon on its next print.
     pipe: Option<std::process::ChildStdout>,
@@ -34,49 +30,20 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        if let Some(log) = &self.log {
-            let _ = fs::remove_file(log);
-        }
     }
 }
 
 /// Spawn `create` with stdout+stderr to a log, and wait for the `ready` line.
-/// Returns the daemon, its log, mesh, and nickname.
-fn spawn_create(name: &str) -> (Daemon, String, String) {
+/// Returns the daemon, its mesh, and its nickname.
+fn spawn_create(name: &str) -> (Node, String, String) {
     spawn_create_with(name, &[])
 }
 
 /// [`spawn_create`] with extra `create` flags, for the hidden tuning knobs.
-fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
-    let log = tmp_log(&format!("lossless-{name}"));
-    let file = fs::File::create(&log).expect("the test temp dir is writable");
-    let stdout_handle = file
-        .try_clone()
-        .expect("the log file handle can be cloned for stdout");
-    let mut command = test_cmd();
-    command
-        .args(["create", "--name", name, "--lookup", "loopback"])
-        .args(flags)
-        .stdout(Stdio::from(stdout_handle))
-        .stderr(Stdio::from(file));
-    let child: Child = command
-        .spawn()
-        .expect("the test binary is built and the OS can start a child process");
-    let daemon = Daemon {
-        child,
-        log: Some(log),
-        pipe: None,
-    };
-
-    let log_path = daemon.log.clone().expect("logged daemon");
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Some(ready) = read_ready(&log_path) {
-            return (daemon, ready.0, ready.1);
-        }
-        std::thread::sleep(POLL);
-    }
-    panic!("daemon never printed a ready event");
+fn spawn_create_with(name: &str, flags: &[&str]) -> (Node, String, String) {
+    let (daemon, mesh) = Node::create_args(name, flags, &[]);
+    let nickname = daemon.nickname.clone();
+    (daemon, mesh, nickname)
 }
 
 /// Spawn `create` with stdout **piped**, and return the moment the `ready` line
@@ -102,11 +69,7 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
         .expect("the command above set stdout to piped, so the handle is present");
     // Own the child before anything below can panic, so the daemon is always
     // killed and reaped.
-    let mut daemon = Daemon {
-        child,
-        log: None,
-        pipe: None,
-    };
+    let mut daemon = Daemon { child, pipe: None };
 
     let (mesh, nick) = {
         let mut reader = BufReader::new(&mut stdout);
@@ -132,21 +95,6 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
     };
     daemon.pipe = Some(stdout);
     (daemon, mesh, nick)
-}
-
-/// `(gossip, nickname)` from the `ready` line, if it has been written.
-fn read_ready(log: &std::path::Path) -> Option<(String, String)> {
-    let content = fs::read_to_string(log).ok()?;
-    content.lines().find_map(|line| {
-        let value: serde_json::Value = serde_json::from_str(line).ok()?;
-        if value["event"] != "ready" {
-            return None;
-        }
-        Some((
-            value["gossip"].as_str()?.to_owned(),
-            value["nickname"].as_str()?.to_owned(),
-        ))
-    })
 }
 
 /// A `ready` event means the IPC socket accepts. It used to be emitted in setup,
@@ -277,7 +225,7 @@ fn bell_exits_cleanly_when_the_daemon_leaves() {
     let (daemon, mesh, nick) = spawn_create("bellclean");
     let mut bell = park_bell(&mesh, &nick);
 
-    let daemon_pid = daemon.child.id().to_string();
+    let daemon_pid = daemon.pid().to_string();
     let out: std::process::Output = std::process::Command::new("kill")
         .args(["-TERM", &daemon_pid])
         .output()
@@ -425,10 +373,15 @@ fn bell_without_max_secs_keeps_parking() {
 /// leaves the bell to exit nonzero — an error message still means an error.
 #[test]
 fn bell_errors_when_the_daemon_crashes() {
-    let (mut daemon, mesh, nick) = spawn_create("bellcrash");
+    let (daemon, mesh, nick) = spawn_create("bellcrash");
     let mut bell = park_bell(&mesh, &nick);
 
-    daemon.child.kill().expect("SIGKILL");
+    let daemon_pid = daemon.pid().to_string();
+    let killed: std::process::ExitStatus = std::process::Command::new("kill")
+        .args(["-KILL", &daemon_pid])
+        .status()
+        .expect("kill spawns");
+    assert!(killed.success(), "SIGKILL must reach the live daemon");
     let status = wait_exit(&mut bell);
     assert!(
         !status.success(),
