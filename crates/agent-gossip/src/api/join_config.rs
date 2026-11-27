@@ -97,13 +97,6 @@ impl TopicConfig {
         self.nickname = Some(nickname);
         self
     }
-
-    /// Cap the direct peer connections at `max_connections`.
-    #[must_use]
-    pub fn with_max_connections(mut self, max_connections: usize) -> Self {
-        self.max_connections = max_connections;
-        self
-    }
 }
 
 /// How to create a new mesh.
