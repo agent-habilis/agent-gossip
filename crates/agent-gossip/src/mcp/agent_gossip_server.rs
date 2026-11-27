@@ -6,14 +6,13 @@ use anyhow::Result;
 use habilis_network::protocol::{
     JoinTarget, LookupSet, MeshName, MessageBody, Nickname, RelayLadder,
 };
-use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorData as McpError, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolResult, Content, ErrorData as McpError, ListToolsResult, PaginatedRequestParams,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{MaybeSendFuture, RequestContext};
-use rmcp::{RoleServer, ServerHandler, tool, tool_router};
+use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use tokio::sync::Mutex;
 
 use super::session::Session;
@@ -514,16 +513,10 @@ impl AgentGossipServer {
     }
 }
 
+#[tool_handler]
 impl ServerHandler for AgentGossipServer {
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let tcc = ToolCallContext::new(self, request, context);
-        Self::tool_router().call(tcc).await
-    }
-
+    // Hand-written: the `list_tools` that `tool_handler` generates is an `async fn` with no
+    // `.await`, which `clippy::unused_async_trait_impl` rejects.
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -534,10 +527,6 @@ impl ServerHandler for AgentGossipServer {
             meta: None,
             next_cursor: None,
         }))
-    }
-
-    fn get_tool(&self, name: &str) -> Option<Tool> {
-        Self::tool_router().get(name).cloned()
     }
 
     fn get_info(&self) -> ServerInfo {
