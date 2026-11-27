@@ -25,7 +25,7 @@ const DISPLAY_GLYPH: &str = "💬\u{FE0F}";
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
-pub(super) enum SimpleEvent<'source> {
+enum SimpleEvent<'source> {
     Ready {
         version: &'source str,
         gossip: &'source str,
@@ -311,13 +311,13 @@ fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
 }
 
 /// `display` line for a `peer_timeout` event.
-pub(super) fn peer_timeout_display(nickname: &str) -> String {
+fn peer_timeout_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
 /// The `task_stalled` event. Its `display` states the silence as a fact: a
 /// worker with no bell can poll rarely while it works.
-pub(super) fn task_stalled_event<'a>(
+fn task_stalled_event<'a>(
     task_id: &'a TaskId,
     peer: &'a Nickname,
     last_poll_secs_ago: u64,
@@ -336,12 +336,12 @@ pub(super) fn task_stalled_event<'a>(
 }
 
 /// `display` line for a `peer_return` event.
-pub(super) fn peer_return_display(nickname: &str) -> String {
+fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
 }
 
 /// `display` line for an `events_lost` event.
-pub(super) fn events_lost_display(lost: u64) -> String {
+fn events_lost_display(lost: u64) -> String {
     let events = if lost == 1 {
         "event was"
     } else {
@@ -352,7 +352,7 @@ pub(super) fn events_lost_display(lost: u64) -> String {
 
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
-pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
+fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
     use std::fmt::Write as _;
 
     if peers.is_empty() {
@@ -376,12 +376,6 @@ pub(super) fn emit(line: &str) {
     let mut lock = stdout.lock();
     let _ = writeln!(lock, "{line}");
     let _ = lock.flush();
-}
-
-pub(super) fn emit_json<T: Serialize>(value: &T, is_visible: bool) {
-    if let Ok(json) = serde_json::to_string(value) {
-        emit(&stamp_visibility(json, is_visible));
-    }
 }
 
 /// Whether an event's `display` line belongs in the agent's transcript — the
@@ -505,14 +499,6 @@ pub(super) fn format_msg_json(
         .expect("message event serialization should never fail"),
         true,
     )
-}
-
-pub(super) fn print_message_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_msg_json(message, is_self, addressee_name));
 }
 
 /// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
@@ -652,14 +638,6 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
         .expect("task event serialization should never fail"),
         false,
     )
-}
-
-pub(super) fn print_task_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_task_json(message, is_self, addressee_name));
 }
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
@@ -809,11 +787,10 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
     Some(format!("{{\"seq\":{seq}{sep}{rest}"))
 }
 
-/// Render a captured [`OutputEvent`] to the exact JSON line the daemon writes in `--output json` mode.
+/// Render an [`OutputEvent`] to the exact JSON line the daemon writes in `--output json` mode.
 ///
-/// Reuses the same serializers
-/// as the `Stream` sink, so in-process tests assert the byte-identical
-/// wire format the `/mesh` skill + MCP clients parse. `None` for events
+/// The `Stream` sink prints the line that this function gives, so in-process tests assert the
+/// byte-identical wire format the `/mesh` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode.
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {

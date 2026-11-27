@@ -5,7 +5,7 @@
 use habilis_network::protocol::messages::{Authored, Verified};
 use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
-use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
+use super::simple_event::{format_msg_json, format_presence_json};
 use crate::a2a::{node, status_update_params, wire};
 use crate::emission::capture_events::capture_events;
 use crate::emission::simple_event;
@@ -602,13 +602,12 @@ fn task_stalled_event_json_shape() {
 
 #[test]
 fn peer_timeout_json_shape() {
-    let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
-        nickname: "ball-blue",
-        pubkey: "ab".repeat(32).as_str(),
+    let json = simple_event::event_json(&super::OutputEvent::PeerTimeout {
+        nickname: nick("ball-blue"),
+        key: habilis_network::protocol::AuthorKey::from([0xab; 32]),
         last_seen_secs_ago: 94,
-        display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
-    .expect("a test value serializes to JSON");
+    .expect("a peer_timeout event has a JSON line");
     let parsed = parse(&json);
     assert_eq!(
         parsed["event"], "peer_timeout",
@@ -656,12 +655,11 @@ fn the_timeout_and_return_lines_name_the_key_of_the_peer() {
 
 #[test]
 fn peer_return_json_shape() {
-    let json = serde_json::to_string(&SimpleEvent::PeerReturn {
-        nickname: "ball-blue",
-        pubkey: "ab".repeat(32).as_str(),
-        display: "💬️ `<ball-blue>` came back".to_owned(),
+    let json = simple_event::event_json(&super::OutputEvent::PeerReturn {
+        nickname: nick("ball-blue"),
+        key: habilis_network::protocol::AuthorKey::from([0xab; 32]),
     })
-    .expect("a test value serializes to JSON");
+    .expect("a peer_return event has a JSON line");
     let parsed = parse(&json);
     assert_eq!(
         parsed["event"], "peer_return",
@@ -694,16 +692,16 @@ fn events_lost_json_carries_a_display_line() {
 
 #[test]
 fn receipt_json_shape() {
-    let json = serde_json::to_string(&SimpleEvent::Receipt {
-        from: "ball-blue",
-        ref_id: "7a1c",
-        state: "delivered",
+    let json = simple_event::event_json(&super::OutputEvent::Receipt {
+        from: nick("ball-blue"),
+        ref_id: "7a1c".to_owned(),
+        state: "delivered".to_owned(),
         ts: 1_792_000_000,
     })
-    .expect("a test value serializes to JSON");
+    .expect("a receipt event has a JSON line");
     assert_eq!(
         json,
-        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#,
+        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000,"is_visible":false}"#,
         "a delivered receipt is written as this exact one-line JSON"
     );
 }

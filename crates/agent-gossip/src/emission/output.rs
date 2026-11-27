@@ -7,11 +7,10 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::error::TrySendError;
 
+use super::simple_event::{self, emit};
 use super::{
-    OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent, StateChangedParams,
-    TaskGoneReason, TaskId, TaskMessageLeg, emit, emit_json, format_presence_json,
-    peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
-    simple_event, task_stalled_event,
+    OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, StateChangedParams,
+    TaskGoneReason, TaskId, TaskMessageLeg,
 };
 use crate::a2a::task_record::StallNotice;
 use crate::a2a::{node, wire};
@@ -149,18 +148,24 @@ impl Output {
         }
     }
 
-    /// The one sink skeleton every event method shares: in `Capture`
-    /// mode push the structured [`OutputEvent`]; in `Stream` mode render
-    /// that event's own human / JSON / (silent) form, and — when a `tap`
-    /// is attached — *also* push the structured event so the daemon's
-    /// `surfaced_events` ring sees the identical stream. Factoring this
-    /// out is what removes the ~10× duplicated `match Stream/Capture`.
-    fn dispatch(&self, event: impl FnOnce() -> OutputEvent, stream: impl FnOnce(OutputMode)) {
+    /// The one sink skeleton every event method shares. A JSON stream prints the line that
+    /// [`event_json`](fn@crate::event_json) gives for the event, so the stream and the poll never
+    /// differ. A silent stream with no tap has no reader, so it does not build the event.
+    fn dispatch(&self, event: impl FnOnce() -> OutputEvent) {
         match self {
+            Output::Stream {
+                mode: OutputMode::Silent,
+                tap: None,
+                ..
+            } => {}
             Output::Stream { mode, tap, .. } => {
-                stream(*mode);
+                let event = event();
+                match mode {
+                    OutputMode::Json => print_json_line(&event),
+                    OutputMode::Silent => {}
+                }
                 if let Some(tap) = tap {
-                    tap.send(event());
+                    tap.send(event);
                 }
             }
             Output::Capture { tx, tap, .. } => {
@@ -183,30 +188,13 @@ impl Output {
             drift,
             a2a_port,
         } = params;
-        self.dispatch(
-            || OutputEvent::Ready {
-                mesh: mesh.clone(),
-                name: name.clone(),
-                nickname: nickname.clone(),
-                drift: drift.map(str::to_owned),
-                a2a_port,
-            },
-            |mode| {
-                if mode == OutputMode::Json {
-                    emit_json(
-                        &SimpleEvent::Ready {
-                            version: crate::version(),
-                            gossip: mesh.as_str(),
-                            name: name.as_str(),
-                            nickname: nickname.as_str(),
-                            drift,
-                            a2a_port,
-                        },
-                        false,
-                    );
-                }
-            },
-        );
+        self.dispatch(|| OutputEvent::Ready {
+            mesh: mesh.clone(),
+            name: name.clone(),
+            nickname: nickname.clone(),
+            drift: drift.map(str::to_owned),
+            a2a_port,
+        });
     }
 
     pub(crate) fn print_message(&self, message: &Authored, addressee_name: Option<&Nickname>) {
@@ -231,17 +219,11 @@ impl Output {
         if is_self && self.filters_self() {
             return;
         }
-        self.dispatch(
-            || OutputEvent::Message {
-                message: Box::new(message.clone()),
-                is_self,
-                to_name: addressee_name.cloned(),
-            },
-            |mode| match mode {
-                OutputMode::Json => print_message_json(message, is_self, addressee_name),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::Message {
+            message: Box::new(message.clone()),
+            is_self,
+            to_name: addressee_name.cloned(),
+        });
     }
 
     /// Surface a worker-pushed task frame (an `a2a_status` or `a2a_artifact`).
@@ -267,17 +249,11 @@ impl Output {
         if is_self && self.filters_self() {
             return;
         }
-        self.dispatch(
-            || OutputEvent::Task {
-                message: Box::new(message.clone()),
-                is_self,
-                to_name: addressee_name.cloned(),
-            },
-            |mode| match mode {
-                OutputMode::Json => simple_event::print_task_json(message, is_self, addressee_name),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::Task {
+            message: Box::new(message.clone()),
+            is_self,
+            to_name: addressee_name.cloned(),
+        });
     }
 
     /// Surface an RPC `message/send` task leg — the initiator's brief / answer
@@ -299,27 +275,19 @@ impl Output {
         let text = leg.text.to_owned();
         let label = leg.label.map(ToOwned::to_owned);
         let message = leg.message.cloned().map(Box::new);
-        self.dispatch(
-            || OutputEvent::TaskMessage {
-                id,
-                mesh,
-                author,
-                author_key,
-                peer,
-                task_id,
-                state,
-                text,
-                label,
-                message,
-                is_self,
-            },
-            |mode| match mode {
-                OutputMode::Json => {
-                    emit(&simple_event::format_task_message_json(leg));
-                }
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::TaskMessage {
+            id,
+            mesh,
+            author,
+            author_key,
+            peer,
+            task_id,
+            state,
+            text,
+            label,
+            message,
+            is_self,
+        });
     }
 
     /// A task went terminal without a peer-authored status: evicted by the
@@ -328,47 +296,21 @@ impl Output {
     /// counterparty left. JSON mode emits a `task_timeout` event for the
     /// widget; `reason` says which trigger fired.
     pub(crate) fn task_timeout(&self, task_id: &TaskId, reason: TaskGoneReason) {
-        self.dispatch(
-            || OutputEvent::TaskTimeout {
-                task_id: task_id.clone(),
-                reason,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &SimpleEvent::TaskTimeout {
-                        task_id: task_id.as_str(),
-                        reason,
-                    },
-                    false,
-                ),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::TaskTimeout {
+            task_id: task_id.clone(),
+            reason,
+        });
     }
 
     /// A worker's agent has not polled for `check_secs` with no bell armed. JSON
     /// mode emits a visible `task_stalled` event; nothing is canceled.
     pub(crate) fn task_stalled(&self, notice: &StallNotice) {
-        self.dispatch(
-            || OutputEvent::TaskStalled {
-                task_id: notice.task_id.clone(),
-                peer: notice.peer.clone(),
-                last_poll_secs_ago: notice.last_poll_secs,
-                check_secs: notice.check_secs,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &task_stalled_event(
-                        &notice.task_id,
-                        &notice.peer,
-                        notice.last_poll_secs,
-                        notice.check_secs,
-                    ),
-                    true,
-                ),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::TaskStalled {
+            task_id: notice.task_id.clone(),
+            peer: notice.peer.clone(),
+            last_poll_secs_ago: notice.last_poll_secs,
+            check_secs: notice.check_secs,
+        });
     }
 
     /// Surface a shared-state change: the human ` … changed shared state`
@@ -396,22 +338,9 @@ impl Output {
         // with its body, the change itself.
         let ring_keeps_document = simple_event::poll_carries_document(channel);
         match self {
-            Output::Stream { mode, tap, .. } => {
-                match mode {
-                    OutputMode::Json => {
-                        emit(&simple_event::format_state_json(
-                            channel,
-                            event,
-                            Some(document),
-                            is_self,
-                        ));
-                    }
-                    OutputMode::Silent => {}
-                }
-                if let Some(tap) = tap {
-                    tap.send(make(ring_keeps_document));
-                }
-            }
+            // The JSON line follows the same document rule as the ring, so the ring copy gives
+            // the line of the stream.
+            Output::Stream { .. } => self.dispatch(|| make(ring_keeps_document)),
             Output::Capture { tx, tap, .. } => {
                 // Poll/fetch history always sees it.
                 if let Some(tap) = tap {
@@ -428,19 +357,13 @@ impl Output {
     /// `peer` is the key of the member that the presence is about. A synthetic presence is signed by
     /// this node, so the key of its frame is ours and says nothing about the peer.
     pub(crate) fn print_presence(&self, message: &Authored, peer: &AuthorKey) {
-        let MessageKind::Presence { subtype } = &message.kind else {
+        if !matches!(message.kind, MessageKind::Presence { .. }) {
             return;
-        };
-        self.dispatch(
-            || OutputEvent::Presence {
-                message: Box::new(message.clone()),
-                peer: *peer,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit(&format_presence_json(message, *subtype, peer)),
-                OutputMode::Silent => {}
-            },
-        );
+        }
+        self.dispatch(|| OutputEvent::Presence {
+            message: Box::new(message.clone()),
+            peer: *peer,
+        });
     }
 
     /// Emit a peer-timeout event. Distinct from `presence left` (a
@@ -452,48 +375,21 @@ impl Output {
         key: &AuthorKey,
         last_seen_secs_ago: u64,
     ) {
-        self.dispatch(
-            || OutputEvent::PeerTimeout {
-                nickname: nickname.clone(),
-                key: *key,
-                last_seen_secs_ago,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &SimpleEvent::PeerTimeout {
-                        nickname: nickname.as_str(),
-                        pubkey: key.to_string().as_str(),
-                        last_seen_secs_ago,
-                        display: peer_timeout_display(nickname.as_str()),
-                    },
-                    true,
-                ),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::PeerTimeout {
+            nickname: nickname.clone(),
+            key: *key,
+            last_seen_secs_ago,
+        });
     }
 
     /// Symmetric counterpart to `peer_timeout`: fires when a peer we
     /// previously evicted for silence resumes sending (any message,
     /// including an `Alive` keepalive).
     pub(crate) fn peer_return(&self, nickname: &Nickname, key: &AuthorKey) {
-        self.dispatch(
-            || OutputEvent::PeerReturn {
-                nickname: nickname.clone(),
-                key: *key,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &SimpleEvent::PeerReturn {
-                        nickname: nickname.as_str(),
-                        pubkey: key.to_string().as_str(),
-                        display: peer_return_display(nickname.as_str()),
-                    },
-                    true,
-                ),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::PeerReturn {
+            nickname: nickname.clone(),
+            key: *key,
+        });
     }
 
     /// A receipt is proof for the sender, not work for the agent, so it is
@@ -505,102 +401,38 @@ impl Output {
             state,
             ts,
         } = params;
-        self.dispatch(
-            || OutputEvent::Receipt {
-                from: from.clone(),
-                ref_id: ref_id.to_owned(),
-                state: state.to_owned(),
-                ts,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &SimpleEvent::Receipt {
-                        from: from.as_str(),
-                        ref_id,
-                        state,
-                        ts,
-                    },
-                    false,
-                ),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::Receipt {
+            from: from.clone(),
+            ref_id: ref_id.to_owned(),
+            state: state.to_owned(),
+            ts,
+        });
     }
 
     /// Print an informational line.
     pub(crate) fn info(&self, message: &str) {
-        self.dispatch(
-            || OutputEvent::Info {
-                message: message.to_owned(),
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(&SimpleEvent::Info { message }, false),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::Info {
+            message: message.to_owned(),
+        });
     }
 
     /// Print an error line.
     pub(crate) fn error(&self, message: &str) {
         if let Some(nickname) = nickname_held_key(message) {
-            let held = OutputEvent::NicknameHeld {
+            self.dispatch(|| OutputEvent::NicknameHeld {
                 nickname: nickname.to_owned(),
-            };
-            self.dispatch(
-                || held.clone(),
-                |mode| match mode {
-                    OutputMode::Json => print_json_line(&held),
-                    OutputMode::Silent => {}
-                },
-            );
+            });
         }
-        self.dispatch(
-            || OutputEvent::Error {
-                message: message.to_owned(),
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(&SimpleEvent::Error { message }, false),
-                OutputMode::Silent => {}
-            },
-        );
+        self.dispatch(|| OutputEvent::Error {
+            message: message.to_owned(),
+        });
     }
 
     /// Emit the result of an `agent-gossip ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current peer roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {
-        // Not routed through `dispatch`: `peers` is owned and each arm
-        // consumes (or drops) it, so there is nothing to clone.
-        match self {
-            Output::Capture { tx, tap, .. } => {
-                if let Some(tap) = tap {
-                    tap.send(OutputEvent::PingReport {
-                        peers: peers.clone(),
-                        known,
-                    });
-                }
-                let _ = tx.send(OutputEvent::PingReport { peers, known });
-            }
-            Output::Stream { mode, tap, .. } => {
-                match mode {
-                    OutputMode::Json => emit_json(
-                        &SimpleEvent::PingReport {
-                            responded: peers.len(),
-                            display: ping_report_display(&peers, known),
-                            peers: &peers,
-                            known,
-                        },
-                        true,
-                    ),
-                    OutputMode::Silent => {}
-                }
-                // Mirror into the daemon's surfaced-events ring so `poll`
-                // can return the same `ping_report` the stream just showed.
-                if let Some(tap) = tap {
-                    tap.send(OutputEvent::PingReport { peers, known });
-                }
-            }
-        }
+        self.dispatch(|| OutputEvent::PingReport { peers, known });
     }
 }
 
