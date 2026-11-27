@@ -111,7 +111,6 @@ name = "agent-gossip-test-fixtures"
 version = "0.5.0"
 dependencies = [
  "agent-gossip",
- "anyhow",
  "habilis-network",
  "parking_lot",
  "serde_json",
