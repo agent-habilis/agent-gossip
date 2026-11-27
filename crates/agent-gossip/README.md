@@ -23,8 +23,8 @@ public surface entirely: a join target is a mesh id parsed from a string, so
 iroh version bumps never reach a library consumer.
 
 This crate re-exports the curated engine surface — `MeshId`, `Message`,
-`MessageBody`, `Nickname`, `InviteTicket`, `RosterSnapshot`, `Lane`,
-`JoinTarget`, the tunables in `util::consts` — so downstream code names
+`MessageBody`, `Nickname`, `RosterSnapshot`, `Lane`, `JoinTarget`, the
+tunables in `util::consts` — so downstream code names
 `agent_gossip::MeshId` and never depends on the engine directly.
 
 ## Three frontends, one event loop
