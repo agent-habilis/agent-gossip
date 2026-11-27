@@ -3761,7 +3761,12 @@ fn wait_for_bell(session_pid: &str, armed: bool) {
 #[test]
 fn bell_check_and_session_track_the_bell_lock() {
     let _serial = serial_guard();
-    let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
+    let (decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
+    let _guard = DecoyGuard {
+        child: decoy,
+        pid: decoy_pid.clone(),
+        log,
+    };
 
     assert_eq!(
         session_report(&decoy_pid)["sessions"][0]["bell"],
@@ -3813,11 +3818,6 @@ fn bell_check_and_session_track_the_bell_lock() {
 
     let _ = settling_bell.kill();
     let _ = settling_bell.wait();
-    let _ = common::test_cmd()
-        .args(["leave", "--session-pid", &decoy_pid])
-        .output();
-    let _ = decoy.wait();
-    let _ = fs::remove_file(&log);
 }
 
 /// A decoy session that goes away even when an assertion fails first.

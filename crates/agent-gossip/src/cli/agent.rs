@@ -566,35 +566,6 @@ mod tests {
         }
     }
 
-    /// A reference is part of the install: an edited or a missing one is drift,
-    /// or the agent would read stale rules after an upgrade.
-    #[test]
-    fn a_missing_or_edited_reference_is_drift() {
-        let home = std::env::temp_dir().join(format!("agent-gossip-refs-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
-        let dir = Agent::Codex.install_path(&home);
-        write_embedded_dir(&SKILLS, &dir);
-        assert!(
-            Agent::Codex.in_sync(&home),
-            "a fresh copy has every reference"
-        );
-
-        let reference = dir.join("gossip-join/references/event-handling.md");
-        std::fs::write(&reference, "stale").expect("the test temp directory is writable");
-        assert!(
-            !Agent::Codex.in_sync(&home),
-            "an edited reference is out of date"
-        );
-        write_embedded_dir(&SKILLS, &dir);
-        std::fs::remove_file(&reference).expect("the test temp directory is writable");
-        assert!(
-            !Agent::Codex.in_sync(&home),
-            "a missing reference is out of date"
-        );
-
-        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
-    }
-
     /// agy loads only the first 24000 bytes of a skill body, so the text after
     /// that is never read: a rule past the cut does not exist for the agent.
     /// Every harness gets the same rendered tree, so the limit binds them all.

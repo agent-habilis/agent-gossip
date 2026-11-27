@@ -236,6 +236,78 @@ fn plug_and_doctor_say_when_the_bell_hook_is_not_installed() {
     std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
 }
 
+/// A reference is part of the agy install: an edited or a missing one must show
+/// as out of date in `doctor`, or the agent reads stale rules after an upgrade.
+/// This goes through the agy plugin that this change adds, with the real binary.
+#[test]
+fn doctor_flags_an_edited_or_missing_agy_reference_as_out_of_date() {
+    let home = std::env::temp_dir().join(format!("agent-gossip-agy-drift-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).expect("seeding a fake agy");
+    let plug = common::test_cmd()
+        .env("HOME", &home)
+        .args(["plug", "--agent", "antigravity"])
+        .output()
+        .expect("failed to run agent-gossip plug");
+    assert!(
+        plug.status.success(),
+        "the drift check needs an agy plugin that was written: {plug:?}"
+    );
+    let reference = home.join(
+        ".gemini/config/plugins/agent-gossip/skills/gossip-ping/references/event-handling.md",
+    );
+    assert!(
+        reference.is_file(),
+        "plug wrote the reference that the test edits"
+    );
+
+    let agy_detail = || {
+        let doctor = common::test_cmd()
+            .env("HOME", &home)
+            .args(["doctor", "--no-probe", "--output", "json"])
+            .output()
+            .expect("failed to run agent-gossip doctor");
+        let report: serde_json::Value =
+            serde_json::from_slice(&doctor.stdout).expect("doctor --output json emits JSON");
+        let sections = report["sections"].as_array().expect("report has sections");
+        let integrations = sections
+            .iter()
+            .find(|section| section["title"] == "Integrations")
+            .expect("machine report has an Integrations section");
+        let checks = integrations["checks"]
+            .as_array()
+            .expect("Integrations has checks");
+        let agy = checks
+            .iter()
+            .find(|check| check["name"] == "antigravity")
+            .expect("the roster lists antigravity");
+        agy["detail"]
+            .as_str()
+            .expect("an integration check has detail")
+            .to_owned()
+    };
+
+    assert!(
+        agy_detail().starts_with("up to date"),
+        "a fresh plug is up to date: {}",
+        agy_detail()
+    );
+    std::fs::write(&reference, "stale").expect("the test temp directory is writable");
+    assert!(
+        agy_detail().starts_with("out of date"),
+        "an edited reference is out of date: {}",
+        agy_detail()
+    );
+    std::fs::remove_file(&reference).expect("the test temp directory is writable");
+    assert!(
+        agy_detail().starts_with("out of date"),
+        "a missing reference is out of date: {}",
+        agy_detail()
+    );
+
+    std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+}
+
 /// In agy 1.5.12 only the namespaced form of a plugin skill expands, so every
 /// place that tells a user what to type must give `/agent-gossip:gossip-*` for
 /// agy.

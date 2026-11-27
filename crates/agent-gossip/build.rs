@@ -161,10 +161,24 @@ fn take_references(template: &str, skill: &str) -> (String, Vec<Reference>) {
             kept.push_str(line);
             continue;
         };
-        references.push(Reference {
+        let reference = Reference {
             name: attribute(interior, "name", skill),
             path: attribute(interior, "path", skill),
-        });
+        };
+        // The name becomes a file name: a slash would write outside `references/`,
+        // and a repeat would silently overwrite the file of the first.
+        let plain = |ch: char| ch.is_ascii_lowercase() || ch == '-';
+        assert!(
+            !reference.name.is_empty() && reference.name.chars().all(plain),
+            "skills/{skill}/SKILL.md: reference name {:?} must be lowercase letters and hyphens",
+            reference.name
+        );
+        assert!(
+            references.iter().all(|seen| seen.name != reference.name),
+            "skills/{skill}/SKILL.md: two references are named {:?}",
+            reference.name
+        );
+        references.push(reference);
     }
     (kept, references)
 }
