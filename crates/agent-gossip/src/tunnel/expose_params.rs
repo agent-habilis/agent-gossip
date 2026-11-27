@@ -53,8 +53,6 @@ pub(crate) struct ExposeParams<'caller> {
 /// A `--to` that is not a plain `http://` URL, `--advertise` on an unreachable
 /// (loopback) config, or endpoint bind / discovery-config failures.
 pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
-    use futures_util::StreamExt as _;
-
     let ExposeParams {
         to,
         flags,
@@ -87,15 +85,23 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
         &format!("A2A {origin} → gossip"),
         &format!("agent-gossip a2a connect {}", ticket.encode()),
     );
+    serve(&endpoint, &origin, &auth).await;
+    endpoint.close().await;
+    Ok(())
+}
+
+/// Serve every consumer that dials `endpoint`, until the endpoint closes.
+pub(super) async fn serve(endpoint: &Endpoint, origin: &str, auth: &TicketAuth) {
+    use futures_util::StreamExt as _;
+
     let paired = AtomicBool::new(false);
     let mut connections = FuturesUnordered::new();
     loop {
         tokio::select! {
             accepted = endpoint.accept() => {
                 let Some(incoming) = accepted else { break };
-                let auth = auth.clone();
                 connections.push(async {
-                    if let Err(error) = serve_connection(incoming, &origin, auth, &paired).await {
+                    if let Err(error) = serve_connection(incoming, origin, auth, &paired).await {
                         tracing::debug!(%error, "a2a bridge connection ended");
                     }
                 });
@@ -103,8 +109,6 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
             Some(()) = connections.next() => {}
         }
     }
-    endpoint.close().await;
-    Ok(())
 }
 
 /// Bind the exposer endpoint and mint its ticket + the auth token each stream
@@ -142,10 +146,10 @@ pub(super) async fn bind(
 /// second connection arriving while one is paired is closed immediately with
 /// [`BRIDGE_BUSY`]; the slot frees when the paired connection drops so a
 /// reconnect can re-pair.
-pub(super) async fn serve_connection(
+async fn serve_connection(
     incoming: Incoming,
     origin: &str,
-    auth: TicketAuth,
+    auth: &TicketAuth,
     paired: &AtomicBool,
 ) -> Result<()> {
     let connection = incoming.await?;
@@ -154,7 +158,7 @@ pub(super) async fn serve_connection(
         tracing::info!("refused a second consumer — the 1:1 bridge is already paired");
         return Ok(());
     }
-    let result = serve_streams(&connection, origin, &auth).await;
+    let result = serve_streams(&connection, origin, auth).await;
     paired.store(false, Ordering::SeqCst);
     result
 }

@@ -15,7 +15,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
 use super::a2a_ticket::A2aTicket;
-use super::card_rewriter::CardRewriter;
+use super::card_rewriter::{CardRewriter, find_head_end};
 use super::local_gate::{LocalGate, MAX_HEAD_BYTES, Refusal, refusal_response};
 use super::{A2A_ALPN, A2A_TICKET_LABEL};
 
@@ -180,11 +180,6 @@ async fn screen_opening_request(tcp: &mut TcpStream, gate: &LocalGate) -> Result
     let mut out = gate.screen(head)?.into_bytes();
     out.extend_from_slice(&buffer[end + 4..]);
     Ok(out)
-}
-
-/// Index of the blank line that ends the head (the offset of its `\r\n\r\n`).
-fn find_head_end(buffer: &[u8]) -> Option<usize> {
-    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 /// Splice the local client and the QUIC bi-stream: the client's request is

@@ -317,17 +317,15 @@ impl Drop for TicketDirectory {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use habilis_network::iroh::{EndpointAddr, SecretKey};
     use habilis_network::protocol::LookupOpts;
 
     use super::{TicketAd, TicketListings};
     use crate::tunnel::a2a_ticket::A2aTicket;
+    use crate::tunnel::tests as fixtures;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
-        let address = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())
-            .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"));
         A2aTicket {
-            address,
+            address: fixtures::sample_addr(secret),
             secret: habilis_network::protocol::TicketSecret::from([secret; 32]),
             lookups: LookupOpts::loopback(),
             password,
