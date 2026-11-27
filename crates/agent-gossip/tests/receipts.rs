@@ -3,7 +3,7 @@
 use agent_gossip::output_event::OutputEvent;
 use agent_gossip::{MAX_MESSAGE_SIZE, TaskState};
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT};
+use common::{InProcNode, MSG_TIMEOUT, meshed_pair, task_id_of};
 
 fn receipts_from(node: &mut InProcNode, from: &str) -> Vec<(String, String)> {
     node.events()
@@ -34,16 +34,6 @@ async fn wait_receipt(node: &mut InProcNode, from: &str, ref_id: &str) -> bool {
         })
     })
     .await
-}
-
-/// The warmup proves that the mesh formed, and the peer card is what a
-/// directed msg is sealed to: without both, the first send can fail.
-async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
-    let alice = InProcNode::create_with_nick(name, &format!("{name}-alice")).await;
-    let mut bob = InProcNode::join(&alice.mesh, bob_nick).await;
-    common::warm_up(&alice, &mut [&mut bob]).await;
-    alice.await_peer_card(bob_nick).await;
-    (alice, bob)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -98,11 +88,7 @@ async fn broadcast_produces_no_receipt() {
 async fn status_leg_returns_a_delivered_receipt() {
     let (mut alice, mut bob) = meshed_pair("rc-leg", "rc-leg-bob").await;
     let response = alice.create_task("rc-leg-bob", "do the thing").await;
-    let task_id: agent_gossip::TaskId = response["result"]["task"]["id"]
-        .as_str()
-        .expect("the worker returned a Task with an id")
-        .parse()
-        .expect("a valid task id");
+    let task_id = task_id_of(&response);
     assert!(bob.wait_task_message(MSG_TIMEOUT).await, "brief surfaced");
 
     bob.task_status(&task_id, TaskState::Working, Some("on it"))

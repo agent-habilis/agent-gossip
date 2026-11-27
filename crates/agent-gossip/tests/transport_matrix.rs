@@ -9,11 +9,9 @@
 //! lifecycle — including the sharded multi-frame RPC — is inherently the
 //! unicast proof; no per-transport policy row is needed.
 
-use std::time::Instant;
-
-use agent_gossip::{Channel, TaskId, TaskState};
+use agent_gossip::{Channel, TaskState};
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT, POLL};
+use common::{InProcNode, MSG_TIMEOUT, task_id_of};
 use serde_json::{Value, json};
 
 /// Active-view cap for a 2-node suite that wants a full mesh.
@@ -25,34 +23,16 @@ const FULL_MESH: usize = 64;
 // onto an in-proc mesh. Real multi-hop delivery is covered end-to-end by that
 // crate's own `tests/e2e.rs` (A↔B over one and two relays).
 
-/// Parse the `Task` id out of a `SendMessage` response.
-fn task_id_of(response: &Value) -> TaskId {
-    response["result"]["task"]["id"]
-        .as_str()
-        .expect("the worker returned a Task with an id")
-        .parse()
-        .expect("the returned id is a valid task id")
-}
-
 /// Poll until a slice of `node`'s `channel` view has `pointer == expected`. The view holds one
 /// slice for each author, keyed by its author key.
 async fn converged(node: &InProcNode, channel: Channel, pointer: &str, expected: &str) -> bool {
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    loop {
-        let view = node.get(channel).await;
+    node.wait_view(channel, MSG_TIMEOUT, |view| {
         let holds =
             |slice: &Value| slice.pointer(pointer).and_then(Value::as_str) == Some(expected);
-        let found = view
-            .as_object()
-            .is_some_and(|slices| slices.values().any(holds));
-        if found {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(POLL).await;
-    }
+        view.as_object()
+            .is_some_and(|slices| slices.values().any(holds))
+    })
+    .await
 }
 
 /// The shared operation-suite: every app-level operation between `alice` and

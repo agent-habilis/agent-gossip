@@ -15,17 +15,7 @@ use std::time::Duration;
 use agent_gossip::output_event::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT, three_peers};
-
-/// Parse the `Task` id out of a `SendMessage` response (v1.0
-/// `SendMessageResponse` oneof: `{"result":{"task":<Task>}}`).
-fn task_id_of(response: &serde_json::Value) -> TaskId {
-    response["result"]["task"]["id"]
-        .as_str()
-        .expect("the worker returned a Task with an id")
-        .parse()
-        .expect("the returned id is a valid task id")
-}
+use common::{InProcNode, MSG_TIMEOUT, task_id_of, three_peers};
 
 /// Creating a task is a directed `message/send` with no `taskId`: the worker
 /// mints a fresh **server** id and returns a `submitted` `Task`, and surfaces

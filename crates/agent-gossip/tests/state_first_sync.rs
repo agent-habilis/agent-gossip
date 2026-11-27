@@ -3,14 +3,7 @@
 
 use agent_gossip_test_fixtures::InProcNode;
 use habilis_network::protocol::AuthorKey;
-use serde_json::{Map, Value};
-
-/// `{key: value}` for a key computed at run time.
-fn one(key: String, value: Value) -> Value {
-    let mut map = Map::new();
-    map.insert(key, value);
-    Value::Object(map)
-}
+use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn joiners_that_write_state_at_once_find_the_write_in_their_view() {
@@ -19,7 +12,7 @@ async fn joiners_that_write_state_at_once_find_the_write_in_their_view() {
         let joiner = InProcNode::join(&creator.mesh, &format!("fs-joiner-{round}")).await;
         let own: AuthorKey = joiner.key_seen_by(&creator).await;
         joiner
-            .state_merge(one(format!("k{round}"), Value::from(round)))
+            .state_merge(json!({ format!("k{round}"): round }))
             .await;
         let view = joiner.state_get().await;
         assert_eq!(

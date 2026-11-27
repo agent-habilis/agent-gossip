@@ -335,6 +335,25 @@ impl InProcNode {
         }
     }
 
+    /// Poll the derived document of `channel` until `pred` holds or `timeout` elapses.
+    pub async fn wait_view(
+        &self,
+        channel: Channel,
+        timeout: Duration,
+        mut pred: impl FnMut(&serde_json::Value) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if pred(&self.get(channel).await) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
     /// Captured changes on `channel` so far, each `(derived document, is_self)`.
     pub fn changes(
         &mut self,

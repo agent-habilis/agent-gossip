@@ -8,7 +8,7 @@
 use agent_gossip::TaskState;
 use agent_gossip::a2a::status_update_params;
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT};
+use common::{InProcNode, MSG_TIMEOUT, task_id_of};
 use habilis_network::ops::blob::BlobTicket;
 
 /// A worker result that is a file becomes a `Part.url` blob reference on the
@@ -26,11 +26,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
 
     // `create_task` waits for bob's card (the directed-seal key) before sending.
     let response = alice.create_task("t-blob-bob", "render the report").await;
-    let task_id = response["result"]["task"]["id"]
-        .as_str()
-        .expect("worker returned a Task id")
-        .parse()
-        .expect("valid task id");
+    let task_id = task_id_of(&response);
     assert!(
         bob.wait_task_message(MSG_TIMEOUT).await,
         "bob saw the brief"

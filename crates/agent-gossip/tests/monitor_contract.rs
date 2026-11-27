@@ -23,6 +23,13 @@ use common::{
     serial_guard, socket_path, tmp_log, wait_until,
 };
 
+/// A 3 s task idle timeout with a 1 s keepalive and a 1 s sweep, so a reap shows in seconds.
+const FAST_TASK_TIMERS: [(&str, &str); 3] = [
+    ("--task-timeout-secs", "3"),
+    ("--task-keepalive-secs", "1"),
+    ("--sweep-interval-secs", "1"),
+];
+
 /// Parse a JSON stdout line as a `ready` event, returning its
 /// `(mesh, name, nickname)` fields, or `None` if the line isn't a `ready`
 /// event (or isn't JSON at all).
@@ -1229,11 +1236,7 @@ async fn test_task_unknown_peer_errors() {
 /// timers (`--task-timeout-secs 3`, keepalive 1s, sweep 1s).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_idle_timeout_after_owner_dies() {
-    let timers: &[(&str, &str)] = &[
-        ("--task-timeout-secs", "3"),
-        ("--task-keepalive-secs", "1"),
-        ("--sweep-interval-secs", "1"),
-    ];
+    let timers = &FAST_TASK_TIMERS;
     let (creator, mesh) = JsonNode::create_with_flags(timers);
     let mut joiner = JsonNode::join_with_flags(&mesh, "tk-bob", timers);
     assert!(
@@ -1330,11 +1333,7 @@ async fn test_task_idle_timeout_after_owner_dies() {
 /// keepalived for up to a 2 s cap first. The window below clears both.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_completed_task_is_never_reaped() {
-    let timers: &[(&str, &str)] = &[
-        ("--task-timeout-secs", "3"),
-        ("--task-keepalive-secs", "1"),
-        ("--sweep-interval-secs", "1"),
-    ];
+    let timers = &FAST_TASK_TIMERS;
     let (creator, mesh) = JsonNode::create_with_flags(timers);
     let worker = JsonNode::join_with_flags(&mesh, "tk-done", timers);
     assert!(
@@ -1638,11 +1637,7 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     // never beats inside the test: its first beat would make the initiator
     // read 3 s of worker silence as death, and a slow approval hop under load
     // would then cancel the live task.
-    let fast_reap: &[(&str, &str)] = &[
-        ("--task-timeout-secs", "3"),
-        ("--task-keepalive-secs", "1"),
-        ("--sweep-interval-secs", "1"),
-    ];
+    let fast_reap = &FAST_TASK_TIMERS;
     let worker_nick = "tk-late";
     let (creator, mesh) = JsonNode::create_with_flags(fast_reap);
     let worker =
@@ -2470,11 +2465,7 @@ fn decline(mesh: &str, nickname: &str, task_id: &str) {
 /// the graph-up case — one graph tar offered to several peers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_same_file_on_two_tasks_outlives_the_first() {
-    let fast_reap = [
-        ("--task-timeout-secs", "3"),
-        ("--task-keepalive-secs", "1"),
-        ("--sweep-interval-secs", "1"),
-    ];
+    let fast_reap = FAST_TASK_TIMERS;
     let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
     let first = JsonNode::join_with_flags(&mesh, "tf-share-a", &fast_reap);
     let second = JsonNode::join_with_flags(&mesh, "tf-share-b", &fast_reap);
@@ -2554,11 +2545,7 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
 /// may live on for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
-    let fast_reap = [
-        ("--task-timeout-secs", "3"),
-        ("--task-keepalive-secs", "1"),
-        ("--sweep-interval-secs", "1"),
-    ];
+    let fast_reap = FAST_TASK_TIMERS;
     let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
     let worker = JsonNode::join_with_flags(&mesh, "tf-late", &fast_reap);
     assert!(
