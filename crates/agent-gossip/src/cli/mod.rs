@@ -24,6 +24,7 @@ mod dispatch;
 mod doctor;
 mod drift_warning;
 mod finish_send;
+mod info_response;
 mod install_tuning;
 mod invite;
 mod join;

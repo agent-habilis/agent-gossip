@@ -6,13 +6,12 @@ use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use habilis_network::net::{self, NetworkCapability};
 use habilis_network::protocol::{LockedMesh, Mesh, MeshId, RelayChoice};
-use habilis_network::runtime::ipc;
 use habilis_network::util::logs;
 use serde::Serialize;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
-use crate::a2a::ipc_command::IpcCommand;
+use super::info_response::live_daemons;
 use crate::status as output;
 
 /// Budget for the machine net-report (build endpoint + first completed report).
@@ -310,15 +309,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
 
 async fn active_meshes_section() -> Section {
     let mut checks = Vec::new();
-    for path in ipc::active_socket_paths(&crate::runtime_base()) {
-        // `Info` carries no mesh — the daemon answers with its own identity.
-        // A dead/stale socket errors and is skipped.
-        let Ok(response) = ipc::send_to_path(&path, &IpcCommand::Info).await else {
-            continue;
-        };
-        let Ok(info) = serde_json::from_str::<InfoResponse>(&response) else {
-            continue;
-        };
+    for info in live_daemons().await {
         let detail = format!(
             "{} · <{}> · {} {}",
             info.gossip,
@@ -338,19 +329,6 @@ async fn active_meshes_section() -> Section {
         title: "Active gossips".to_owned(),
         checks,
     }
-}
-
-// The `room`/`participant_count` aliases mirror the state-file read fallback:
-// a daemon from the previous release may still be serving, and doctor must
-// list it rather than silently skip its unparseable info reply.
-#[derive(serde::Deserialize)]
-struct InfoResponse {
-    #[serde(alias = "room")]
-    gossip: String,
-    name: String,
-    nickname: String,
-    #[serde(alias = "participant_count")]
-    peer_count: usize,
 }
 
 // ---- Mode 2: per-mesh connection analysis ---------------------------------
