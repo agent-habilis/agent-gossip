@@ -160,11 +160,12 @@ pub(crate) async fn advertise(
 /// ```
 #[derive(Debug)]
 pub struct Directory {
+    // First, so that an implicit drop stops the collector before the session, as `close` does.
+    collector: Collector,
     session: MeshSession,
     snapshot_rx: watch::Receiver<Vec<MeshListing>>,
     /// `None` after [`Directory::events`] hands the receiver out.
     events_rx: Option<event_sink::EventReceiver<DirectoryEvent>>,
-    collector: Collector,
 }
 
 impl Directory {
@@ -257,10 +258,10 @@ impl Directory {
         });
 
         Ok(Self {
+            collector,
             session,
             snapshot_rx,
             events_rx: Some(events_rx),
-            collector,
         })
     }
 

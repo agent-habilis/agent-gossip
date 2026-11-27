@@ -15,14 +15,17 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use habilis_network::ops::directory;
-use habilis_network::protocol::{LookupOpts, LookupSet, MeshId, MeshName, MessageBody, Nickname};
+use habilis_network::protocol::{
+    LookupOpts, LookupSet, MeshId, MeshName, Message, MessageBody, Nickname,
+};
 use habilis_network::runtime::CoHostPolicy;
 use habilis_network::runtime::tuning::{directory_expiry, directory_private_for_test};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
+use crate::a2a::status_update_params;
+use crate::api::advertiser::Advertiser;
 use crate::api::directory::Collector;
 use crate::api::{MeshSession, directory as api_directory, event_sink};
 
@@ -120,6 +123,13 @@ impl TicketListings {
         }
     }
 
+    /// Record the ad that `frame` carries. An ad rides a broadcast chat frame, so the ad is the text of the
+    /// payload, not the frame body: that body is a serialized A2A message.
+    fn note_frame(&mut self, frame: &Message, now: Instant) -> Option<&TicketListing> {
+        let ad_text = status_update_params::chat_text(frame)?;
+        self.note(&ad_text, now)
+    }
+
     /// Drop every listing whose last ad is older than `ttl`, returning the
     /// tickets removed.
     pub(crate) fn expire(&mut self, ttl: Duration, now: Instant) -> Vec<String> {
@@ -149,7 +159,7 @@ impl TicketListings {
 }
 
 /// Advertise `ad` into `directory` on a timer, reachable over `lookups`. The
-/// task runs until the caller aborts the returned handle. A directory-join
+/// task runs until the caller drops the returned guard. A directory-join
 /// failure logs and ends the task — the bridge keeps serving, just unlisted.
 ///
 /// # Errors
@@ -158,11 +168,11 @@ pub(crate) fn spawn_ticket_advertiser(
     directory: MeshName,
     lookups: LookupOpts,
     ad: &TicketAd,
-) -> Result<JoinHandle<()>> {
+) -> Result<Advertiser> {
     // Validate/render once, eagerly — a bad label errors at spawn, not silently
     // every tick.
     let body = ad.to_body()?;
-    Ok(tokio::spawn(api_directory::advertise(
+    Ok(Advertiser::spawn(api_directory::advertise(
         directory,
         lookups,
         move || body.clone(),
@@ -194,8 +204,9 @@ impl event_sink::Evictable for TicketDirectoryEvent {
 /// background, and ages out silent publishers.
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
-    session: MeshSession,
+    // First, so that an implicit drop stops the collector before the session, as `close` does.
     collector: Collector,
+    session: MeshSession,
 }
 
 impl TicketDirectory {
@@ -227,7 +238,7 @@ impl TicketDirectory {
                     received = inbound.recv() => match received {
                         Ok(message) => {
                             let now = Instant::now();
-                            if let Some(listing) = listings.note(message.body.as_str(), now) {
+                            if let Some(listing) = listings.note_frame(&message, now) {
                                 events_tx.publish(TicketDirectoryEvent::Found(listing.clone()));
                             }
                         }
@@ -247,7 +258,7 @@ impl TicketDirectory {
             }
         });
 
-        Ok((Self { session, collector }, events_rx))
+        Ok((Self { collector, session }, events_rx))
     }
 
     /// The directory session's `(mesh id, nickname)` — for `logging::attach`.
@@ -269,9 +280,10 @@ impl TicketDirectory {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use habilis_network::protocol::LookupOpts;
+    use habilis_network::protocol::{AppFrameParams, LookupOpts, MeshId, Message, Nickname};
 
     use super::{TicketAd, TicketListings};
+    use crate::a2a::{status_update_params, wire};
     use crate::tunnel::a2a_ticket::A2aTicket;
     use crate::tunnel::tests as fixtures;
 
@@ -294,6 +306,36 @@ mod tests {
         .expect("an advert with a valid ticket always serializes to JSON")
         .as_str()
         .to_owned()
+    }
+
+    /// The frame that `MeshSession::broadcast` puts on the wire for `text`: the text is one part of an A2A
+    /// message, and that message is the frame body.
+    fn broadcast_frame(text: &str) -> Message {
+        let mesh = MeshId::from("test");
+        let payload = status_update_params::compose_broadcast(&mesh, text);
+        let body = status_update_params::payload_body(&payload).expect("a text payload serializes");
+        Message::new_app(
+            &mesh,
+            &Nickname::from("exposer"),
+            AppFrameParams::new(wire::app_tag(wire::BROADCAST), None, None, body),
+        )
+    }
+
+    #[test]
+    fn an_ad_in_a_broadcast_frame_is_a_new_listing() {
+        let ticket = a2a_ticket(7, false);
+        let mut dir = TicketListings::default();
+
+        let listing = dir.note_frame(
+            &broadcast_frame(&ad_body(&ticket, Some("one"))),
+            Instant::now(),
+        );
+
+        assert_eq!(
+            listing.map(|listing| listing.ticket.clone()),
+            Some(ticket),
+            "the advertiser sends the ad through `MeshSession::broadcast`, so `a2a discover` never lists a bridge"
+        );
     }
 
     #[test]

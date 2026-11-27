@@ -16,6 +16,12 @@ use tokio::task::JoinHandle;
 /// failure logs and ends the task — the mesh is unaffected, just unlisted.
 pub(crate) struct Advertiser(JoinHandle<()>);
 
+impl Advertiser {
+    pub(crate) fn spawn(advertise: impl Future<Output = ()> + Send + 'static) -> Self {
+        Self(tokio::spawn(advertise))
+    }
+}
+
 impl fmt::Debug for Advertiser {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("Advertiser").finish_non_exhaustive()
@@ -50,9 +56,7 @@ pub(crate) fn spawn_advertiser(
     // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and
     // discoverers must use the same lookups to meet.
     let next_ad = move || ad_with_peers(&mesh_id, live_count.load(Ordering::Relaxed)).to_body();
-    Advertiser(tokio::spawn(super::directory::advertise(
-        directory, lookups, next_ad,
-    )))
+    Advertiser::spawn(super::directory::advertise(directory, lookups, next_ad))
 }
 
 /// `Ad` has no constructor, so the ad is built through its validating `Deserialize`.
