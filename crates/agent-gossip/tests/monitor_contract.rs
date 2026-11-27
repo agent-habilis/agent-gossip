@@ -2652,6 +2652,79 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     }
 }
 
+/// A plain call (no file) that timed out, but that the worker still took, is
+/// cancelled at the worker too: the caller was told the call failed, so no
+/// task may live on for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs R1 fix"]
+async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
+    let fast_reap = [
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
+    let worker = JsonNode::join_with_flags(&mesh, "tp-late", &fast_reap);
+    assert!(
+        creator.wait_ready(&mesh),
+        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
+    );
+    assert!(
+        worker.wait_ready(&mesh),
+        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
+    );
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tp-late");
+
+    let out: std::process::Output = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tp-late",
+        &[
+            OsStr::new("--text"),
+            OsStr::new("a plain brief"),
+            OsStr::new("--timeout-secs"),
+            OsStr::new("0"),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("timed out"),
+        "the call must time out before the reply: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let task_id: String = loop {
+        let found: Option<String> = worker.json_events().into_iter().find_map(|value| {
+            (value["event"] == "task" && value["kind"] == "message")
+                .then(|| value["task_id"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        if let Some(task_id) = found {
+            break task_id;
+        }
+        assert!(Instant::now() < deadline, "the worker never got the brief");
+        std::thread::sleep(POLL);
+    };
+
+    let cancelled = || {
+        worker.json_events().into_iter().any(|value| {
+            value["task_id"] == task_id.as_str()
+                && (value["event"] == "task_timeout" || value["state"] == "canceled")
+        })
+    };
+    let cancel_deadline = Instant::now() + Duration::from_secs(20);
+    while !cancelled() {
+        assert!(
+            Instant::now() < cancel_deadline,
+            "the worker's plain task was never cancelled: {:#?}",
+            worker.json_events()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
 /// The reach a roster gives the creator, or `None` when the roster does not list it.
 fn creator_reach(view: &serde_json::Value, creator_nickname: &str) -> Option<String> {
     let mut peers = view["peers"].as_array().into_iter().flatten();
