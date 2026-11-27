@@ -842,17 +842,24 @@ COMMANDS
               is true when it got it: the daemon has ended. A daemon that
               ended on that SIGTERM has removed its files. A daemon that
               was killed (SIGKILL) while leave waited also frees the lock,
-              and its files stay, as the next paragraph says.
+              and its files stay until a later leave or session removes
+              them, as the next paragraph says.
 
               leave and session remove one more thing: a `<nick>.tracing.log`
               that has no socket beside it and is 7 days old, and the
               folder that this removal empties. A daemon that dies by
               SIGKILL (or power loss) leaves its socket, its chunk folder
-              and its state file, and no command removes them. The next
-              start of the same mesh and nickname cleans the socket and the
-              chunk folder and writes the state file again. If it starts
-              with another --state-file, the old state file stays until the
-              host restarts. The lock file of the registry stays too.
+              and its state file. leave and session remove the socket and
+              the chunk folder of each such member of any gossip in the
+              runtime folder: the record in its lock file names a process
+              that is gone (or a process with another start time, when the
+              pid was reused). They try the lock of the member without
+              waiting, and they remove nothing when someone holds it, so a
+              daemon that starts at that moment keeps its files. The state
+              file stays: the next start of the same mesh and nickname
+              writes it again, and if it starts with another --state-file,
+              the old state file stays until the host restarts. The lock
+              file of the registry stays too.
 
               A daemon stops within about 0.5 s. When a peer does not
               acknowledge the close (the peer is stopped, gone, or on a slow
