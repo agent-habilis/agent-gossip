@@ -22,8 +22,8 @@ use super::{
     DiscoverResult, DiscoveredMesh, FetchMessagesArgs, FetchMessagesResult, JoinMeshArgs,
     LeaveResult, MCP_INSTRUCTIONS, MeshInfoResult, MeshRef, NoArgs, PingResult, SendBroadcastArgs,
     SendMsgArgs, SendResult, TaskArtifactArgs, TaskStatusArgs, TopicMeshArgs, VersionResult,
-    already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
-    parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
+    already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_nickname,
+    parse_task_id, parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
 };
 use crate::a2a::ipc_command::MetaView;
 use crate::a2a::reader_asks;
@@ -83,13 +83,7 @@ impl AgentGossipServer {
                 McpError::invalid_params(format!("invalid gossip name: {error}"), None)
             })?,
         };
-        let nickname = args
-            .nickname
-            .map(|raw| Nickname::try_new(&raw))
-            .transpose()
-            .map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?;
+        let nickname = parse_nickname(args.nickname)?;
         let directory = args
             .directory
             .map(|raw| MeshName::try_new(&raw))
@@ -102,12 +96,8 @@ impl AgentGossipServer {
             .with_transport(resolved.transport)
             .with_advertise(args.advertise)
             .with_directory(directory);
-        if let Some(nickname) = nickname {
-            config = config.with_nickname(nickname);
-        }
-        if let Some(password) = args.password {
-            config = config.with_password(password);
-        }
+        config.nickname = nickname;
+        config.password = args.password;
         let session = Session::create(config).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable(_) => {
                 McpError::invalid_params(error.to_string(), None)
@@ -135,19 +125,9 @@ impl AgentGossipServer {
                 matches!(&target, JoinTarget::Mesh(id) if id == existing.core.mesh_id());
             return rejoin_existing(existing, args.nickname.as_deref(), same_mesh);
         }
-        let nickname = match args.nickname {
-            None => None,
-            Some(raw) => Some(Nickname::try_new(&raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?),
-        };
         let mut config = JoinConfig::new(target);
-        if let Some(nickname) = nickname {
-            config = config.with_nickname(nickname);
-        }
-        if let Some(password) = args.password {
-            config = config.with_password(password);
-        }
+        config.nickname = parse_nickname(args.nickname)?;
+        config.password = args.password;
         let session = Session::join(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
@@ -168,16 +148,8 @@ impl AgentGossipServer {
             let same_mesh = derived.to_string() == existing.core.mesh_id().as_str();
             return rejoin_existing(existing, args.nickname.as_deref(), same_mesh);
         }
-        let nickname = match args.nickname {
-            None => None,
-            Some(raw) => Some(Nickname::try_new(&raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?),
-        };
         let mut config = TopicConfig::new(args.string);
-        if let Some(nickname) = nickname {
-            config = config.with_nickname(nickname);
-        }
+        config.nickname = parse_nickname(args.nickname)?;
         let session = Session::topic(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
