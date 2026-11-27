@@ -661,10 +661,26 @@ impl InProcNode {
     ///
     /// Panics if the send fails.
     pub async fn task_artifact(&self, task_id: &TaskId, text: &str) {
+        self.try_task_artifact(task_id, text)
+            .await
+            .expect("in-process task_artifact failed");
+    }
+
+    /// As [`Self::task_artifact`], returning the refusal instead of panicking, for a test of
+    /// the rule that an artifact needs a text or a file.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the daemon refuses the artifact or the event loop has stopped.
+    pub async fn try_task_artifact(
+        &self,
+        task_id: &TaskId,
+        text: &str,
+    ) -> Result<(), SessionError> {
         self.session
             .task_artifact(TaskArtifactParams::new(task_id.clone(), text.to_owned()))
             .await
-            .expect("in-process task_artifact failed");
+            .map(|_| ())
     }
 
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over

@@ -1905,6 +1905,47 @@ mod tests {
         );
     }
 
+    /// A follow-up or a brief that a relay delivers twice is news only the first time, and a
+    /// follow-up to a task that already closed is not news at all.
+    #[test]
+    fn a_replayed_message_and_a_message_to_a_closed_task_are_not_news() {
+        let start = Instant::now();
+        let mut tasks = task_we_serve(start);
+        let message = |registry: &mut HashMap<TaskId, TaskRecord>, id: &str| {
+            super::apply_leg(
+                registry,
+                &closed(),
+                super::ReceivedLeg {
+                    task_id: &tid(),
+                    from: &peer_key("calm-otter"),
+                    peer: &Nickname::from("calm-otter"),
+                    payload: super::LegPayload::FollowUp(id),
+                    now: later(start, Duration::from_secs(10)),
+                },
+            )
+        };
+        assert!(
+            message(&mut tasks, "m-1").first_seen,
+            "the first copy is news"
+        );
+        assert!(
+            !message(&mut tasks, "m-1").first_seen,
+            "the second copy is a replay"
+        );
+        assert!(
+            message(&mut tasks, "m-2").first_seen,
+            "another follow-up is news again"
+        );
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .state = TaskState::Completed;
+        assert!(
+            !message(&mut tasks, "m-3").first_seen,
+            "a closed task has nothing to tell its worker"
+        );
+    }
+
     /// The set of seen legs is bounded: ten times its cap leaves the newest ids in and the
     /// oldest out.
     #[test]
