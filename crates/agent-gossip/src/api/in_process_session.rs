@@ -35,7 +35,7 @@ impl InProcessSession {
     /// Spawn the event loop and build the core. `push` is `Some` to fan inbound
     /// traffic out to a broadcast ([`MeshSession::messages`](crate::api::MeshSession::messages)), `None` for a
     /// poll-only consumer (MCP). `env.handle_signals`: see
-    /// `DriverMode::InProcess` — `false` for sessions living inside a
+    /// `DriverMode::InProcess` — `SignalHandling::Leave` for sessions living inside a
     /// foreground command that owns its own lifetime.
     pub(super) fn spawn(
         elc: EventLoopConfig,
@@ -136,8 +136,7 @@ impl InProcessSession {
     }
 
     /// Build, sign and gossip-broadcast a message; returns the canonical
-    /// [`Message`](crate::Message) the loop built, or `None` when the sender-side rate
-    /// limiter dropped it.
+    /// [`Message`](crate::Message) the loop built.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -286,8 +285,8 @@ impl InProcessSession {
             .collect())
     }
 
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
-    /// valid merge; `Err` is a transport/serialize failure only.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state. The top-level merge must be
+    /// an object; `Err` is a stopped loop or a write that the state refuses.
     pub(crate) async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.call_loop(|response| SessionRequest::StateMerge { merge, response })
             .await

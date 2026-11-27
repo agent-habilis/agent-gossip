@@ -177,7 +177,7 @@ impl AgentGossipServer {
         &self,
         Parameters(args): Parameters<DiscoverMeshesArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // One-shot collection window, mirroring the pi extension: wait up to
+        // One-shot collection window: wait up to
         // `MAX` for the first listing, then return `GRACE` after the last one
         // (so a quiet directory returns fast once it has stopped producing).
         const GRACE: Duration = Duration::from_millis(1500);

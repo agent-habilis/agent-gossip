@@ -1,5 +1,5 @@
 //! The MCP server's mesh handle — a thin wrapper over the in-process
-//! [`crate::api::MeshSession`] that adds the implicit `fetch` cursor. The rmcp
+//! [`crate::api::InProcessSession`] that adds the implicit `fetch` cursor. The rmcp
 //! server, tool handlers, and arg/result types live in [`super`]; only the
 //! session plumbing lives here, reused from `api` rather than duplicated.
 
