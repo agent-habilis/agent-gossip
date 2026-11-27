@@ -446,8 +446,9 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
         .expect("task event produces a JSON line");
         parse(&json)
     };
-    let waiting = line(status_update_params::waiting_metadata(Some(
-        "asks its user",
+    let waiting = line(Some(status_update_params::status_metadata(
+        Some("asks its user"),
+        1,
     )));
     assert_eq!(waiting["event"], "task", "the event field is task");
     assert_eq!(
@@ -471,7 +472,10 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::InputRequired,
             note: None,
-            metadata: status_update_params::waiting_metadata(Some("asks its user")),
+            metadata: Some(status_update_params::status_metadata(
+                Some("asks its user"),
+                1,
+            )),
         },
     );
     let json = simple_event::event_json(&OutputEvent::Task {

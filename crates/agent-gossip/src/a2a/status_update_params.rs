@@ -412,13 +412,6 @@ pub fn task_label(message: &Message) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// The `mesh:waiting` metadata of a `working` status leg, when a reason is
-/// given. The counterpart of [`status_waiting`].
-#[must_use]
-pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
-    reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
-}
-
 /// The metadata of a status leg: its order value, and the `mesh:waiting` reason
 /// when it has one. The counterpart of [`status_order`] and [`status_waiting`].
 #[must_use]
@@ -585,8 +578,9 @@ mod tests {
     use super::{
         Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
         msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
-        status_waiting, waiting_metadata,
+        status_waiting,
     };
+    use crate::a2a::extensions::META_WAITING;
     use crate::a2a::wire;
 
     fn mesh() -> MeshId {
@@ -717,7 +711,7 @@ mod tests {
         );
     }
 
-    /// The producer (`waiting_metadata`, used by `a2a status --waiting`) and the
+    /// The producer (`status_metadata`, used by `a2a status --waiting`) and the
     /// reader (`status_waiting`) agree, and a leg without a reason carries none.
     #[test]
     fn waiting_reason_round_trips_through_a_status_update() {
@@ -734,12 +728,12 @@ mod tests {
             )
         };
         assert_eq!(
-            status_waiting(&update(waiting_metadata(Some("asks its user")))).as_deref(),
+            status_waiting(&update(Some(status_metadata(Some("asks its user"), 1)))).as_deref(),
             Some("asks its user"),
             "the status payload is the one sent"
         );
         assert_eq!(
-            status_waiting(&update(waiting_metadata(None))),
+            status_waiting(&update(Some(status_metadata(None, 1)))),
             None,
             "a status without a waiting reason has none"
         );
@@ -770,7 +764,7 @@ mod tests {
         );
         assert_eq!(
             status_order(&update(
-                waiting_metadata(Some("asks its user")).expect("the test metadata is valid")
+                serde_json::json!({ META_WAITING: "asks its user" })
             )),
             None,
             "the status payload carries its fields"

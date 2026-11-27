@@ -137,7 +137,7 @@ pub(crate) enum Commands {
     /// Shared state is a JSON document every member derives from a dedicated,
     /// gossiped log of RFC 7386 JSON Merge Patch changes. `state merge` applies a
     /// merge; `state get` prints the current document. Members react to a
-    /// change via the `state` event on the daemon's `--output json` stream.
+    /// change via the `state` event on the daemon's stdout event stream.
     State {
         #[command(subcommand)]
         action: StateAction,

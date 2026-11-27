@@ -1221,7 +1221,10 @@ mod classify_tests {
     fn a_waiting_leg_and_its_clear_each_surface_once() {
         let working = Some(TaskState::Working);
         let reason = "asks its user";
-        let waiting = working_with(None, status_update_params::waiting_metadata(Some(reason)));
+        let waiting = working_with(
+            None,
+            Some(status_update_params::status_metadata(Some(reason), 1)),
+        );
         assert!(
             !is_empty_working_repeat(working, None, &waiting),
             "the --waiting leg surfaces"

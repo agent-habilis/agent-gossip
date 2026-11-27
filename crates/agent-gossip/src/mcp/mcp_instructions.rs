@@ -38,7 +38,7 @@ preamble/postamble. `display` already carries the `💬️` prefix, the nicks, t
 byte-for-byte.
 
 WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \
-`ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
+or `ready`; a `type:\"presence\"` with `subtype:\"alive\"`; \
 and any entry with `self:true` EXCEPT your own chat (a `type:\"broadcast\"` or \
 `type:\"msg\"` with `self:true` is your outbound message echoed back — emit its \
 `display`; that echo is the send confirmation). Show (emit `display` verbatim): \
@@ -62,8 +62,8 @@ call the `ping` tool.
 
 TASKS arrive as `event:\"task\"` records addressed to you, carrying the \
 `task_id` every later leg reuses. As the WORKER you drive your own task: \
-`task_status` \"working\" to accept (re-emit it about once a minute while you \
-work, or the daemon evicts the task as dead), `task_status\" \"failed\" with a \
+`task_status` \"working\" to accept (the daemon then keeps the task alive; do \
+not re-emit `working` for that), `task_status` \"failed\" with a \
 note to decline, `task_artifact` to return the result — which parks the task in \
 input-required for the initiator's approval — and `task_status` \"completed\" \
 once that approval arrives as a message leg on the same task. Only you can \

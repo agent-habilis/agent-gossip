@@ -1,4 +1,3 @@
-use anyhow::Result;
 use habilis_network::protocol::Nickname;
 use rmcp::model::ErrorData as McpError;
 

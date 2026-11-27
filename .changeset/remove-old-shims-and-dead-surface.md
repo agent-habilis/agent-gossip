@@ -12,8 +12,7 @@ For a user:
   from the agent commands. They did nothing. `doctor --output json` and
   `a2a fetch --output` stay.
 - The `--room` alias of `--gossip` is removed. Use `--gossip`.
-- `join --name` is now a plain flag error. `join` takes the id and
-  `--nickname` only.
+- `join --name` is now a plain flag error.
 - 10 hidden tuning flags are removed: `--own-legs-bytes-cap`,
   `--unsent-legs-bytes-cap`, `--task-skill-silence-max-secs`,
   `--rival-recheck-first-secs`, `--rival-recheck-secs`,
@@ -38,3 +37,10 @@ For a user:
   `a2a::SendMessageResponse`, `OutputEvent::MsgPosted`, and the root
   re-exports `InviteTicket`, `Shard` and `ShardGroup`. The `dhat-heap` feature
   is removed.
+- The Rust API also loses `a2a::META_DONE`, `a2a::META_TOTAL`,
+  `status_update_params::beat_fraction` and
+  `status_update_params::waiting_metadata`. `beat_metadata` and
+  `beat_metadata_with_reader` take no fraction. `OutputEvent::TaskMessage` has
+  a new `ts` field.
+- The wasm client: `GossipPeer::create` and `GossipPeer::join` take no
+  `path_mode` parameter.

@@ -220,7 +220,7 @@ Three layers:
   real event loop via the library `api` (`agent_gossip_test_fixtures::InProcNode`).
   Real iroh mesh, no subprocess — sub-second.
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
-  `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
+  JSON event stream / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT
   heal recovery, backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
 - **Adversarial (`--features adversarial`, `crates/agent-gossip/tests/adversarial.rs`):** an
@@ -257,7 +257,7 @@ Developer logs use `tracing`. Daemons (`create`/`join`) write to
 `<log_dir>/<mesh_prefix>-<nick>.log` (default: the `agent-gossip/logs`
 subdir of the OS temp dir; `--log-dir` overrides). **Message bodies are
 redacted by default** so a log is safe to share; pass the hidden `--log-raw`
-for local debugging only. The `--output json` stdout stream is the functional
+for local debugging only. The JSON event stream on stdout is the functional
 agent API — always raw, a separate path from the file sink.
 
 Every log line carries an explicit `target:`, one per subsystem:

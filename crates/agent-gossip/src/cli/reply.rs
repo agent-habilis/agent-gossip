@@ -27,7 +27,7 @@ pub(super) fn accepted(response: &str) -> Result<MsgResponse> {
 /// A refused reply must not exit 0: a shell-driven agent reads the exit code to
 /// tell an applied change from a rejected one, and an `{"ok":false}` that exits
 /// 0 reads as success → silent desync. The raw JSON is printed first for
-/// `--output json` consumers; the exit code is the scriptable signal.
+/// a reader of the JSON; the exit code is the scriptable signal.
 pub(super) async fn send_printed(command: &IpcCommand, nickname: &Nickname) -> Result<()> {
     let response = super::send::send(command, nickname).await?;
     println!("{response}");

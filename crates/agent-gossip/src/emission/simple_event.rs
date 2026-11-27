@@ -1,11 +1,3 @@
-//! The JSON wire layer: the serde shapes for every line the daemon
-//! emits on stdout (consumed by the `/mesh` skill and any `--output
-//! json` client) plus the serializers that render them. Field
-//! order/naming is part of the wire format — pinned by the insta
-//! snapshots in `tests`. The `Output` sink in the
-//! parent module renders through these so the captured-event and
-//! stdout forms stay byte-identical.
-
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype};
 use serde::Serialize;
@@ -334,7 +326,6 @@ fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
 }
 
-/// `display` line for a `nickname_held` event.
 fn nickname_held_display(nickname: &str) -> String {
     format!(
         "`{nickname}` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"
