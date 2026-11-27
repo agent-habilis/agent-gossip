@@ -8,13 +8,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::error::TrySendError;
 
 use super::{
-    CheckinDueFields, OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent,
-    StateChangedParams, TaskGoneReason, TaskId, TaskMessageLeg, TaskOverdueFields,
-    checkin_due_event, emit, emit_json, format_presence_json, peer_return_display,
-    peer_timeout_display, ping_report_display, print_message_json, simple_event,
-    task_overdue_event,
+    CheckinNotice, OutputEvent, OutputMode, OverdueNotice, PingPeer, ReadyParams, ReceiptParams,
+    SimpleEvent, StateChangedParams, TaskGoneReason, TaskId, TaskMessageLeg, checkin_due_event,
+    emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
+    ping_report_display, print_message_json, simple_event, task_overdue_event,
 };
-use crate::a2a::task_record::{CheckinDue, Overdue};
 use crate::a2a::{node, wire};
 
 /// Per-event-loop output destination. Replaces the former
@@ -359,58 +357,26 @@ impl Output {
 
     /// A worker's agent has not checked in for 2·X. JSON mode emits a visible
     /// `task_overdue` event; nothing is canceled.
-    pub(crate) fn task_overdue(&self, notice: &Overdue) {
+    pub(crate) fn task_overdue(&self, notice: &OverdueNotice) {
         self.dispatch(
             || OutputEvent::TaskOverdue {
-                task_id: notice.task_id.clone(),
-                peer: notice.peer.clone(),
-                label: notice.label.clone(),
-                age_secs: notice.age_secs,
-                waiting_user: notice.waiting_user,
-                not_picked_up: notice.not_picked_up,
+                notice: notice.clone(),
             },
             |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &task_overdue_event(&TaskOverdueFields {
-                        task_id: &notice.task_id,
-                        peer: &notice.peer,
-                        label: notice.label.as_deref(),
-                        age_secs: notice.age_secs,
-                        waiting_user: notice.waiting_user,
-                        not_picked_up: notice.not_picked_up,
-                    }),
-                    true,
-                ),
+                OutputMode::Json => emit_json(&task_overdue_event(notice), true),
                 OutputMode::Silent => {}
             },
         );
     }
 
     /// This worker owes a check-in. It rings the bell and is never shown.
-    pub(crate) fn checkin_due(&self, notice: &CheckinDue) {
-        let unanswered = notice.unanswered.as_ref();
-        let text = unanswered.map(|unanswered| unanswered.text.as_str());
-        let truncated = unanswered.is_some_and(|unanswered| unanswered.truncated);
-        let has_file = unanswered.is_some_and(|unanswered| unanswered.has_file);
+    pub(crate) fn checkin_due(&self, notice: &CheckinNotice) {
         self.dispatch(
             || OutputEvent::CheckinDue {
-                task_id: notice.task_id.clone(),
-                peer: notice.peer.clone(),
-                text: text.map(str::to_owned),
-                truncated,
-                has_file,
+                notice: notice.clone(),
             },
             |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &checkin_due_event(&CheckinDueFields {
-                        task_id: &notice.task_id,
-                        peer: &notice.peer,
-                        text,
-                        truncated,
-                        has_file,
-                    }),
-                    false,
-                ),
+                OutputMode::Json => emit_json(&checkin_due_event(notice), false),
                 OutputMode::Silent => {}
             },
         );

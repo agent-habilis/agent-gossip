@@ -12,8 +12,8 @@ use habilis_network::protocol::{
 };
 use serde::Serialize;
 
-use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
-use crate::a2a::{TaskId, status_update_params, wire};
+use super::{CheckinNotice, OutputEvent, OverdueNotice, PingPeer, TaskGoneReason, TaskMessageLeg};
+use crate::a2a::{status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
@@ -63,26 +63,14 @@ pub(super) enum SimpleEvent<'source> {
         reason: TaskGoneReason,
     },
     TaskOverdue {
-        task_id: &'source str,
-        peer: &'source str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        label: Option<&'source str>,
-        age_secs: u64,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        waiting_user: bool,
-        not_picked_up: bool,
+        #[serde(flatten)]
+        notice: &'source OverdueNotice,
         /// Pre-formatted line (see [`task_overdue_event`]).
         display: String,
     },
     CheckinDue {
-        task_id: &'source str,
-        peer: &'source str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        text: Option<&'source str>,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        truncated: bool,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        has_file: bool,
+        #[serde(flatten)]
+        notice: &'source CheckinNotice,
         display: String,
     },
     Receipt {
@@ -347,78 +335,40 @@ pub(super) fn peer_timeout_display(nickname: &str) -> String {
 
 /// The `task_overdue` event. Its `display` states the silence as a fact; each
 /// bracketed part appears only when it is set.
-pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> SimpleEvent<'a> {
-    let TaskOverdueFields {
+pub(super) fn task_overdue_event(notice: &OverdueNotice) -> SimpleEvent<'_> {
+    let OverdueNotice {
         task_id,
         peer,
         label,
         age_secs,
         waiting_user,
         not_picked_up,
-    } = *fields;
+    } = notice;
     let short_id: String = task_id.as_str().chars().take(8).collect();
-    let name = label.map_or(short_id, str::to_owned);
+    let name = label.clone().unwrap_or(short_id);
     let mut parts = vec![format!(
         "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {} min",
         age_secs / 60
     )];
-    if waiting_user {
+    if *waiting_user {
         parts.push(" · waiting on user".to_owned());
     }
-    if not_picked_up {
+    if *not_picked_up {
         parts.push(" · not picked up".to_owned());
     }
-    let display = parts.concat();
     SimpleEvent::TaskOverdue {
-        task_id: task_id.as_str(),
-        peer: peer.as_str(),
-        label,
-        age_secs,
-        waiting_user,
-        not_picked_up,
-        display,
+        notice,
+        display: parts.concat(),
     }
-}
-
-/// The values of a `task_overdue` event, borrowed from its source.
-#[derive(Clone, Copy)]
-pub(super) struct TaskOverdueFields<'source> {
-    pub(super) task_id: &'source TaskId,
-    pub(super) peer: &'source Nickname,
-    pub(super) label: Option<&'source str>,
-    pub(super) age_secs: u64,
-    pub(super) waiting_user: bool,
-    pub(super) not_picked_up: bool,
 }
 
 /// The `checkin_due` event: the worker's reminder. It is never shown, so its
 /// `display` only keeps the line readable in a raw poll.
-pub(super) fn checkin_due_event<'a>(fields: &CheckinDueFields<'a>) -> SimpleEvent<'a> {
-    let CheckinDueFields {
-        task_id,
-        peer,
-        text,
-        truncated,
-        has_file,
-    } = *fields;
+pub(super) fn checkin_due_event(notice: &CheckinNotice) -> SimpleEvent<'_> {
     SimpleEvent::CheckinDue {
-        task_id: task_id.as_str(),
-        peer: peer.as_str(),
-        text,
-        truncated,
-        has_file,
-        display: format!("{DISPLAY_GLYPH} check-in due · `<{peer}>`"),
+        notice,
+        display: format!("{DISPLAY_GLYPH} check-in due · `<{}>`", notice.peer),
     }
-}
-
-/// The values of a `checkin_due` event, borrowed from its source.
-#[derive(Clone, Copy)]
-pub(super) struct CheckinDueFields<'source> {
-    pub(super) task_id: &'source TaskId,
-    pub(super) peer: &'source Nickname,
-    pub(super) text: Option<&'source str>,
-    pub(super) truncated: bool,
-    pub(super) has_file: bool,
 }
 
 /// `display` line for a `peer_return` event.
@@ -1028,36 +978,12 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             })
             .ok()
         }
-        OutputEvent::TaskOverdue {
-            task_id,
-            peer,
-            label,
-            age_secs,
-            waiting_user,
-            not_picked_up,
-        } => serde_json::to_string(&task_overdue_event(&TaskOverdueFields {
-            task_id,
-            peer,
-            label: label.as_deref(),
-            age_secs: *age_secs,
-            waiting_user: *waiting_user,
-            not_picked_up: *not_picked_up,
-        }))
-        .ok(),
-        OutputEvent::CheckinDue {
-            task_id,
-            peer,
-            text,
-            truncated,
-            has_file,
-        } => serde_json::to_string(&checkin_due_event(&CheckinDueFields {
-            task_id,
-            peer,
-            text: text.as_deref(),
-            truncated: *truncated,
-            has_file: *has_file,
-        }))
-        .ok(),
+        OutputEvent::TaskOverdue { notice } => {
+            serde_json::to_string(&task_overdue_event(notice)).ok()
+        }
+        OutputEvent::CheckinDue { notice } => {
+            serde_json::to_string(&checkin_due_event(notice)).ok()
+        }
         OutputEvent::Receipt {
             from,
             ref_id,

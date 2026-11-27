@@ -291,7 +291,7 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
         return false;
     }
     match event {
-        OutputEvent::TaskOverdue { waiting_user, .. } => !waiting_user,
+        OutputEvent::TaskOverdue { notice } => !notice.waiting_user,
         OutputEvent::Task {
             message,
             quarter_moved,
@@ -1521,12 +1521,14 @@ mod classify_tests {
     #[test]
     fn an_overdue_alarm_wakes_unless_the_worker_waits_on_its_user() {
         let overdue = |waiting_user: bool| OutputEvent::TaskOverdue {
-            task_id: crate::a2a::TaskId::random(),
-            peer: Nickname::from("worker"),
-            label: None,
-            age_secs: 600,
-            waiting_user,
-            not_picked_up: false,
+            notice: crate::output_event::OverdueNotice {
+                task_id: crate::a2a::TaskId::random(),
+                peer: Nickname::from("worker"),
+                label: None,
+                age_secs: 600,
+                waiting_user,
+                not_picked_up: false,
+            },
         };
         assert!(wakes(&overdue(false)), "a plain alarm wakes");
         assert!(!wakes(&overdue(true)), "waiting on the user does not wake");

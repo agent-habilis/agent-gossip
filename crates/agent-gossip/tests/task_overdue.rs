@@ -211,9 +211,9 @@ fn the_workers_reminder_repeats_the_brief_until_it_is_answered() {
 
     common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
     let mut after = common::cli_poll(&mesh, &bob.nickname, None);
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let again_deadline = Instant::now() + Duration::from_secs(30);
     let mut reminder = String::new();
-    while Instant::now() < deadline && !after.contains("\"event\":\"checkin_due\"") {
+    while Instant::now() < again_deadline && !after.contains("\"event\":\"checkin_due\"") {
         std::thread::sleep(Duration::from_millis(500));
         after.push_str(&common::cli_poll(&mesh, &bob.nickname, None));
     }

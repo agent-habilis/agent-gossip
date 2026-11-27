@@ -36,6 +36,7 @@ use crate::a2a::tuning::{
 };
 use crate::a2a::{broadcast_params, tuning};
 use crate::emission;
+use crate::output_event::{CheckinNotice, OverdueNotice};
 
 /// My part in a task: did I open it (client side), or receive the offer
 /// (the worker — the task's A2A server)?
@@ -483,17 +484,6 @@ fn checkin_age(rec: &TaskRecord, now: Instant) -> Duration {
     stated.map_or(local, |stated| stated.min(local))
 }
 
-/// A raised alarm: the worker's agent has not checked in for 2·X.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Overdue {
-    pub task_id: TaskId,
-    pub peer: Nickname,
-    pub label: Option<String>,
-    pub age_secs: u64,
-    pub waiting_user: bool,
-    pub not_picked_up: bool,
-}
-
 /// The brief or follow-up that the worker has not answered, as a reminder repeats it.
 ///
 /// The text is peer-controlled and bound for the worker's agent, so it loses its control
@@ -532,14 +522,6 @@ impl Unanswered {
     }
 }
 
-/// A raised reminder: this worker owes a check-in.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct CheckinDue {
-    pub task_id: TaskId,
-    pub peer: Nickname,
-    pub unanswered: Option<Unanswered>,
-}
-
 /// The alarms and reminders that fall due at `now`, each marked so the next
 /// one waits a full interval. The alarm is the sender's, from 2·X after the
 /// last activity; the reminder is the worker's, from X. A worker whose beats
@@ -548,7 +530,7 @@ pub(crate) fn due_checkins(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     interval: Duration,
     now: Instant,
-) -> (Vec<Overdue>, Vec<CheckinDue>) {
+) -> (Vec<OverdueNotice>, Vec<CheckinNotice>) {
     let mut overdue = Vec::new();
     let mut reminders = Vec::new();
     for (task_id, rec) in tasks.iter_mut() {
@@ -567,7 +549,7 @@ pub(crate) fn due_checkins(
                     let not_picked_up = rec.state == TaskState::Submitted;
                     let label = rec.label.clone();
                     let waiting_user = rec.waiting_user;
-                    overdue.push(Overdue {
+                    overdue.push(OverdueNotice {
                         task_id: task_id.clone(),
                         peer: rec.peer.clone(),
                         label,
@@ -580,10 +562,16 @@ pub(crate) fn due_checkins(
             TaskRole::Receiver => {
                 if now.duration_since(rec.last_skill_activity) >= interval {
                     rec.last_notice = Some(now);
-                    reminders.push(CheckinDue {
+                    let unanswered = rec.unanswered.as_ref();
+                    let text = unanswered.map(|unanswered| unanswered.text.clone());
+                    let truncated = unanswered.is_some_and(|unanswered| unanswered.truncated);
+                    let has_file = unanswered.is_some_and(|unanswered| unanswered.has_file);
+                    reminders.push(CheckinNotice {
                         task_id: task_id.clone(),
                         peer: rec.peer.clone(),
-                        unanswered: rec.unanswered.clone(),
+                        text,
+                        truncated,
+                        has_file,
                     });
                 }
             }
@@ -1861,11 +1849,11 @@ mod tests {
         tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier")
-            .unanswered = Some(unanswered.clone());
+            .unanswered = Some(unanswered);
         let reminders = super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN)).1;
         assert_eq!(
-            reminders.first().map(|due| due.unanswered.clone()),
-            Some(Some(unanswered)),
+            reminders.first().and_then(|due| due.text.as_deref()),
+            Some("which port?"),
             "the reminder repeats the follow-up"
         );
         apply(
@@ -1913,8 +1901,10 @@ mod tests {
             "a text of exactly the cap is whole"
         );
 
-        let mut file = crate::a2a::Part::default();
-        file.url = Some("blob:abc".to_owned());
+        let file = crate::a2a::Part {
+            url: Some("blob:abc".to_owned()),
+            ..Default::default()
+        };
         assert!(
             Unanswered::of(&message(vec![file])).has_file,
             "a file part is flagged"

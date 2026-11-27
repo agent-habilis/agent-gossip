@@ -141,31 +141,13 @@ pub enum OutputEvent {
     /// The worker's agent has not checked in for 2·X. States the fact only; the
     /// task is not canceled.
     TaskOverdue {
-        /// The overdue task.
-        task_id: TaskId,
-        /// The worker whose agent has not checked in.
-        peer: Nickname,
-        /// The initiator's name for the task, when the brief carried one.
-        label: Option<String>,
-        /// Whole seconds since the last check-in.
-        age_secs: u64,
-        /// Whether the worker said in its last check-in that it waits on its own user.
-        waiting_user: bool,
-        /// `true` when the worker never accepted the task.
-        not_picked_up: bool,
+        /// What the alarm says.
+        notice: OverdueNotice,
     },
     /// This worker owes a check-in. Rings its bell only; it is never shown.
     CheckinDue {
-        /// The task that waits for a check-in.
-        task_id: TaskId,
-        /// The initiator.
-        peer: Nickname,
-        /// The brief or follow-up the worker has not answered yet.
-        text: Option<String>,
-        /// `true` when the cap cut `text`.
-        truncated: bool,
-        /// `true` when that message carries a file the reminder does not repeat.
-        has_file: bool,
+        /// What the reminder says.
+        notice: CheckinNotice,
     },
     /// A delivery or read receipt for a message the local node sent.
     Receipt {
@@ -214,4 +196,45 @@ pub enum TaskGoneReason {
     Timeout,
     /// The counterparty left the mesh gracefully.
     PeerLeft,
+}
+
+/// The alarm a sender raises when a worker's agent has not checked in for 2·X. The fields are
+/// the keys of the `task_overdue` line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct OverdueNotice {
+    /// The overdue task.
+    pub task_id: TaskId,
+    /// The worker whose agent has not checked in.
+    pub peer: Nickname,
+    /// The initiator's name for the task, when the brief carried one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Whole seconds since the last check-in.
+    pub age_secs: u64,
+    /// Whether the worker said in its last check-in that it waits on its own user.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub waiting_user: bool,
+    /// `true` when the worker never accepted the task.
+    pub not_picked_up: bool,
+}
+
+/// The reminder a worker raises when it owes a check-in. The fields are the keys of the
+/// `checkin_due` line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct CheckinNotice {
+    /// The task that waits for a check-in.
+    pub task_id: TaskId,
+    /// The initiator.
+    pub peer: Nickname,
+    /// The brief or follow-up the worker has not answered yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// `true` when the cap cut `text`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// `true` when that message carries a file the reminder does not repeat.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_file: bool,
 }

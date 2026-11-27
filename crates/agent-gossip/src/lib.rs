@@ -52,7 +52,7 @@ pub use self::emission::{event_json, surfaced_event_json};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting
 // them keeps the roster readable without widening the surface.
-pub use self::output_event::{OutputEvent, PingPeer, TaskGoneReason};
+pub use self::output_event::{CheckinNotice, OutputEvent, OverdueNotice, PingPeer, TaskGoneReason};
 
 // Application-layer modules. The engine modules (protocol, gossip, daemon,
 // …) live in the `habilis-network` crate; this crate re-exports the
