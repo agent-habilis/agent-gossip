@@ -132,9 +132,8 @@ as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
 silently — no todo, no printed line, no badge change, no recovery — and never
 read it as a signal about a task you are tracking. `checkin_due` is never
-stale: for a `task_id` you hold no todo for, read the brief it names (the
-`followup_seq`) with `poll --after <seq-1>` and handle it as a new task brief,
-per the worker flow. A directed `message` on an untracked id
+stale: for a `task_id` you hold no todo for, its `text` is a brief you missed:
+handle it as a new task brief, per the worker flow. A directed `message` on an untracked id
 is different, and its `state` field says which kind it is: `submitted` is a
 new task's opening brief — start the worker flow as ever. Any later state is
 a follow-up on a task you lost track of (the daemon still holds the record
@@ -399,13 +398,13 @@ stays the bare nickname.
 Worker flow:
 
 0. A `checkin_due` event rings your bell, and it applies to a task you hold and
-   to one you do not. It is never stale. Read the follow-up it names, if any,
-   with `agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --after <seq-1>`
-   (`<seq-1>` is `followup_seq` minus one). If the task is one you hold no todo
-   for, that message is its opening brief: handle it as a new task brief, from
-   step 1. If the task is yours, answer with a check-in. If the event aged out
-   of the ring (`followup_aged_out`), send `--state input-required --text
-   "resend your last message"` on the task.
+   to one you do not. It is never stale. Its `text`, when present, is the brief
+   or the follow-up you have not answered. If the task is one you hold no todo
+   for, that text is its opening brief: handle it as a new task brief, from
+   step 1. If the task is yours, it is the answer of the sender: act on it, and
+   answer with a check-in. Only when the event says `truncated` or `has_file`
+   (the text was cut, or a file came with it) do you send `--state
+   input-required --text "resend: your message was cut"` on the task.
 1. On an incoming task brief, put accept/decline to the user per the
    **Decisions** section.
 2. Hold `$TASK_ID` from the incoming task event's `task_id` field, and

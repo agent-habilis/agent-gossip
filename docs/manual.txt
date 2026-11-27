@@ -402,7 +402,9 @@ COMMANDS
                 SendMessage
                     task creation (no --task-id: the peer mints the task id and
                     returns {"task": <Task>}) or a follow-up into a task
-                    (--task-id: an answer / approval / change). --text composes
+                    (--task-id: an answer / approval / change; a follow-up
+                    to a task that is already closed is not surfaced to the
+                    worker). --text composes
                     the A2A Message; --label names the task for both parties
                     (see below). --file attaches a file, on a new task or
                     a follow-up: it travels over the blob channel as a
@@ -1507,18 +1509,21 @@ JSON EVENTS
        checkin_due
               The worker's daemon saw that the task owes a check-in: X after
               the last activity, then every X. It is never shown, and it
-              rings the bell of the worker. followup_seq is the ring seq of
-              the initiator's last follow-up that the worker has not
-              answered: read it again with poll --after <seq-1>. When
-              followup_aged_out is true that follow-up left the ring, and the
-              worker sends --state input-required --text "resend your last
-              message" on the task. followup_seq can also name the opening
-              offer of a task the worker never saw (a missed brief): the
-              worker re-reads it with poll --after <seq-1> and handles it as
-              a new task brief. Answer with a check-in.
+              rings the bell of the worker. It comes on every reminder and
+              carries the message the worker has not answered: text is the
+              text of the unanswered brief or follow-up (absent when there
+              is none), cut at 2000 characters with its newlines kept;
+              truncated is true when it was cut, and has_file is true when
+              the message also carried a file. Both keys are absent
+              otherwise. The worker acts on the text: a missed brief for a
+              task it does not hold is a new task brief, and a missed
+              follow-up is the answer of the sender. Only when truncated or
+              has_file is set does the worker send --state input-required
+              --text "resend: your message was cut" on the task. Answer
+              with a check-in.
 
                  {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
-                  "followup_seq":41,"followup_aged_out":false,
+                  "text":"please also cover the edge case X",
                   "display":"💬️ check-in due · `<word-word>`"}
 
        state  The gossip's shared state changed (see the state command). Carries
