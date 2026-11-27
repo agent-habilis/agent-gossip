@@ -103,10 +103,6 @@ pub(crate) struct TaskRecord {
     /// agents have left the task alone. It times the reminder and the alarm, and a forgotten task
     /// stops being beaten.
     pub last_skill_activity: Instant,
-    /// Whether the counterparty has beaten this task at least once. A 0.8/0.9
-    /// peer beats only while it owes the next move, so until it has, its
-    /// silence cannot be read as death.
-    pub peer_beats: bool,
     /// Ids of the peer's legs already ingested for this task (at most
     /// `TASK_LEGS_SEEN_CAP`, the oldest dropped first). The engine forgets
     /// a frame id after a bounded count, and a relay can then deliver the same
@@ -710,7 +706,6 @@ pub(crate) fn adopt_initiator(
                 last_sent: now,
                 last_peer_activity: now,
                 last_skill_activity: now,
-                peer_beats: false,
                 legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
                 last_progress: None,
                 waiting_on: None,
@@ -839,7 +834,6 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_sent: now,
                 last_peer_activity: now,
                 last_skill_activity: now,
-                peer_beats: false,
                 legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
                 last_progress: None,
                 waiting_on: None,
@@ -880,9 +874,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     } else {
         rec.last_peer_activity = now;
     }
-    if leg.kind == LegKind::Beat {
-        rec.peer_beats |= !leg.mine;
-    } else if leg.first_seen {
+    if leg.kind != LegKind::Beat && leg.first_seen {
         rec.last_skill_activity = now;
         rec.last_notice = None;
         if leg.mine && rec.role == TaskRole::Receiver {
@@ -1107,8 +1099,7 @@ fn sweep_registry(
     let mut expired = Vec::new();
     for (task_id, rec) in tasks.iter_mut() {
         let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
-        let peer_gone = rec.peer_beats || rec.skill_silence_exceeded(now);
-        if !rec.state.is_terminal() && peer_silent && peer_gone {
+        if !rec.state.is_terminal() && peer_silent {
             rec.state = TaskState::Canceled;
             rec.last_activity = now;
             expired.push((task_id.clone(), rec.peer_key));
@@ -1432,32 +1423,9 @@ mod tests {
         );
     }
 
-    /// A 0.8/0.9 peer beats only while it owes the next move, so its silence
-    /// says nothing about whether it lives. Reaping it after one idle timeout
-    /// cancelled a working task 2 min after accept, sooner than before the
-    /// heartbeat.
+    /// The silence cap still ends a task that nobody has touched for a day.
     #[test]
-    fn a_peer_that_never_beat_is_not_reaped_for_silence() {
-        let timeout = Duration::from_mins(2);
-        let now = Instant::now();
-        let accepted = now
-            .checked_sub(timeout * 2)
-            .expect("the test instant is far from the clock origin");
-        let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, false), accepted);
-        apply(
-            &mut tasks,
-            &leg(LegKind::Status(TaskState::Working), true),
-            accepted,
-        );
-
-        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
-        assert!(expired.is_empty(), "an old peer's silence is not death");
-    }
-
-    /// The silence cap still ends a task with a peer that never beat.
-    #[test]
-    fn a_peer_that_never_beat_is_reaped_after_the_silence_cap() {
+    fn a_task_left_alone_past_the_silence_cap_is_reaped() {
         let timeout = Duration::from_mins(2);
         let now = Instant::now();
         let day_ago = now
@@ -3010,11 +2978,10 @@ mod tests {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
-        // A peer that beats, idle well past the debounce.
+        // A peer idle well past the debounce.
         let rec = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
-        rec.peer_beats = true;
         rec.last_peer_activity = now.checked_sub(timeout * 2).expect("test clock");
 
         let (expired, reaped) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
@@ -3059,7 +3026,6 @@ mod tests {
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
         rec.last_activity = now;
-        rec.peer_beats = true;
 
         let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
         assert_eq!(

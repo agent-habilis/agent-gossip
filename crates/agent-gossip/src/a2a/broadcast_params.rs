@@ -1506,13 +1506,6 @@ fn call_blob_group(
     }
 }
 
-/// The blob group a call owns until a task adopts it.
-pub(crate) struct CallBlob {
-    pub(crate) group: ContentId,
-    /// Whether the call creates the task, rather than follows up on one.
-    pub(crate) opens_task: bool,
-}
-
 /// Offload `file` and put its `Part.url` first among the parts of the
 /// `SendMessage` in `params` (`a2a call --file`). An empty text part — the
 /// `--text`-less sugar — is dropped, as `build_offload_parts` drops it.
@@ -1529,14 +1522,13 @@ pub(crate) async fn attach_call_file(
     attachment: CallFile<'_>,
     state: &EventLoopState,
     app: &mut A2aApp,
-) -> anyhow::Result<Option<CallBlob>> {
+) -> anyhow::Result<Option<ContentId>> {
     let CallFile { mesh, author, file } = attachment;
     let slot = params
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
     app.admit_call_blob_group(message.task_id.as_ref())?;
-    let opens_task = message.task_id.is_none();
     let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(
         OffloadTextParams {
@@ -1558,10 +1550,7 @@ pub(crate) async fn attach_call_file(
     );
     message.parts = parts;
     *slot = serde_json::to_value(message)?;
-    Ok(fresh_group.then(|| CallBlob {
-        group: ContentId::new(group_id.as_str()),
-        opens_task,
-    }))
+    Ok(fresh_group.then(|| ContentId::new(group_id.as_str())))
 }
 
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
@@ -1940,8 +1929,10 @@ pub(crate) async fn broadcast_a2a_call(
             }
         }
     };
-    let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
-    let blob_group = blob.map(|blob| blob.group);
+    // The request decides it, not the attachment: a plain brief opens a task as well, and its
+    // late reply must cancel it.
+    let opens_task = is_send_message(method) && params["message"]["taskId"].is_null();
+    let blob_group = blob;
     if let Some(message_id) = params["message"]["messageId"].as_str() {
         app.note_sent_ref(message_id, &peer_key);
     }

@@ -667,6 +667,12 @@ impl A2aApp {
         let Some(late) = orphan.late_reply else {
             return;
         };
+        self.push_late_reply(late, orphan.evict_at);
+    }
+
+    /// Keep a timed-out call awaiting its late reply, past the group that owned it or with none.
+    /// Bounded by `LATE_REPLIES_CAP`: past it the entry due first is forgotten.
+    fn push_late_reply(&mut self, late: LateReply, evict_at: Instant) {
         if self.late_replies.len() >= tuning::LATE_REPLIES_CAP {
             let due = self.late_replies.iter().map(|waiting| waiting.evict_at);
             if let Some(index) = due_first(due) {
@@ -678,10 +684,7 @@ impl A2aApp {
                 );
             }
         }
-        self.late_replies.push(LateOnly {
-            late,
-            evict_at: orphan.evict_at,
-        });
+        self.late_replies.push(LateOnly { late, evict_at });
     }
 
     /// The blob groups the task sweep must evict at `now`: every group of the
@@ -800,16 +803,22 @@ impl A2aApp {
                     // adopts the task.
                     let evict_at = Instant::now()
                         + std::time::Duration::from_secs(tuning::task_timeout_secs());
-                    let late_reply = Some(LateReply {
+                    let late = LateReply {
                         corr: waiter.corr,
                         peer_key: waiter.peer_key,
                         opens_task: waiter.opens_task,
-                    });
-                    self.push_orphan(waiter.blob_group.map(|group| OrphanBlob {
-                        group,
-                        evict_at,
-                        late_reply,
-                    }));
+                    };
+                    match waiter.blob_group {
+                        Some(group) => self.push_orphan(Some(OrphanBlob {
+                            group,
+                            evict_at,
+                            late_reply: Some(late),
+                        })),
+                        // A plain brief timed out too, and the worker may have opened the task:
+                        // its late reply still has to find the call and cancel it.
+                        None if late.opens_task => self.push_late_reply(late, evict_at),
+                        None => {}
+                    }
                     waiter.responder.send_timeout();
                     None
                 } else {
@@ -2023,6 +2032,93 @@ mod tests {
             app.take_late_cancels(),
             vec![(task_id, bob_key(), "call-timed-out")],
             "the cancel reply is ok"
+        );
+    }
+
+    /// A brief with no file, due now.
+    fn plain_brief_due(corr: &str, opens_task: bool) -> super::A2aWaiter {
+        let mut waiter = waiter_with_blob(corr, "unused");
+        waiter.blob_group = None;
+        waiter.opens_task = opens_task;
+        waiter.deadline = tokio::time::Instant::now();
+        waiter
+    }
+
+    /// A plain brief that timed out leaves the same orphan on the worker as a brief with a file,
+    /// so its late reply must cancel the task and tell the worker.
+    #[test]
+    fn a_late_reply_to_a_plain_brief_cancels_the_task_it_opens() {
+        let mut app = super::A2aApp::new();
+        app.a2a_waiters.push(plain_brief_due("corr-plain", true));
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        let task_id = TaskId::random();
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-plain"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created_reply(&task_id),
+        );
+
+        assert_eq!(
+            app.tasks[&task_id].state,
+            TaskState::Canceled,
+            "the caller saw the call fail, so the task it opened must not run unseen"
+        );
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "call-timed-out")],
+            "the worker is told to stop"
+        );
+    }
+
+    /// A refused plain brief is cancelled on the worker too, as one with a file.
+    #[test]
+    fn a_refused_plain_brief_cancels_the_task_on_the_worker() {
+        let mut app = app_with_full_task_registry();
+        let task_id = TaskId::random();
+        let (tx, _rx) = oneshot::channel();
+        let mut waiter = plain_brief_due("corr-full", true);
+        waiter.deadline = tokio::time::Instant::now() + std::time::Duration::from_mins(5);
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-full"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created_reply(&task_id),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the registry refused the task, which the worker still runs"
+        );
+    }
+
+    /// A timed-out follow-up opened nothing, so it keeps no entry; the entries of timed-out
+    /// briefs stay under their cap however many time out.
+    #[test]
+    fn timed_out_plain_calls_keep_a_bounded_number_of_late_replies() {
+        let mut app = super::A2aApp::new();
+        for index in 0..10 {
+            app.a2a_waiters
+                .push(plain_brief_due(&format!("follow-{index}"), false));
+        }
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        assert!(
+            app.late_replies.is_empty(),
+            "a follow-up has no task to cancel"
+        );
+
+        for index in 0..10 * tuning::LATE_REPLIES_CAP {
+            app.a2a_waiters
+                .push(plain_brief_due(&format!("brief-{index}"), true));
+            app.expire_a2a_waiters(tokio::time::Instant::now());
+        }
+        assert_eq!(
+            app.late_replies.len(),
+            tuning::LATE_REPLIES_CAP,
+            "ten times the cap of briefs leaves the cap"
         );
     }
 
