@@ -1,7 +1,6 @@
 use clap::Args;
 use habilis_network::protocol::MeshName;
 
-use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
 use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
@@ -38,7 +37,4 @@ pub(crate) struct ExposeArgs {
     /// Hidden — a testing knob.
     #[arg(long, hide = true, default_value_t = false)]
     pub loopback: bool,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }

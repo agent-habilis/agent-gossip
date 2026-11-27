@@ -242,10 +242,6 @@ pub(crate) fn task_keepalive_secs() -> u64 {
     current().task_keepalive_secs
 }
 
-pub(crate) fn task_skill_silence_max_secs() -> u64 {
-    TASK_SKILL_SILENCE_MAX_SECS
-}
-
 pub(crate) fn task_stall_check_secs() -> u64 {
     current().task_stall_check_secs
 }
@@ -260,14 +256,6 @@ pub(crate) fn own_legs_cap() -> usize {
 
 pub(crate) fn unsent_legs_cap() -> usize {
     current().unsent_legs_cap
-}
-
-pub(crate) fn own_legs_bytes_cap() -> usize {
-    OWN_LEGS_BYTES_CAP
-}
-
-pub(crate) fn unsent_legs_bytes_cap() -> usize {
-    UNSENT_LEGS_BYTES_CAP
 }
 
 pub(crate) fn call_blob_groups_per_task_cap() -> usize {

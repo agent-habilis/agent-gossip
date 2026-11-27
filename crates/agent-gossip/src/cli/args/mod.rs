@@ -44,7 +44,6 @@ mod expose_args;
 mod invite_opts;
 mod join_opts;
 mod leave_opts;
-mod legacy_output;
 pub(crate) mod lookup;
 mod meta_action;
 mod output_format;

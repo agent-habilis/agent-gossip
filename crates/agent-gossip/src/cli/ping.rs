@@ -8,10 +8,7 @@ use crate::a2a::ipc_command::IpcCommand;
 /// acks immediately and emits the `ping_report` on its own
 /// `--output json` stream once the collection window closes.
 pub(super) async fn ping(options: PingOpts) -> Result<()> {
-    let PingOpts {
-        session,
-        legacy_output: _,
-    } = options;
+    let PingOpts { session } = options;
     let command = IpcCommand::Ping {
         mesh: session.gossip,
     };

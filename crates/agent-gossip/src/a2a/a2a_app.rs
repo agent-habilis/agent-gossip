@@ -288,7 +288,7 @@ impl A2aApp {
             self.own_legs.len(),
             tuning::own_legs_cap()
         );
-        self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
+        self.admit_own_bytes_within(bytes, tuning::OWN_LEGS_BYTES_CAP)
     }
 
     /// Say whether a new own content leg of `bytes` may wait for its send. Refuses past
@@ -300,7 +300,7 @@ impl A2aApp {
             self.unsent_legs.len(),
             tuning::unsent_legs_cap()
         );
-        self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
+        self.admit_unsent_bytes_within(bytes, tuning::UNSENT_LEGS_BYTES_CAP)
     }
 
     /// Count `count` cached shard frames that this node re-sent to a requester.

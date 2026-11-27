@@ -82,11 +82,6 @@ pub(crate) struct JoinOpts {
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
-    /// Accepted only to emit a clear error: the gossip name is
-    /// encoded in the gossip id, so `join` has no `--name`.
-    #[arg(long, hide = true)]
-    pub name: Option<String>,
-
     /// Password for a password-protected gossip id — required exactly when
     /// the id carries a password verifier (checked locally before any
     /// network; a wrong password fails immediately). Pass it inline as

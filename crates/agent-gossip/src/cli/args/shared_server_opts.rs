@@ -8,7 +8,6 @@
 use clap::Parser;
 use habilis_network::util::tuning as defaults;
 
-use super::legacy_output::LegacyOutput;
 use super::tuning_opts::TuningOpts;
 
 /// Shared options for the daemon commands.
@@ -56,16 +55,6 @@ pub(crate) struct SharedServerOpts {
     /// `--owner-pid` re-spawned.
     #[arg(long, hide = true, default_value_t = false)]
     pub detached_child: bool,
-
-    /// Deprecated no-op: the daemon is always non-interactive. Accepted (and
-    /// hidden) so a stale installed skill degrades to the drift nag rather than
-    /// a clap error swallowed by its `> /dev/null 2>&1` launch line — see
-    /// `super::legacy`.
-    #[arg(long, hide = true, default_value_t = false)]
-    pub no_interactive: bool,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 
     #[command(flatten)]
     pub tuning: TuningOpts,

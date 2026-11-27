@@ -4,16 +4,12 @@
 
 use clap::Parser;
 
-use super::legacy_output::LegacyOutput;
 use super::session_address::SessionAddress;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
     #[command(flatten)]
     pub session: SessionAddress,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

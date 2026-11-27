@@ -15,7 +15,6 @@ use super::peers::peers;
 use super::ping::ping;
 use super::poll::poll;
 use super::ready_state_file;
-use super::reject_id_encoded_flag::reject_id_encoded_flag;
 use super::state::state;
 use super::topic::topic;
 use super::topology_cmd::topology_cmd;
@@ -52,7 +51,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             Box::pin(create(options)).await
         }
         Commands::Join { options } => {
-            reject_id_encoded_flag("--name", options.name.is_some())?;
             install_tuning(&options.shared.tuning);
             let env_room = std::env::var(args::DEFAULT_ROOM_ENV).ok();
             let target = args::resolve_target(

@@ -38,7 +38,6 @@ mod plug;
 mod poll;
 mod print_ready_identity;
 mod ready_state_file;
-mod reject_id_encoded_flag;
 mod reply;
 mod run_session;
 mod send;

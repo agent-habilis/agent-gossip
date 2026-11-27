@@ -38,7 +38,7 @@ pub(crate) async fn connect(
 ) -> Result<()> {
     let ticket = A2aTicket::decode(ticket)?;
     match (&password, ticket.password) {
-        (None, true) => bail!("this ticket is password-protected — pass --password"),
+        (None, true) => bail!("this ticket is password-protected — pass --password=<pw>"),
         (Some(_), false) => bail!("this ticket has no password — drop --password"),
         _ => {}
     }

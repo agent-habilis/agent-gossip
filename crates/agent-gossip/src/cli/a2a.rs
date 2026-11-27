@@ -22,13 +22,10 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             port,
             password,
             allow_anonymous,
-            legacy_output: _,
         } => connect(&ticket, port, password, allow_anonymous).await,
-        A2aAction::Discover {
-            directory,
-            lookups,
-            legacy_output: _,
-        } => Box::pin(a2a_discover(directory, lookups.to_set()?)).await,
+        A2aAction::Discover { directory, lookups } => {
+            Box::pin(a2a_discover(directory, lookups.to_set()?)).await
+        }
         A2aAction::Broadcast { session, text } => {
             let command = IpcCommand::Broadcast {
                 mesh: session.gossip,
@@ -63,7 +60,6 @@ async fn expose(args: ExposeArgs) -> Result<()> {
         advertise,
         password,
         loopback,
-        legacy_output: _,
     } = args;
     let password = super::password_flag::resolve_password(password)?;
     let advertise = habilis_network::protocol::DirectorySelection::from(advertise);
@@ -83,14 +79,7 @@ async fn connect(
     password: Option<PasswordFlag>,
     allow_anonymous: bool,
 ) -> Result<()> {
-    // Error when the ticket needs a password and none was passed
-    // (mirrors the mesh-join UX); otherwise resolve the given flag.
-    let password = match password {
-        None if crate::tunnel::ticket_requires_password(ticket) => {
-            Some(super::password_flag::require_password("ticket")?)
-        }
-        other => super::password_flag::resolve_password(other)?,
-    };
+    let password = super::password_flag::resolve_password(password)?;
     bridge::connect(ticket, port, password, allow_anonymous).await
 }
 

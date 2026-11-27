@@ -1,8 +1,6 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy_output::LegacyOutput;
-
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
     /// The id of the gossip to leave — the full id or a unique prefix
@@ -20,9 +18,6 @@ pub(crate) struct LeaveOpts {
     /// shell's `$PPID` (the agent process itself).
     #[arg(long)]
     pub session_pid: Option<u32>,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

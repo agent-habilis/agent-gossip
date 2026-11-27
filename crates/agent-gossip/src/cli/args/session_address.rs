@@ -4,7 +4,7 @@ use habilis_network::protocol::{MeshId, Nickname};
 #[derive(Args, Debug)]
 pub(crate) struct SessionAddress {
     /// Gossip identifier
-    #[arg(long, alias = "room")]
+    #[arg(long)]
     pub gossip: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)

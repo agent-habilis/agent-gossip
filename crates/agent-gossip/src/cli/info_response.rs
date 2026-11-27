@@ -2,16 +2,11 @@ use habilis_network::runtime::ipc;
 
 use crate::a2a::ipc_command::IpcCommand;
 
-// The `room`/`participant_count` aliases mirror the state-file read fallback:
-// a daemon from the previous release may still be serving, and doctor must
-// list it rather than silently skip its unparseable info reply.
 #[derive(serde::Deserialize)]
 pub(super) struct InfoResponse {
-    #[serde(alias = "room")]
     pub(super) gossip: String,
     pub(super) name: String,
     pub(super) nickname: String,
-    #[serde(alias = "participant_count")]
     pub(super) peer_count: usize,
     /// `None` from a daemon that predates the field.
     pub(super) pid: Option<u32>,

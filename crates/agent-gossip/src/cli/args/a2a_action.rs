@@ -4,7 +4,6 @@ use habilis_network::protocol::{MeshName, Nickname};
 use super::artifact_args::ArtifactArgs;
 use super::call_args::CallArgs;
 use super::expose_args::ExposeArgs;
-use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
 use super::session_address::SessionAddress;
 use super::status_args::StatusArgs;
@@ -47,9 +46,6 @@ pub(crate) enum A2aAction {
         /// either way.
         #[arg(long)]
         allow_anonymous: bool,
-
-        #[command(flatten)]
-        legacy_output: LegacyOutput,
     },
 
     /// Browse a directory for advertised a2a bridges — the receiver side of
@@ -68,9 +64,6 @@ pub(crate) enum A2aAction {
         /// all-on public preset.
         #[command(flatten)]
         lookups: LookupArgs,
-
-        #[command(flatten)]
-        legacy_output: LegacyOutput,
     },
 
     /// Send a chat message to the whole gossip.
