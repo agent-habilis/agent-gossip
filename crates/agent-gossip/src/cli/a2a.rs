@@ -302,8 +302,9 @@ async fn artifact(args: ArtifactArgs) -> Result<()> {
         file_name,
         file_mime,
     } = args;
-    if text.is_none() && file.is_none() {
-        anyhow::bail!("provide --text and/or --file");
+    let blank_text = text.as_deref().is_none_or(|text| text.trim().is_empty());
+    if blank_text && file.is_none() {
+        anyhow::bail!("an artifact needs a text or a file");
     }
     let file = file.map(std::path::absolute).transpose()?;
     let file_name = advertised_file_name(file.as_deref(), file_name);
