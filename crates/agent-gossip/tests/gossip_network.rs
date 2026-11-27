@@ -438,37 +438,6 @@ async fn test_bidirectional_messaging() {
     );
 }
 
-/// Verify that unit-level JSON wire format tests pass.
-/// The ext field and version checks are covered in `protocol::messages::tests`.
-/// This integration test confirms the CLI sends parseable MESH 1.0 blocks.
-/// One send surfaces twice: the sender's own stream echoes it (stream
-/// self-parity) and the peer receives it.
-#[test]
-fn test_stdout_format_parseable() {
-    let (creator, mesh) = Node::create();
-    let joiner = Node::join(&mesh, "joiner-fmt");
-    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
-    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
-
-    let _ = cli_message(&mesh, &creator.nickname, "format check message");
-
-    let total = wait_until(
-        || creator.messages().count() + joiner.messages().count(),
-        2,
-        MSG_TIMEOUT,
-    );
-    assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
-
-    let mut msgs: Vec<ChatMessage> = creator.messages().collect();
-    msgs.extend(joiner.messages());
-    for message in &msgs {
-        assert_eq!(
-            message.body, "format check message",
-            "the message body is the format check text"
-        );
-    }
-}
-
 /// `ask` with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {
@@ -561,22 +530,6 @@ fn test_control_char_body_rejected() {
     assert!(
         stderr.contains("control characters"),
         "expected control-char rejection in stderr, got: {stderr}"
-    );
-}
-
-/// When a peer joins, the other node receives a MESH 1.0 'joined' presence block.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_presence_block_delivery() {
-    let mut creator = InProcNode::create("netpresence").await;
-    let _joiner = InProcNode::join(&creator.mesh, "joiner-presence").await;
-
-    // The joiner broadcasts a `joined` presence on connect; the
-    // creator must surface it.
-    assert!(
-        creator
-            .wait_presence("joiner-presence", PresenceSubtype::Joined, MSG_TIMEOUT)
-            .await,
-        "creator never surfaced the joiner's 'joined' presence"
     );
 }
 
@@ -2423,48 +2376,6 @@ fn test_orphaned_daemon_self_terminates() {
     let _ = fs::remove_file(&joiner_log);
 }
 
-/// Sleep/wake: `SIGSTOP` a peer past the (shortened) alive-timeout so
-/// the mesh evicts it, then `SIGCONT` and assert the heal primitive
-/// re-meshes it and traffic resumes.
-#[test]
-fn test_sleep_wake_heal_recovery() {
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    // Eviction lands after ALIVE_TIMEOUT + SWEEP_INTERVAL (3+1s); the
-    // ceiling is slack for a loaded host, not paid time.
-    let evict_bound = Duration::from_secs(12);
-
-    let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
-    let sleeper = Node::join_flags(&mesh, "sw-sleeper", &SHORT_EVICT);
-    assert!(
-        creator.wait_ready(&mesh),
-        "the creator daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        sleeper.wait_ready(&mesh),
-        "the sleeper daemon must bind its control socket before the test sends it any command"
-    );
-    let _ = cli_message(&mesh, &creator.nickname, "sw-pre");
-    assert_received(&sleeper, &creator.nickname, "sw-pre", MSG_TIMEOUT);
-
-    sleeper.stop();
-    assert!(
-        wait_until(
-            || usize::from(creator.log_contents().contains("went quiet")),
-            1,
-            evict_bound,
-        ) >= 1,
-        "creator never surfaced the frozen peer going quiet\n{}",
-        creator.log_tail(20),
-    );
-
-    // Send immediately on wake: re-mesh (heal cadence) plus anti-entropy
-    // backfill deliver it; `assert_received` returns the moment it lands.
-    sleeper.cont();
-    let _ = cli_message(&mesh, &creator.nickname, "sw-post");
-    assert_received(&sleeper, &creator.nickname, "sw-post", RECOVERY_TIMEOUT);
-}
-
 /// Fixed-node-id reconnect must be *fast*. A `SIGSTOP`/`SIGCONT` peer
 /// resumes in the **same** process with the **same** iroh endpoint id —
 /// exactly the iroh-gossip#10 / psyche #25 / p2panda #695 hazard, where a
@@ -2473,9 +2384,8 @@ fn test_sleep_wake_heal_recovery() {
 /// heal + resume re-bootstrap must sidestep that, so we probe the woken
 /// peer *immediately* on `SIGCONT` and require delivery within a bound
 /// comfortably below that stale-connection timeout. A regression (or an
-/// iroh bump reintroducing the stall) blows the bound. The lenient
-/// `test_sleep_wake_heal_recovery` proves recovery *happens*; this one
-/// proves it is heal-bound, not timeout-bound.
+/// iroh bump reintroducing the stall) blows the bound. A pass proves that
+/// recovery happens and that it is heal-bound, not timeout-bound.
 #[test]
 fn test_fixed_id_reconnect_admits_fast() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).

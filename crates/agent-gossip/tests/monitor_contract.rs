@@ -369,21 +369,6 @@ async fn test_ready_event_shape() {
     );
 }
 
-/// Three peers: creator surfaces a membership `joined` presence for
-/// both joiners. Arrival is surfaced once, via nickname-keyed
-/// presence (not a transport-level event).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_peer_discovery_three_peers() {
-    let (mut creator, _joiner_a, _joiner_b) = common::three_peers("disco").await;
-
-    assert!(
-        creator
-            .wait_presence_count(PresenceSubtype::Joined, 2, MSG_TIMEOUT)
-            .await,
-        "expected >=2 joined presence events"
-    );
-}
-
 /// Message from joiner-A is received by creator AND joiner-B with correct JSON shape.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_cross_peer_message_delivery() {

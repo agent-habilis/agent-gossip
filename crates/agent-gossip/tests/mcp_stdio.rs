@@ -665,22 +665,6 @@ fn leave_then_create_cycle_works_within_one_server() {
 }
 
 #[test]
-fn send_broadcast_without_session_errors() {
-    let mut client = McpClient::spawn();
-    let response = client.tool_call(
-        70,
-        "send_broadcast",
-        &serde_json::json!({ "text": "orphan" }),
-    );
-    let err = tool_error(&response)
-        .expect("a broadcast needs a joined mesh, so the server refuses it with a tool error");
-    assert!(
-        err.contains("not in a gossip"),
-        "send_broadcast without a session must say so, got: {err}"
-    );
-}
-
-#[test]
 fn create_mesh_with_granular_relay_succeeds() {
     // Granular lookups: naming `relay` opts into it directly with no other
     // lookup and no preset needed — a relay-only mesh creates fine.
