@@ -759,27 +759,13 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// that produce no JSON line in JSON mode.
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
-    match formatted_json(event) {
-        Formatted::Line(line) => Some(line),
-        Formatted::Silent => None,
-        Formatted::Serialized => {
-            serialized_json(event).map(|line| stamp_visibility(line, is_visible(event)))
-        }
-    }
+    formatted_json(event)
+        .or_else(|| serialized_json(event).map(|line| stamp_visibility(line, is_visible(event))))
 }
 
-/// What [`formatted_json`] decides for an event.
-enum Formatted {
-    /// The formatter's line.
-    Line(String),
-    /// A formatter that prints nothing.
-    Silent,
-    /// Not a formatted event: [`serialized_json`] serializes it.
-    Serialized,
-}
-
-/// The events whose line a formatter builds.
-fn formatted_json(event: &OutputEvent) -> Formatted {
+/// The events whose line a formatter builds. `None` for the serialized ones, and for a formatted
+/// event with no line: [`serialized_json`] gives `None` for that one too, so it stays silent.
+fn formatted_json(event: &OutputEvent) -> Option<String> {
     let line = match event {
         OutputEvent::Message {
             message,
@@ -840,7 +826,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         }
         OutputEvent::Presence { message, peer } => {
             let MessageKind::Presence { subtype } = &message.kind else {
-                return Formatted::Silent;
+                return None;
             };
             format_presence_json(message, *subtype, peer)
         }
@@ -860,9 +846,9 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::Error { .. }
         | OutputEvent::NicknameHeld { .. }
         | OutputEvent::EventsLost { .. }
-        | OutputEvent::PingReport { .. } => return Formatted::Serialized,
+        | OutputEvent::PingReport { .. } => return None,
     };
-    Formatted::Line(line)
+    Some(line)
 }
 
 /// The events serialized straight from [`SimpleEvent`]. `None` for the formatted ones.
