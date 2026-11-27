@@ -132,8 +132,8 @@ as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
 silently — no todo, no printed line, no badge change, no recovery — and never
 read it as a signal about a task you are tracking. `checkin_due` is never
-stale: for a `task_id` you hold no todo for, its `text` is a brief you missed:
-handle it as a new task brief, per the worker flow. A directed `message` on an untracked id
+stale: for a `task_id` you hold no todo for, handle it per step 0 of the worker
+flow. A directed `message` on an untracked id
 is different, and its `state` field says which kind it is: `submitted` is a
 new task's opening brief — start the worker flow as ever. Any later state is
 a follow-up on a task you lost track of (the daemon still holds the record
@@ -232,14 +232,14 @@ approval — show it and approve or ask for changes. `status-update` is the work
 follow-up that carries `--task-id` (see the initiator flow below).
 
 `task_progress` is a **liveness** beat. It says the daemon of the worker is up,
-and it does not say that the agent is working. It carries the last progress
-of the worker as `progress` (an integer from 0 to 100), and no status text.
+and it does not say that the agent is working. It carries the progress the
+worker shows as `progress` (an integer from 0 to 100), and no status text.
 
 A **check-in** is a `working` status leg from the worker, with a text (what
 changed) and a progress (0 to 100), and optionally `waiting_user`. The worker
 sends one at least every check-in interval (5 min by default). A check-in
-wakes you only when its progress moves into another quarter (0–24, 25–49,
-50–74, 75–99, 100). The first progress after none and the beats never wake you.
+wakes you only when its progress moves into another quarter of the last
+check-in (0–24, 25–49, 50–74, 75–99, 100). The first progress after none and the beats never wake you.
 Otherwise its badge update, `working`, waits for your next batch. A
 `task_overdue`, a question, an artifact or a terminal state wakes you.
 
@@ -400,11 +400,11 @@ stays the bare nickname.
 Worker flow:
 
 0. A `checkin_due` event rings your bell, and it applies to a task you hold and
-   to one you do not. It is never stale. Its `text`, when present, is the brief
-   or the follow-up you have not answered. If the task is one you hold no todo
-   for, that text is its opening brief: handle it as a new task brief, from
-   step 1. If the task is yours, it is the answer of the sender: act on it, and
-   answer with a check-in. Only when the event says `truncated` or `has_file`
+   to one you do not. It is never stale. Its `text`, when present, is the
+   message you have not answered. With `brief: true` it is the opening brief:
+   handle it as a new task brief, from step 1. Otherwise it is the follow-up of
+   the sender for a task you hold (or lost): answer it per the task flow, then
+   send a check-in. Only when the event says `truncated` or `has_file`
    (the text was cut, or a file came with it) do you send `--state
    input-required --text "resend: your message was cut"` on the task.
 1. On an incoming task brief, put accept/decline to the user per the

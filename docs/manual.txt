@@ -424,9 +424,10 @@ COMMANDS
                     between the peer and someone else answers the same
                     "task not found" as an id that does not exist. The task
                     metadata carries the last check-in as mesh:status_text
-                    (its text), mesh:progress (its progress, an integer
-                    from 0 to 100) and mesh:label (the initiator's name for the
-                    task); a task that waits on its user carries mesh:waiting_user.
+                    (its text), mesh:progress (the progress shown for the
+                    task, an integer from 0 to 100, which the beats of the
+                    worker refresh; the beats of the initiator carry none)
+                    and mesh:label (the initiator's name for the task); a task that waits on its user carries mesh:waiting_user.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
                     whole registry
@@ -1456,8 +1457,10 @@ JSON EVENTS
               "waiting_user": true, a top-level key. Both keys are absent,
               not null, on every other status-update.
               A check-in wakes the bell only when its progress quarter
-              changes (0-24, 25-49, 50-74, 75-99, 100); the first progress
-              after none and the beats never wake it. A question, an
+              changes from that of the last check-in (0-24, 25-49, 50-74,
+              75-99, 100); a beat never moves that quarter, so it cannot
+              eat the wake. The first progress after none and the beats
+              never wake the bell. A question, an
               artifact and a terminal state wake it.
 
               Content legs also land in the poll / fetch_messages buffer (raw
@@ -1468,8 +1471,8 @@ JSON EVENTS
               The worker's liveness + percent beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
               record. It carries progress, a top-level integer from 0 to
-              100 (the progress of the last check-in of the worker), absent
-              before the first one. It carries no status text and no
+              100 (the progress the worker shows: its last check-in,
+              refreshed by its beats), absent before the first one. It carries no status text and no
               check-in age.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
@@ -1516,16 +1519,19 @@ JSON EVENTS
               text of the unanswered brief or follow-up (absent when there
               is none), cut at 2000 characters with its newlines kept;
               truncated is true when it was cut, and has_file is true when
-              the message also carried a file. Both keys are absent
-              otherwise. The worker acts on the text: a missed brief for a
-              task it does not hold is a new task brief, and a missed
-              follow-up is the answer of the sender. Only when truncated or
-              has_file is set does the worker send --state input-required
-              --text "resend: your message was cut" on the task. Answer
-              with a check-in.
+              the message also carried a file; brief is true when the text
+              is the opening brief of the task. These three keys are absent
+              otherwise. A tab in the text becomes a space, and a message
+              that is only a file carries no text key. The worker acts on
+              the text: with brief true it is a new task brief, and
+              otherwise it is the follow-up of the sender for a task the
+              worker holds or lost, answered per the task flow. Only when
+              truncated or has_file is set does the worker send --state
+              input-required --text "resend: your message was cut" on the
+              task. Answer with a check-in.
 
                  {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
-                  "text":"please also cover the edge case X",
+                  "text":"summarize the diff","brief":true,
                   "display":"💬️ check-in due · `<word-word>`"}
 
        state  The gossip's shared state changed (see the state command). Carries
