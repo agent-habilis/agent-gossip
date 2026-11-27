@@ -244,11 +244,17 @@ pub(crate) const SKILL_DRIFT_MSG: &str = "💬️ run `agent-gossip plug` to upd
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
 /// event so a stale skill nags the agent at mesh start; `agent-gossip doctor` is the
 /// on-demand counterpart.
-pub(crate) fn drift_warning(home: &Path) -> Option<String> {
+fn drift_warning(home: &Path) -> Option<String> {
     let any_stale = states(home)
         .into_iter()
         .any(|(_, _, state)| state == AgentState::OutOfDate);
     any_stale.then(|| SKILL_DRIFT_MSG.to_owned())
+}
+
+/// [`drift_warning`] for the home directory of this user. `None` when `$HOME` is not set: with no
+/// home directory, no integration is installed.
+pub(crate) fn home_drift_warning() -> Option<String> {
+    home_dir().ok().and_then(|home| drift_warning(&home))
 }
 
 #[cfg(test)]
