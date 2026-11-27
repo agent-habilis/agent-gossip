@@ -10,7 +10,6 @@ use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, MessageId, Nickname};
 
-use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::ipc_command::MetaView;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
@@ -144,19 +143,7 @@ impl Session {
         &self,
         artifact: TaskArtifactParams,
     ) -> Result<(MessageId, Authored)> {
-        let TaskArtifactParams {
-            task_id,
-            text,
-            file,
-            file_name,
-            file_mime,
-        } = artifact;
-        let file = file.map(|path| FileRef {
-            path,
-            name: file_name,
-            mime: file_mime,
-        });
-        let message = self.inner.task_artifact(task_id, text, file).await?;
+        let message = self.inner.task_artifact(artifact).await?;
         Ok((message.id.clone(), message))
     }
 

@@ -4,13 +4,12 @@ use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, Nickna
 use habilis_network::runtime::{EventLoopConfig, Node, SignalHandling};
 use tokio::sync::{broadcast, oneshot};
 
-use super::a2a_call_params::{A2aCallParams, TaskStatusParams};
+use super::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
 use super::advertiser::Advertiser;
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
-use crate::a2a::TaskId;
 use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::ipc_command::MetaView;
@@ -226,10 +225,20 @@ impl InProcessSession {
     /// Fails if the event loop has stopped or dropped the response.
     pub(crate) async fn task_artifact(
         &self,
-        task_id: TaskId,
-        text: String,
-        file: Option<FileRef>,
+        artifact: TaskArtifactParams,
     ) -> Result<Authored, SessionError> {
+        let TaskArtifactParams {
+            task_id,
+            text,
+            file,
+            file_name,
+            file_mime,
+        } = artifact;
+        let file = file.map(|path| FileRef {
+            path,
+            name: file_name,
+            mime: file_mime,
+        });
         self.call_loop(|response| SessionRequest::TaskArtifact {
             task_id,
             text,
