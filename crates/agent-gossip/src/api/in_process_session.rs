@@ -204,19 +204,10 @@ impl InProcessSession {
         &self,
         status: TaskStatusParams,
     ) -> Result<Authored, SessionError> {
-        let TaskStatusParams {
-            task_id,
-            state,
-            note,
-            progress,
-            waiting_on,
-        } = status;
+        let TaskStatusParams { task_id, leg } = status;
         self.call_loop(|response| SessionRequest::TaskStatus {
             task_id,
-            state,
-            note,
-            progress,
-            waiting_on,
+            leg,
             response,
         })
         .await

@@ -116,11 +116,10 @@ async fn full_lifecycle_worker_completes_after_approval() {
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
 
     // Worker accepts (working) → initiator sees it.
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
     assert!(
@@ -153,8 +152,7 @@ async fn full_lifecycle_worker_completes_after_approval() {
     );
 
     // The worker authors the terminal `completed`.
-    bob.task_status(&task_id, TaskState::Completed, Some("done"), None)
-        .await;
+    bob.task_state(&task_id, TaskState::Completed, "done").await;
     assert!(
         alice.wait_task_state(TaskState::Completed, TASK_WAIT).await,
         "initiator never saw the worker complete the task"
@@ -184,11 +182,10 @@ async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
     let response = alice.create_task("t-left-bob", "doomed work").await;
     let task_id = task_id_of(&response);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
     assert!(
@@ -276,18 +273,16 @@ async fn own_sharded_status_leg_completes_the_workers_own_record() {
 
     // A worker cannot close a task it never accepted, so take the offer first —
     // the sharded leg under test is the `completed` one.
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
 
     // Comfortably past MAX_MESSAGE_SIZE (3840), so the leg must split.
     let note = "x".repeat(8 * 1024);
-    bob.task_status(&task_id, TaskState::Completed, Some(&note), None)
-        .await;
+    bob.task_state(&task_id, TaskState::Completed, &note).await;
 
     assert_eq!(
         served_state(&alice, "t-shard-bob", &task_id).await,
@@ -368,11 +363,10 @@ async fn not_surfaced_to_third_party() {
         .create_task(bob.nickname.as_str(), "private work")
         .await;
     let task_id = task_id_of(&response);
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
     assert!(
@@ -419,11 +413,10 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
         "bob accepted the second key of the name: the gate admits one key for a nickname"
     );
 
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
 
@@ -462,11 +455,10 @@ async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares
     common::warm_up(&alice, &mut [&mut bob]).await;
     let task_id = task_id_of(&alice.create_task("t-fu-bob", "port the parser").await);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
     assert!(

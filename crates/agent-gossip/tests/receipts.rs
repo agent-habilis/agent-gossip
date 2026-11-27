@@ -1,8 +1,8 @@
 //! Integration tests for delivery and read receipts.
 
+use agent_gossip::MAX_MESSAGE_SIZE;
 use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::output_event::OutputEvent;
-use agent_gossip::{MAX_MESSAGE_SIZE, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
 
@@ -106,11 +106,10 @@ async fn status_leg_returns_a_delivered_receipt() {
         .expect("a valid task id");
     assert!(bob.wait_task_message(MSG_TIMEOUT).await, "brief surfaced");
 
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
 

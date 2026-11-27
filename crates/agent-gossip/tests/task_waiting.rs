@@ -40,9 +40,8 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
         "bob saw the brief"
     );
 
-    bob.task_waiting_on(
+    bob.task_waiting_user(
         &task_id,
-        "user",
         "asks its user which branch",
         Progress::try_from(50).expect("50 is a percentage"),
     )
@@ -52,19 +51,18 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
         "initiator never saw the working leg"
     );
     let metadata = served_metadata(&alice, "t-wait-bob", &task_id).await;
-    assert_eq!(metadata["mesh:waiting"], "user", "got: {metadata}");
+    assert_eq!(metadata["mesh:waiting_user"], true, "got: {metadata}");
 
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("back at it"),
-        Progress::try_from(50).ok(),
+        "back at it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
     let cleared = served_metadata(&alice, "t-wait-bob", &task_id).await;
     assert!(
-        cleared.get("mesh:waiting").is_none(),
-        "the next status must clear the reason, got: {cleared}"
+        cleared.get("mesh:waiting_user").is_none(),
+        "the next status must clear the flag, got: {cleared}"
     );
 
     alice.leave().await;

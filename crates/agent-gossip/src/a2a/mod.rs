@@ -35,3 +35,7 @@ pub(crate) mod surfaced_event;
 pub(crate) mod task_record;
 pub(crate) mod tuning;
 pub(crate) mod wire;
+mod worker_leg;
+mod worker_leg_error;
+pub use self::worker_leg::WorkerLeg;
+pub use self::worker_leg_error::WorkerLegError;

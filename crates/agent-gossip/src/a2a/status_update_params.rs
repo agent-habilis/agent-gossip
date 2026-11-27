@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicU64;
 
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
-use super::extensions::{META_CHECKIN_AGE, META_ORDER_MS, META_WAITING};
+use super::extensions::{META_CHECKIN_AGE, META_ORDER_MS, META_WAITING_USER};
 use super::frame_payload_error::FramePayloadError;
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_LABEL, META_PROGRESS, Message, Part, Role,
@@ -444,27 +444,31 @@ pub(crate) fn clean_label(raw: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// The `mesh:waiting` metadata of a `working` status leg, when a reason is
-/// given. The counterpart of [`status_waiting`].
+/// The `mesh:waiting_user` metadata of a `working` status leg that waits on its user, and none
+/// for one that does not. The counterpart of [`status_waiting_user`].
 #[must_use]
-pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
-    reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
+pub fn waiting_metadata(
+    // `true` while the worker waits on its own user.
+    waiting_user: bool,
+) -> Option<serde_json::Value> {
+    waiting_user.then(|| serde_json::json!({ META_WAITING_USER: true }))
 }
 
 /// The metadata of a status leg.
 ///
-/// It holds the order value, the `mesh:waiting` tag when there is one, and the
+/// It holds the order value, `mesh:waiting_user` while the worker waits on its user, and the
 /// progress of a check-in as a percentage. The counterpart of
-/// [`status_order`], [`status_waiting`] and [`leg_progress`].
+/// [`status_order`], [`status_waiting_user`] and [`leg_progress`].
 #[must_use]
 pub fn status_metadata(
-    waiting_on: Option<&str>,
+    // `true` while the worker waits on its own user.
+    waiting_user: bool,
     progress: Option<Progress>,
     order_ms: u64,
 ) -> serde_json::Value {
     let mut meta = serde_json::json!({ META_ORDER_MS: order_ms });
-    if let Some(reason) = waiting_on {
-        meta[META_WAITING] = reason.into();
+    if waiting_user {
+        meta[META_WAITING_USER] = true.into();
     }
     if let Some(progress) = progress {
         meta[META_PROGRESS] = progress.percent().into();
@@ -510,17 +514,14 @@ fn wall_clock_ms() -> u64 {
     u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The reason a worker gives for waiting on its own user (`mesh:waiting`), when the status leg carries one.
-///
-/// Peer-controlled text that `GetTask` echoes, so it
-/// gets the same control-character strip and length cap as [`task_label`].
+/// Whether the status leg says the worker waits on its own user (`mesh:waiting_user`).
 #[must_use]
-pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
-    let waiting: &str = update.metadata.as_ref()?.get(META_WAITING)?.as_str()?;
-    let visible = waiting.chars().filter(|ch| !ch.is_control());
-    let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+pub fn status_waiting_user(update: &TaskStatusUpdate) -> bool {
+    let flag = update
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get(META_WAITING_USER));
+    flag.and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
 /// The note of a status leg, the "what changed" line of a check-in.
@@ -712,7 +713,7 @@ mod tests {
     use super::{
         Frame, Progress, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg,
         display_text, leg_progress, msg_payload, next_order_ms, payload_body, status_metadata,
-        status_order, status_update, status_waiting, waiting_metadata,
+        status_order, status_update, status_waiting_user, waiting_metadata,
     };
     use crate::a2a::{META_PROGRESS, wire};
 
@@ -844,10 +845,10 @@ mod tests {
         );
     }
 
-    /// The producer (`waiting_metadata`, used by `a2a status --waiting-on`) and the
-    /// reader (`status_waiting`) agree, and a leg without a reason carries none.
+    /// The producer (`waiting_metadata`, used by `a2a status --waiting-on-user`) and the
+    /// reader (`status_waiting_user`) agree, and a leg that does not wait carries none.
     #[test]
-    fn waiting_reason_round_trips_through_a_status_update() {
+    fn waiting_flag_round_trips_through_a_status_update() {
         let task_id = crate::a2a::TaskId::random();
         let update = |metadata| {
             status_update(
@@ -860,20 +861,18 @@ mod tests {
                 },
             )
         };
-        assert_eq!(
-            status_waiting(&update(waiting_metadata(Some("asks its user")))).as_deref(),
-            Some("asks its user"),
+        assert!(
+            status_waiting_user(&update(waiting_metadata(true))),
             "the status payload is the one sent"
         );
-        assert_eq!(
-            status_waiting(&update(waiting_metadata(None))),
-            None,
-            "a status without a waiting reason has none"
+        assert!(
+            !status_waiting_user(&update(waiting_metadata(false))),
+            "a status that does not wait carries no flag"
         );
     }
 
-    /// A status leg carries its order value next to the reason, and the reader
-    /// still finds the reason. A leg from a peer without the order value reads
+    /// A status leg carries its order value next to the flag, and the reader
+    /// still finds the flag. A leg from a peer without the order value reads
     /// as none.
     #[test]
     fn a_status_leg_carries_its_order_value_and_its_reason() {
@@ -885,20 +884,19 @@ mod tests {
                     .with_metadata(metadata),
             )
         };
-        let leg = update(status_metadata(Some("asks its user"), None, 7));
+        let leg = update(status_metadata(true, None, 7));
         assert_eq!(
             status_order(&leg),
             Some(7),
             "the status order is the sequence number"
         );
-        assert_eq!(
-            status_waiting(&leg).as_deref(),
-            Some("asks its user"),
-            "the waiting reason is the one given"
+        assert!(
+            status_waiting_user(&leg),
+            "the waiting flag is the one given"
         );
         assert_eq!(
             status_order(&update(
-                waiting_metadata(Some("asks its user")).expect("the test metadata is valid")
+                waiting_metadata(true).expect("the test metadata is valid")
             )),
             None,
             "the status payload carries its fields"
@@ -921,7 +919,7 @@ mod tests {
             );
         }
         assert_eq!(
-            status_metadata(None, Progress::try_from(100).ok(), 1)[META_PROGRESS],
+            status_metadata(false, Progress::try_from(100).ok(), 1)[META_PROGRESS],
             100,
             "a progress goes on the wire as a percentage"
         );

@@ -365,7 +365,7 @@ impl Output {
                 peer: notice.peer.clone(),
                 label: notice.label.clone(),
                 age_secs: notice.age_secs,
-                waiting_on: notice.waiting_on.clone(),
+                waiting_user: notice.waiting_user,
                 not_picked_up: notice.not_picked_up,
             },
             |mode| match mode {
@@ -375,7 +375,7 @@ impl Output {
                         peer: &notice.peer,
                         label: notice.label.as_deref(),
                         age_secs: notice.age_secs,
-                        waiting_on: notice.waiting_on.as_deref(),
+                        waiting_user: notice.waiting_user,
                         not_picked_up: notice.not_picked_up,
                     }),
                     true,

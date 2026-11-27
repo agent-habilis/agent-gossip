@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use agent_gossip::a2a::WorkerLeg;
 use agent_gossip::a2a::status_update_params::{self, Progress};
 use agent_gossip::api::{
     A2aCallParams, CreateConfig, JoinConfig, MeshSession, SessionError, TaskArtifactParams,
@@ -593,81 +594,65 @@ impl InProcNode {
         }
     }
 
-    /// Worker-emit a `TaskStatusUpdate` on a task we're serving. `note` and
-    /// `progress` go on the leg as given: a `working` leg needs both.
+    /// Worker-emit a check-in on a task we're serving: `text` says what changed and
+    /// `progress` how far the work is.
     ///
     /// # Panics
     ///
     /// Panics if the send fails.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
-    )]
-    pub async fn task_status(
-        &self,
-        task_id: &TaskId,
-        state: TaskState,
-        note: Option<&str>,
-        progress: Option<Progress>,
-    ) {
-        self.try_task_status(task_id, state, note, progress)
-            .await
-            .expect("in-process task_status failed");
+    pub async fn task_checkin(&self, task_id: &TaskId, text: &str, progress: Progress) {
+        self.send_leg(
+            task_id,
+            WorkerLeg::parse(
+                TaskState::Working,
+                Some(text.to_owned()),
+                Some(progress),
+                false,
+            )
+            .expect("a check-in with a text and a progress parses"),
+        )
+        .await;
     }
 
-    /// As [`Self::task_status`], returning the refusal instead of panicking, for
-    /// a test of the check-in rule.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the daemon refuses the leg or the event loop has stopped.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
-    )]
-    pub async fn try_task_status(
-        &self,
-        task_id: &TaskId,
-        state: TaskState,
-        note: Option<&str>,
-        progress: Option<Progress>,
-    ) -> Result<(), SessionError> {
-        let mut status = TaskStatusParams::new(task_id.clone(), state);
-        if let Some(text) = note {
-            status = status.with_note(text.to_owned());
-        }
-        if let Some(progress) = progress {
-            status = status.with_progress(progress);
-        }
-        self.session.task_status(status).await.map(|_| ())
-    }
-
-    /// Worker-emit a `working` check-in that says the worker waits on `who` (a
-    /// peer or `user`).
+    /// Worker-emit a check-in that says the worker waits on its own user.
     ///
     /// # Panics
     ///
     /// Panics if the send fails.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
-    )]
-    pub async fn task_waiting_on(
-        &self,
-        task_id: &TaskId,
-        who: &str,
-        note: &str,
-        progress: Progress,
-    ) {
-        let status =
-            TaskStatusParams::new(task_id.clone(), TaskState::Working).with_note(note.to_owned());
-        let status = status
-            .with_progress(progress)
-            .with_waiting_on(who.to_owned());
+    pub async fn task_waiting_user(&self, task_id: &TaskId, text: &str, progress: Progress) {
+        self.send_leg(
+            task_id,
+            WorkerLeg::parse(
+                TaskState::Working,
+                Some(text.to_owned()),
+                Some(progress),
+                true,
+            )
+            .expect("a check-in with a text and a progress parses"),
+        )
+        .await;
+    }
+
+    /// Worker-emit a status other than `working` on a task we're serving, with `text` as
+    /// its message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `state` is `working`, which is a check-in, or if the send fails.
+    pub async fn task_state(&self, task_id: &TaskId, state: TaskState, text: &str) {
+        self.send_leg(
+            task_id,
+            WorkerLeg::parse(state, Some(text.to_owned()), None, false)
+                .expect("a state other than working needs no progress"),
+        )
+        .await;
+    }
+
+    async fn send_leg(&self, task_id: &TaskId, leg: WorkerLeg) {
         self.session
-            .task_status(status)
+            .task_status(TaskStatusParams::new(task_id.clone(), leg))
             .await
-            .expect("in-process task_waiting_on failed");
+            .expect("in-process task status failed");
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.

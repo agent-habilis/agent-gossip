@@ -238,10 +238,10 @@ pub(crate) enum A2aAction {
         /// `--state working`, rejected with any other state.
         #[arg(long)]
         progress: Option<Progress>,
-        /// Who the task waits on, a peer nickname or `user`. Only valid with
+        /// Say that the task waits on your own user. Only valid with
         /// `--state working`; the next check-in clears it.
         #[arg(long)]
-        waiting_on: Option<String>,
+        waiting_on_user: bool,
     },
 
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're

@@ -24,9 +24,8 @@ use crate::a2a::broadcast_params::{
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths, row_endpoint};
 use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
-use crate::a2a::status_update_params::Progress;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
-use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
+use crate::a2a::{TaskId, WorkerLeg, broadcast_params, card, receipt};
 use crate::emission;
 
 /// Command sent from CLI to the running server over IPC. App-side because its
@@ -72,14 +71,8 @@ pub(crate) enum IpcCommand {
     A2aStatus {
         mesh: MeshId,
         task_id: TaskId,
-        #[serde(with = "crate::a2a::friendly_state")]
-        state: TaskState,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        note: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        progress: Option<Progress>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        waiting_on: Option<String>,
+        /// The leg, checked when it is built and again when it is read off the line.
+        leg: WorkerLeg,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
     /// An optional `file` is offloaded over the blob channel and referenced as a
@@ -210,14 +203,6 @@ struct IpcRequest<'caller> {
     context: &'caller HandlerCtx<'caller>,
 }
 
-struct StatusRequest {
-    task_id: TaskId,
-    task_state: TaskState,
-    note: Option<String>,
-    progress: Option<Progress>,
-    waiting_on: Option<String>,
-}
-
 struct A2aCallRequest {
     to: Nickname,
     method: String,
@@ -296,7 +281,7 @@ impl IpcRequest<'_> {
         }
     }
 
-    async fn task_status(self, request: StatusRequest) -> bool {
+    async fn task_status(self, task_id: TaskId, leg: WorkerLeg) -> bool {
         let Self {
             resp_tx,
             mesh,
@@ -307,22 +292,12 @@ impl IpcRequest<'_> {
             app,
             ..
         } = self;
-        let StatusRequest {
-            task_id,
-            task_state,
-            note,
-            progress,
-            waiting_on,
-        } = request;
         match emit_task_status(
             TaskStatusParams {
                 mesh,
                 author,
                 task_id: &task_id,
-                task_state,
-                note: note.as_deref(),
-                progress,
-                waiting_on: waiting_on.as_deref(),
+                leg,
                 app,
             },
             state,
@@ -610,21 +585,10 @@ pub(crate) async fn handle_ipc_command(
         IpcCommand::A2aStatus {
             mesh: _,
             task_id,
-            state: task_state,
-            note,
-            progress,
-            waiting_on,
+            leg,
         } => {
-            tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
-            request
-                .task_status(StatusRequest {
-                    task_id,
-                    task_state,
-                    note,
-                    progress,
-                    waiting_on,
-                })
-                .await
+            tracing::debug!(%task_id, state = ?leg.state(), "IPC a2a status command received");
+            request.task_status(task_id, leg).await
         }
         IpcCommand::A2aArtifact {
             mesh: _,
@@ -906,11 +870,12 @@ fn json_ok_record(id: &MessageId, message: &Authored) -> String {
 mod tests {
     use habilis_network::runtime::ipc::Addressed;
 
+    use crate::a2a::TaskState;
+
     use super::{
-        EndpointCandidate, IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState,
+        EndpointCandidate, IpcCommand, MeshId, MessageBody, Nickname, TaskId, WorkerLeg,
         endpoint_entries,
     };
-    use crate::a2a::status_update_params::Progress;
 
     // ── Topology endpoints ─────────────────────────────────────────
 
@@ -1131,13 +1096,17 @@ mod tests {
 
     #[test]
     fn ipc_command_a2a_status_round_trip() {
+        let leg = WorkerLeg::parse(
+            TaskState::Working,
+            Some("on it".to_string()),
+            Some("40".parse().expect("40 is a valid progress")),
+            true,
+        )
+        .expect("a full check-in parses");
         let command = IpcCommand::A2aStatus {
             mesh: MeshId::from("test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-            state: TaskState::Working,
-            note: Some("on it".to_string()),
-            progress: Some("40".parse().expect("40 is a valid progress")),
-            waiting_on: Some("user".to_string()),
+            leg: leg.clone(),
         };
         let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
@@ -1150,84 +1119,37 @@ mod tests {
         );
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        match parsed {
-            IpcCommand::A2aStatus {
-                state,
-                note,
-                progress,
-                waiting_on,
-                ..
-            } => {
-                assert_eq!(
-                    state,
-                    TaskState::Working,
-                    "the status keeps the working state"
-                );
-                assert_eq!(note.as_deref(), Some("on it"), "the status keeps its note");
-                assert_eq!(
-                    progress.map(Progress::percent),
-                    Some(40),
-                    "the status keeps its progress"
-                );
-                assert_eq!(
-                    waiting_on.as_deref(),
-                    Some("user"),
-                    "the status keeps its waiting tag"
-                );
-            }
-            IpcCommand::Broadcast { .. }
-            | IpcCommand::Msg { .. }
-            | IpcCommand::Poll { .. }
-            | IpcCommand::Ping { .. }
-            | IpcCommand::A2aArtifact { .. }
-            | IpcCommand::Peers { .. }
-            | IpcCommand::StateMerge { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::A2aCall { .. }
-            | IpcCommand::Topology { .. }
-            | IpcCommand::Invite { .. }
-            | IpcCommand::Info => panic!("expected A2aStatus"),
-        }
+        assert!(
+            matches!(parsed, IpcCommand::A2aStatus { leg: ref parsed_leg, .. } if *parsed_leg == leg),
+            "the status keeps its leg"
+        );
     }
 
-    /// A status with no progress and no tag omits both keys; the daemon decides
-    /// whether the state needs them.
+    /// A leg that does not wait leaves the flag and the progress off the line.
     #[test]
-    fn ipc_command_a2a_status_without_progress_or_tag_omits_them() {
+    fn ipc_command_a2a_status_without_progress_or_flag_omits_them() {
         let command = IpcCommand::A2aStatus {
             mesh: MeshId::from("test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-            state: TaskState::Working,
-            note: None,
-            progress: None,
-            waiting_on: None,
+            leg: WorkerLeg::parse(
+                TaskState::InputRequired,
+                Some("which port?".into()),
+                None,
+                false,
+            )
+            .expect("a question parses"),
         };
         let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
-            !json.contains("waiting_on") && !json.contains("progress"),
+            !json.contains("waiting_user") && !json.contains("progress"),
             "the keys must be absent: {json}"
-        );
-        let parsed: IpcCommand =
-            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-        assert!(
-            matches!(
-                parsed,
-                IpcCommand::A2aStatus {
-                    progress: None,
-                    waiting_on: None,
-                    ..
-                }
-            ),
-            "a status with neither matches the status arm"
         );
     }
 
-    /// A progress out of range does not parse, so the daemon never sees one.
+    /// A leg that breaks the rule does not parse, so the daemon never sees one.
     #[test]
     fn ipc_command_a2a_status_refuses_a_progress_above_100() {
-        let json = r#"{"command":"a2a_status","mesh":"test","task_id":"550e8400-e29b-41d4-a716-446655440000","state":"working","progress":101}"#;
+        let json = r#"{"command":"a2a_status","mesh":"test","task_id":"550e8400-e29b-41d4-a716-446655440000","leg":{"state":"working","note":"on it","progress":101}}"#;
         assert!(
             serde_json::from_str::<IpcCommand>(json).is_err(),
             "101 is not a percentage"

@@ -17,8 +17,8 @@ pub(crate) struct TaskStatusArgs {
     /// "working", rejected with any other state.
     #[serde(default)]
     pub(crate) progress: Option<u8>,
-    /// Who the task waits on, a peer nickname or "user". Only valid with
-    /// state "working"; the next check-in clears it.
+    /// Set to true when the task waits on your own user. Only valid with state "working";
+    /// the next check-in clears it.
     #[serde(default)]
-    pub(crate) waiting_on: Option<String>,
+    pub(crate) waiting_on_user: bool,
 }

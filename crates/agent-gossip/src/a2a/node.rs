@@ -291,7 +291,7 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
         return false;
     }
     match event {
-        OutputEvent::TaskOverdue { waiting_on, .. } => !waits_on_user(waiting_on.as_deref()),
+        OutputEvent::TaskOverdue { waiting_user, .. } => !waiting_user,
         OutputEvent::Task {
             message,
             quarter_moved,
@@ -315,10 +315,6 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => emission::simple_event::is_visible(event),
     }
-}
-
-fn waits_on_user(waiting_on: Option<&str>) -> bool {
-    waiting_on.is_some_and(|who| who.trim().eq_ignore_ascii_case("user"))
 }
 
 /// A `working` status that is not a beat: a check-in, or the accept leg.
@@ -1467,7 +1463,7 @@ mod classify_tests {
     fn a_working_leg_without_text_or_progress_is_incomplete() {
         let progress = |percent: &str| {
             status_update_params::status_metadata(
-                None,
+                false,
                 Some(percent.parse().expect("the test passes a percentage")),
                 1,
             )
@@ -1527,23 +1523,16 @@ mod classify_tests {
     // An alarm that says the worker waits on its user is shown, nothing else.
     #[test]
     fn an_overdue_alarm_wakes_unless_the_worker_waits_on_its_user() {
-        let overdue = |waiting_on: Option<&str>| OutputEvent::TaskOverdue {
+        let overdue = |waiting_user: bool| OutputEvent::TaskOverdue {
             task_id: crate::a2a::TaskId::random(),
             peer: Nickname::from("worker"),
             label: None,
             age_secs: 600,
-            waiting_on: waiting_on.map(str::to_owned),
+            waiting_user,
             not_picked_up: false,
         };
-        assert!(wakes(&overdue(None)), "a plain alarm wakes");
-        assert!(
-            wakes(&overdue(Some("rope-crypt"))),
-            "waiting on a peer still wakes"
-        );
-        assert!(
-            !wakes(&overdue(Some("user"))),
-            "waiting on the user does not wake"
-        );
+        assert!(wakes(&overdue(false)), "a plain alarm wakes");
+        assert!(!wakes(&overdue(true)), "waiting on the user does not wake");
     }
 
     /// The RPC path of a follow-up: a relay can replay it, and only the first copy restarts the

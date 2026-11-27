@@ -424,7 +424,7 @@ fn task_self_echo_flag() {
 }
 
 #[test]
-fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
+fn task_event_carries_the_waiting_flag_only_when_the_leg_has_one() {
     use super::OutputEvent;
     let line = |metadata| {
         let message = status_frame(
@@ -446,16 +446,14 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
         .expect("task event produces a JSON line");
         parse(&json)
     };
-    let waiting = line(status_update_params::waiting_metadata(Some(
-        "asks its user",
-    )));
+    let waiting = line(status_update_params::waiting_metadata(true));
     assert_eq!(waiting["event"], "task", "the event field is task");
     assert_eq!(
-        waiting["waiting_on"], "asks its user",
-        "the waiting_on field is asks its user"
+        waiting["waiting_user"], true,
+        "the waiting_user field is true"
     );
     let plain = line(None);
-    assert!(plain.get("waiting_on").is_none(), "got: {plain}");
+    assert!(plain.get("waiting_user").is_none(), "got: {plain}");
     assert!(plain.get("progress").is_none(), "got: {plain}");
 }
 
@@ -471,7 +469,7 @@ fn task_event_carries_the_progress_of_a_check_in() {
             state: crate::a2a::TaskState::Working,
             note: Some("tests pass"),
             metadata: Some(status_update_params::status_metadata(
-                Some("user"),
+                true,
                 Some("60".parse().expect("60 is a valid progress")),
                 7,
             )),
@@ -486,11 +484,11 @@ fn task_event_carries_the_progress_of_a_check_in() {
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(parsed["progress"], 60, "the progress is a percentage");
-    assert_eq!(parsed["waiting_on"], "user", "the tag rides along");
+    assert_eq!(parsed["waiting_user"], true, "the flag rides along");
 }
 
 /// The record keeps the reason from a `working` leg only, so the event key
-/// follows: a peer that sends `input-required` with `mesh:waiting` must not
+/// follows: a peer that sends `input-required` with `mesh:waiting_user` must not
 /// make the initiator badge a task that is not working.
 #[test]
 fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
@@ -503,7 +501,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             state: crate::a2a::TaskState::InputRequired,
             note: None,
             metadata: Some(status_update_params::status_metadata(
-                Some("asks its user"),
+                true,
                 Some("40".parse().expect("40 is a percentage")),
                 status_update_params::leg_order_ms(),
             )),
@@ -521,7 +519,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
         parsed["state"], "input-required",
         "the state field is input-required"
     );
-    assert!(parsed.get("waiting_on").is_none(), "got: {parsed}");
+    assert!(parsed.get("waiting_user").is_none(), "got: {parsed}");
     assert!(parsed.get("progress").is_none(), "got: {parsed}");
 }
 
@@ -617,7 +615,7 @@ fn task_overdue_event_json_shape() {
         peer: habilis_network::protocol::Nickname::from("calm-otter"),
         label: Some("review the diff".to_owned()),
         age_secs: 660,
-        waiting_on: Some("rope-crypt".to_owned()),
+        waiting_user: true,
         not_picked_up: true,
     };
     let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
@@ -631,11 +629,14 @@ fn task_overdue_event_json_shape() {
     assert_eq!(
         parsed["display"],
         "💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min \
-         · waiting on rope-crypt · not picked up",
+         · waiting on user · not picked up",
         "the line carries every part that is set"
     );
     assert!(simple_event::is_visible(&event), "the user must see it");
-    assert!(node::wakes(&event), "it must ring the bell");
+    assert!(
+        !node::wakes(&event),
+        "an alarm about a worker that waits on its user is shown without a ring"
+    );
     assert!(node::is_pollable(&event), "poll must serve it");
 }
 
@@ -649,7 +650,7 @@ fn task_overdue_display_leaves_out_unset_parts() {
         peer: habilis_network::protocol::Nickname::from("calm-otter"),
         label: None,
         age_secs: 600,
-        waiting_on: None,
+        waiting_user: false,
         not_picked_up: false,
     };
     let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
@@ -670,7 +671,7 @@ fn task_overdue_waiting_on_user_does_not_wake() {
         peer: habilis_network::protocol::Nickname::from("calm-otter"),
         label: None,
         age_secs: 600,
-        waiting_on: Some("user".to_owned()),
+        waiting_user: true,
         not_picked_up: false,
     };
     assert!(simple_event::is_visible(&event), "the user must see it");

@@ -101,11 +101,10 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
         bob.wait_task_message(MSG_TIMEOUT).await,
         "the worker never saw the directed task brief"
     );
-    bob.task_status(
+    bob.task_checkin(
         &task_id,
-        TaskState::Working,
-        Some("on it"),
-        Progress::try_from(50).ok(),
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
     )
     .await;
     assert!(
@@ -122,8 +121,7 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
     alice
         .task_message(&bob.nickname, &task_id, "approved")
         .await;
-    bob.task_status(&task_id, TaskState::Completed, Some("done"), None)
-        .await;
+    bob.task_state(&task_id, TaskState::Completed, "done").await;
     assert!(
         alice
             .wait_task_state(TaskState::Completed, MSG_TIMEOUT)

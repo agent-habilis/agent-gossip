@@ -695,11 +695,10 @@ async fn a_bystanders_task_status_is_dropped() {
     );
     let tid: TaskId = task_id.parse().expect("task id parses");
     worker
-        .task_status(
+        .task_checkin(
             &tid,
-            TaskState::Working,
-            Some("on it"),
-            Progress::try_from(50).ok(),
+            "on it",
+            Progress::try_from(50).expect("50 is a percentage"),
         )
         .await;
     assert!(

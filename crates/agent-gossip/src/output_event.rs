@@ -149,8 +149,8 @@ pub enum OutputEvent {
         label: Option<String>,
         /// Whole seconds since the last check-in.
         age_secs: u64,
-        /// Whom the worker said it waits on in its last check-in.
-        waiting_on: Option<String>,
+        /// Whether the worker said in its last check-in that it waits on its own user.
+        waiting_user: bool,
         /// `true` when the worker never accepted the task.
         not_picked_up: bool,
     },

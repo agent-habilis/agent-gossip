@@ -25,11 +25,12 @@ use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
 use crate::a2a::rpc_error::{PeerRef, is_send_message};
 use crate::a2a::session_request::SessionRequest;
-use crate::a2a::status_update_params::Progress;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{ipc_command, receipt, served, status_update_params, task_record, tuning, wire};
+use crate::a2a::{
+    WorkerLeg, ipc_command, receipt, served, status_update_params, task_record, tuning, wire,
+};
 use crate::emission;
 
 /// Write the dev log of a just-built outbound message. The operator echo is
@@ -929,28 +930,20 @@ pub(crate) struct TaskStatusParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
-    pub(crate) task_state: crate::a2a::TaskState,
-    pub(crate) note: Option<&'caller str>,
-    /// How far the work is, 0 to 100; required on `working`, refused elsewhere.
-    pub(crate) progress: Option<Progress>,
-    /// Whom a `working` task waits on (a peer or `user`); rides the leg as
-    /// `mesh:waiting`. Only a tag: it does not move the check-in clock.
-    pub(crate) waiting_on: Option<&'caller str>,
+    pub(crate) leg: WorkerLeg,
     pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the other
 /// party from the task record and push the status to it.
 ///
-/// A `working` leg is a check-in: it must say what changed (`note`) and how far
-/// the work is (`progress`). The rule binds here, in the daemon, so the CLI, the
-/// MCP server and the library behave the same, and the receiving side drops a
-/// `working` leg that breaks it.
+/// A `working` leg is a check-in: it says what changed and how far the work is. The
+/// [`WorkerLeg`] holds that rule, so every caller meets it before the request reaches the
+/// daemon, and the receiving side drops a `working` leg that breaks it.
 ///
 /// # Errors
-/// A `working` leg with no note or no progress; a progress or a waiting tag
-/// with another state; `unknown task` if we hold no record for `task_id`;
-/// otherwise a serialize/broadcast failure.
+/// `unknown task` if we hold no record for `task_id`; otherwise a serialize/broadcast
+/// failure.
 pub(crate) async fn emit_task_status(
     params: TaskStatusParams<'_>,
     state: &mut EventLoopState,
@@ -961,13 +954,9 @@ pub(crate) async fn emit_task_status(
         mesh,
         author,
         task_id,
-        task_state,
-        note,
-        progress,
-        waiting_on,
+        leg,
         app,
     } = params;
-    let leg = WorkerLeg::parse(task_state, note, progress, waiting_on)?;
     let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
@@ -986,79 +975,6 @@ pub(crate) async fn emit_task_status(
     )
     .await
     .map(|(_id, message, pending)| (message, pending))
-}
-
-/// A worker's status leg, parsed once from its state, note, progress and waiting
-/// tag. A `working` leg is a check-in and holds all of them; no other state can
-/// hold a progress or a tag. Only [`WorkerLeg::parse`] builds a `WorkerLeg`, so
-/// the rule has one place.
-#[derive(Clone, Copy)]
-pub(crate) enum WorkerLeg<'source> {
-    Checkin {
-        note: &'source str,
-        progress: Progress,
-        waiting_on: Option<&'source str>,
-    },
-    Other {
-        state: crate::a2a::TaskState,
-        note: Option<&'source str>,
-    },
-}
-
-impl<'a> WorkerLeg<'a> {
-    pub(crate) fn parse(
-        state: crate::a2a::TaskState,
-        note: Option<&'a str>,
-        progress: Option<Progress>,
-        waiting_on: Option<&'a str>,
-    ) -> anyhow::Result<Self> {
-        if state == crate::a2a::TaskState::Working {
-            let note = note.map(str::trim).filter(|note| !note.is_empty());
-            let (Some(note), Some(progress)) = (note, progress) else {
-                anyhow::bail!("working requires a text and a progress");
-            };
-            return Ok(Self::Checkin {
-                note,
-                progress,
-                waiting_on,
-            });
-        }
-        if progress.is_some() {
-            anyhow::bail!("progress requires state working");
-        }
-        if waiting_on.is_some() {
-            anyhow::bail!("waiting-on requires state working");
-        }
-        Ok(Self::Other { state, note })
-    }
-
-    fn state(self) -> crate::a2a::TaskState {
-        match self {
-            Self::Checkin { .. } => crate::a2a::TaskState::Working,
-            Self::Other { state, .. } => state,
-        }
-    }
-
-    fn note(self) -> Option<&'a str> {
-        match self {
-            Self::Checkin { note, .. } => Some(note),
-            Self::Other { note, .. } => note,
-        }
-    }
-
-    fn waiting_on(self) -> Option<&'a str> {
-        match self {
-            Self::Checkin { waiting_on, .. } => waiting_on,
-            Self::Other { .. } => None,
-        }
-    }
-
-    fn progress(self) -> Option<Progress> {
-        match self {
-            Self::Checkin { progress, .. } => Some(progress),
-            Self::Other { .. } => None,
-        }
-    }
 }
 
 /// A worker-emitted artifact leg's identity, task, result text/file, and the
@@ -1148,7 +1064,7 @@ pub(crate) struct BroadcastTaskStatusParams<'caller> {
     pub(crate) author: &'caller Nickname,
     pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
-    pub(crate) leg: WorkerLeg<'caller>,
+    pub(crate) leg: WorkerLeg,
     pub(crate) app: &'caller mut A2aApp,
 }
 
@@ -1157,7 +1073,7 @@ pub(crate) struct BroadcastTaskStatusParams<'caller> {
 fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
     let StatusLegParams { mesh, task_id, leg } = leg;
     let metadata = status_update_params::status_metadata(
-        leg.waiting_on(),
+        leg.waiting_user(),
         leg.progress(),
         status_update_params::leg_order_ms(),
     );
@@ -1176,7 +1092,7 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
 struct StatusLegParams<'caller> {
     mesh: &'caller MeshId,
     task_id: &'caller crate::a2a::TaskId,
-    leg: WorkerLeg<'caller>,
+    leg: &'caller WorkerLeg,
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
@@ -1198,7 +1114,11 @@ pub(crate) async fn broadcast_task_status(
         leg,
         app,
     } = params;
-    let update = worker_status_leg(StatusLegParams { mesh, task_id, leg });
+    let update = worker_status_leg(StatusLegParams {
+        mesh,
+        task_id,
+        leg: &leg,
+    });
     let plain = status_update_params::payload_body(&update)?;
     let to = *peer_key;
     let sealed = seal_directed(state, &to, &plain)?;
@@ -2173,14 +2093,11 @@ async fn session_msg(
 }
 
 /// The fields of a [`SessionRequest::TaskStatus`].
-struct SessionTaskStatus {
-    task_id: crate::a2a::TaskId,
-    task_state: crate::a2a::TaskState,
-    note: Option<String>,
-    progress: Option<Progress>,
-    waiting_on: Option<String>,
-    response: Sender<anyhow::Result<Authored>>,
-}
+struct SessionTaskStatus(
+    crate::a2a::TaskId,
+    WorkerLeg,
+    Sender<anyhow::Result<Authored>>,
+);
 
 async fn session_task_status(
     request: SessionTaskStatus,
@@ -2188,23 +2105,13 @@ async fn session_task_status(
     app: &mut A2aApp,
     state: &mut EventLoopState,
 ) -> bool {
-    let SessionTaskStatus {
-        task_id,
-        task_state,
-        note,
-        progress,
-        waiting_on,
-        response,
-    } = request;
+    let SessionTaskStatus(task_id, leg, response) = request;
     let outcome = emit_task_status(
         TaskStatusParams {
             mesh: scope.mesh,
             author: scope.author,
             task_id: &task_id,
-            task_state,
-            note: note.as_deref(),
-            progress,
-            waiting_on: waiting_on.as_deref(),
+            leg,
             app,
         },
         state,
@@ -2387,20 +2294,10 @@ pub(crate) async fn handle_session_request(
         }
         SessionRequest::TaskStatus {
             task_id,
-            state: task_state,
-            note,
-            progress,
-            waiting_on,
+            leg,
             response,
         } => {
-            let fields = SessionTaskStatus {
-                task_id,
-                task_state,
-                note,
-                progress,
-                waiting_on,
-                response,
-            };
+            let fields = SessionTaskStatus(task_id, leg, response);
             session_task_status(fields, scope, app, state).await
         }
         SessionRequest::TaskArtifact {
@@ -2910,110 +2807,40 @@ mod sharded_leg_tests {
 mod waiting_tests {
     use habilis_network::protocol::MeshId;
 
-    use super::{StatusLegParams, WorkerLeg, worker_status_leg};
-    use crate::a2a::TaskState;
+    use super::{StatusLegParams, worker_status_leg};
     use crate::a2a::status_update_params::{
-        Progress, leg_progress, status_order, status_text, status_waiting,
+        Progress, leg_progress, status_order, status_text, status_waiting_user,
     };
+    use crate::a2a::{TaskState, WorkerLeg};
 
     fn progress(percent: &str) -> Progress {
         percent.parse().expect("the test passes a valid percentage")
     }
 
-    /// The shared sender refuses a tag or a progress on any state but
-    /// `working`, so a library caller cannot leave `mesh:waiting` on an
-    /// `input-required` task.
-    #[test]
-    fn a_tag_and_a_progress_need_the_working_state() {
-        assert!(
-            WorkerLeg::parse(
-                TaskState::Working,
-                Some("built it"),
-                Some(progress("40")),
-                Some("user")
-            )
-            .is_ok(),
-            "a check-in may wait on its user while working"
-        );
-        assert!(
-            WorkerLeg::parse(TaskState::InputRequired, None, None, None).is_ok(),
-            "an input-required leg parses without a tag"
-        );
-        for state in [
-            TaskState::InputRequired,
-            TaskState::Completed,
-            TaskState::Failed,
-            TaskState::Canceled,
-            TaskState::Rejected,
-        ] {
-            let tag = WorkerLeg::parse(state, None, None, Some("user"))
-                .err()
-                .expect("a tag with a non-working state must be refused");
-            assert_eq!(
-                tag.to_string(),
-                "waiting-on requires state working",
-                "a tag needs the working state"
-            );
-            let percent = WorkerLeg::parse(state, None, Some(progress("5")), None)
-                .err()
-                .expect("a progress with a non-working state must be refused");
-            assert_eq!(
-                percent.to_string(),
-                "progress requires state working",
-                "a progress needs the working state"
-            );
-        }
-    }
-
-    /// A bare `working` is refused on emit: a check-in says what changed and how
-    /// far the work is.
-    #[test]
-    fn a_bare_working_leg_is_refused_on_emit() {
-        for (note, percent) in [
-            (None, None),
-            (Some("built it"), None),
-            (None, Some(progress("10"))),
-            (Some("   "), Some(progress("10"))),
-        ] {
-            let error = WorkerLeg::parse(TaskState::Working, note, percent, None)
-                .err()
-                .expect("a working leg without text and progress must be refused");
-            assert_eq!(
-                error.to_string(),
-                "working requires a text and a progress",
-                "the rule names both fields"
-            );
-        }
-    }
-
-    /// The worker's check-in carries the order value, the tag, the note and the
+    /// The worker's check-in carries the order value, the flag, the note and the
     /// progress. Without the order value the initiator cannot tell two legs of
     /// one second apart.
     #[test]
-    fn a_check_in_leg_carries_order_tag_text_and_progress() {
+    fn a_check_in_leg_carries_order_flag_text_and_progress() {
         let mesh = MeshId::from("test");
         let task_id = crate::a2a::TaskId::random();
         let leg = WorkerLeg::parse(
             TaskState::Working,
-            Some("tests pass"),
+            Some("tests pass".to_owned()),
             Some(progress("60")),
-            Some("user"),
+            true,
         )
         .expect("a full check-in parses");
         let update = worker_status_leg(StatusLegParams {
             mesh: &mesh,
             task_id: &task_id,
-            leg,
+            leg: &leg,
         });
         assert!(
             status_order(&update).is_some(),
             "the leg has no mesh:order_ms"
         );
-        assert_eq!(
-            status_waiting(&update).as_deref(),
-            Some("user"),
-            "the waiting tag is kept"
-        );
+        assert!(status_waiting_user(&update), "the waiting flag is kept");
         assert_eq!(
             status_text(&update).as_deref(),
             Some("tests pass"),

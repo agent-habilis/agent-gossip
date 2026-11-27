@@ -22,25 +22,28 @@ fn status(state: &str, extra: &[&str]) -> std::process::Output {
         .expect("the test binary is built before the tests run")
 }
 
-/// `--waiting-on` and `--progress` only mean something while a task runs. On
+/// `--waiting-on-user` and `--progress` only mean something while a task runs. On
 /// any other state the CLI must refuse before any IPC and say why, not just
 /// that the flag is unknown.
 #[test]
-fn waiting_on_and_progress_with_a_state_other_than_working_fail_on_the_cli_side() {
+fn waiting_on_user_and_progress_with_a_state_other_than_working_fail_on_the_cli_side() {
     for state in ["input-required", "completed", "failed", "canceled"] {
-        for (flag, value, reason) in [
-            ("--waiting-on", "user", "waiting-on requires state working"),
-            ("--progress", "50", "progress requires state working"),
+        for (extra, reason) in [
+            (
+                &["--waiting-on-user"][..],
+                "waiting-on-user requires state working",
+            ),
+            (&["--progress", "50"][..], "progress requires state working"),
         ] {
-            let out = status(state, &[flag, value]);
+            let out = status(state, extra);
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert!(
                 !out.status.success(),
-                "{flag} only makes sense while a task still runs, so {state} must be refused"
+                "{extra:?} only makes sense while a task still runs, so {state} must be refused"
             );
             assert!(
                 stderr.contains(reason),
-                "{state}: the error must explain {flag}, got: {stderr}"
+                "{state}: the error must explain {extra:?}, got: {stderr}"
             );
         }
     }
@@ -69,14 +72,7 @@ fn working_needs_a_text_and_a_progress_on_the_cli_side() {
     }
     let out = status(
         "working",
-        &[
-            "--text",
-            "on it",
-            "--progress",
-            "50",
-            "--waiting-on",
-            "user",
-        ],
+        &["--text", "on it", "--progress", "50", "--waiting-on-user"],
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(

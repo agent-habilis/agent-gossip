@@ -11,8 +11,7 @@ use super::args::lookup::LookupArgs;
 use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
 use crate::a2a::ipc_command::IpcCommand;
-use crate::a2a::status_update_params::Progress;
-use crate::a2a::{TaskId, TaskState};
+use crate::a2a::{TaskId, WorkerLeg};
 use crate::tunnel::bridge;
 
 /// Post a message to a mesh via the running server's IPC socket.
@@ -95,18 +94,11 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             state,
             note,
             progress,
-            waiting_on,
+            waiting_on_user,
         } => {
-            status(StatusArgs {
-                mesh: gossip,
-                nickname,
-                task_id,
-                state,
-                note,
-                progress,
-                waiting_on,
-            })
-            .await
+            let leg = WorkerLeg::parse(state, note, progress, waiting_on_user)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            status(gossip, &nickname, task_id, leg).await
         }
         A2aAction::Artifact {
             gossip,
@@ -281,43 +273,9 @@ async fn call(args: CallArgs) -> Result<()> {
     Ok(())
 }
 
-/// The fields of an `a2a status`, grouped so the helper stays within the argument limit.
-struct StatusArgs {
-    mesh: MeshId,
-    nickname: Nickname,
-    task_id: TaskId,
-    state: TaskState,
-    note: Option<String>,
-    progress: Option<Progress>,
-    waiting_on: Option<String>,
-}
-
-async fn status(args: StatusArgs) -> Result<()> {
-    let StatusArgs {
-        mesh,
-        nickname,
-        task_id,
-        state,
-        note,
-        progress,
-        waiting_on,
-    } = args;
-    crate::a2a::broadcast_params::WorkerLeg::parse(
-        state,
-        note.as_deref(),
-        progress,
-        waiting_on.as_deref(),
-    )
-    .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let command = IpcCommand::A2aStatus {
-        mesh,
-        task_id,
-        state,
-        note,
-        progress,
-        waiting_on,
-    };
-    let response = super::send::send(&command, &nickname).await?;
+async fn status(mesh: MeshId, nickname: &Nickname, task_id: TaskId, leg: WorkerLeg) -> Result<()> {
+    let command = IpcCommand::A2aStatus { mesh, task_id, leg };
+    let response = super::send::send(&command, nickname).await?;
     let id = finish_send(&response, "task status")?;
     println!("{id}");
     Ok(())

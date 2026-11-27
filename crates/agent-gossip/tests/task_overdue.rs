@@ -28,14 +28,7 @@ fn a_worker_that_never_checks_in_again_is_reported_overdue() {
     );
 
     let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
-    common::cli_task_status(
-        &mesh,
-        &bob.nickname,
-        &task_id,
-        "working",
-        Some("accepted: build it"),
-        Some("0"),
-    );
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut seen = String::new();
@@ -76,14 +69,7 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
     );
 
     let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
-    common::cli_task_status(
-        &mesh,
-        &bob.nickname,
-        &task_id,
-        "working",
-        Some("accepted: build it"),
-        Some("0"),
-    );
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
     // Everything so far is served, so only a new waking event can ring the bell.
     let mut seen = common::cli_poll(&mesh, &alice.nickname, None);
     let (rang_tx, rang) = mpsc::channel();
@@ -99,13 +85,10 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
     while Instant::now() < deadline {
         // Staying inside the first quarter: only a move to another quarter wakes.
         let percent = step.min(24).to_string();
-        common::cli_task_status(
-            &mesh,
-            &bob.nickname,
+        common::CliWorker::new(&mesh, &bob.nickname).checkin(
             &task_id,
-            "working",
-            Some(&format!("step {step}")),
-            Some(&percent),
+            &format!("step {step}"),
+            &percent,
         );
         step += 1;
         std::thread::sleep(Duration::from_millis(700));
@@ -125,14 +108,7 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
     );
 
     // A check-in that moves the progress into another quarter wakes the sender.
-    common::cli_task_status(
-        &mesh,
-        &bob.nickname,
-        &task_id,
-        "working",
-        Some("half way there"),
-        Some("55"),
-    );
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "half way there", "55");
     let events = rang
         .recv_timeout(Duration::from_secs(15))
         .expect("a quarter move must ring the sender's bell");
@@ -159,21 +135,11 @@ fn a_worker_that_goes_silent_after_an_answer_is_reported_overdue() {
     );
 
     let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
-    common::cli_task_status(
-        &mesh,
-        &bob.nickname,
-        &task_id,
-        "working",
-        Some("accepted: build it"),
-        Some("0"),
-    );
-    common::cli_task_status(
-        &mesh,
-        &bob.nickname,
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
+    common::CliWorker::new(&mesh, &bob.nickname).state(
         &task_id,
         "input-required",
         Some("which port?"),
-        None,
     );
     let question = common::cli_poll(&mesh, &alice.nickname, None);
     assert!(

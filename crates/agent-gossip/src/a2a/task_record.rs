@@ -112,11 +112,11 @@ pub(crate) struct TaskRecord {
     pub legs_seen: BoundedFifoSet<String>,
     /// Last progress reported, replayed on keepalives.
     pub last_progress: Option<Progress>,
-    /// Whom the worker waits on (a peer or `user`), from the `mesh:waiting` key
-    /// of its last status leg. A tag only: it does not move the check-in clock.
-    /// A check-in without it clears it.
-    pub waiting_on: Option<String>,
-    /// The status leg that last set or cleared `waiting_on`. A leg older than this
+    /// Whether the worker waits on its own user, from the `mesh:waiting_user` key of its last
+    /// status leg. A label only: it does not move the check-in clock. A check-in without it
+    /// clears it.
+    pub waiting_user: bool,
+    /// The status leg that last set or cleared `waiting_user`. A leg older than this
     /// is a replay and changes nothing. A worker clock that steps back drops
     /// newer waiting updates until it passes this time again, the same exposure
     /// as `is_stale`, accepted.
@@ -165,7 +165,7 @@ impl TaskRecord {
             last_skill_activity: now,
             legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
             last_progress: None,
-            waiting_on: None,
+            waiting_user: false,
             waiting_mark: None,
             status_text: None,
             label: None,
@@ -299,7 +299,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             } else {
                 if payload.status.state == TaskState::Working {
                     checkin = Some(CheckinFields {
-                        waiting_on: status_update_params::status_waiting(&payload),
+                        waiting_user: status_update_params::status_waiting_user(&payload),
                         text: status_update_params::status_text(&payload),
                         progress: status_update_params::leg_progress(&payload),
                     });
@@ -368,7 +368,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     // `advance` is idempotent. A finished task waits for nothing.
     if matches!(kind, LegKind::Status(_)) {
         if rec.state.is_terminal() {
-            rec.waiting_on = None;
+            rec.waiting_user = false;
         } else if first_seen && is_newer_than_waiting(rec, frame.timestamp, order) {
             record_checkin(rec, checkin);
             rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
@@ -380,19 +380,19 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         && !rec.state.is_terminal()
         && is_newer_than_waiting(rec, frame.timestamp, None)
     {
-        rec.waiting_on = None;
+        rec.waiting_user = false;
         rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, None));
     }
 }
 
-/// Keep what a status leg says about the work. A check-in sets the tag, the
-/// text and the progress it carries; any other status leg clears the tag.
+/// Keep what a status leg says about the work. A check-in sets the flag, the
+/// text and the progress it carries; any other status leg clears the flag.
 fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
     let Some(checkin) = checkin else {
-        rec.waiting_on = None;
+        rec.waiting_user = false;
         return;
     };
-    rec.waiting_on = checkin.waiting_on;
+    rec.waiting_user = checkin.waiting_user;
     if checkin.text.is_some() {
         rec.status_text = checkin.text;
     }
@@ -403,7 +403,7 @@ fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
 
 /// The check-in fields of a `working` status leg.
 struct CheckinFields {
-    waiting_on: Option<String>,
+    waiting_user: bool,
     text: Option<String>,
     progress: Option<Progress>,
 }
@@ -516,7 +516,7 @@ pub(crate) struct Overdue {
     pub peer: Nickname,
     pub label: Option<String>,
     pub age_secs: u64,
-    pub waiting_on: Option<String>,
+    pub waiting_user: bool,
     pub not_picked_up: bool,
 }
 
@@ -554,13 +554,13 @@ pub(crate) fn due_checkins(
                     rec.last_notice = Some(now);
                     let not_picked_up = rec.state == TaskState::Submitted;
                     let label = rec.label.clone();
-                    let waiting_on = rec.waiting_on.clone();
+                    let waiting_user = rec.waiting_user;
                     overdue.push(Overdue {
                         task_id: task_id.clone(),
                         peer: rec.peer.clone(),
                         label,
                         age_secs: age.as_secs(),
-                        waiting_on,
+                        waiting_user,
                         not_picked_up,
                     });
                 }
@@ -1525,7 +1525,7 @@ mod tests {
     const JUST_BEFORE_TWO_X: Duration = Duration::from_secs(599);
 
     /// A check-in leg from the worker: the note, a percentage, and whom it waits on.
-    fn checkin_leg(text: &str, percent: &str, waiting_on: Option<&str>) -> Message {
+    fn checkin_leg(text: &str, percent: &str, waiting_user: bool) -> Message {
         use habilis_network::protocol::{AppFrameParams, MeshId, MessageBody};
 
         let mesh = MeshId::from("test");
@@ -1537,7 +1537,7 @@ mod tests {
                 state: TaskState::Working,
                 note: Some(text),
                 metadata: Some(status_update_params::status_metadata(
-                    waiting_on,
+                    waiting_user,
                     Some(progress),
                     status_update_params::leg_order_ms(),
                 )),
@@ -1734,7 +1734,7 @@ mod tests {
         super::ingest(
             &mut tasks,
             IngestLegParams {
-                frame: &authored_by("calm-otter", &checkin_leg("built it", "50", None)),
+                frame: &authored_by("calm-otter", &checkin_leg("built it", "50", false)),
                 task_id: &tid(),
                 mine: false,
                 now: checked_in,
@@ -1761,7 +1761,7 @@ mod tests {
     fn a_replayed_leg_does_not_move_the_clock_on_the_push_path() {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
-        let frame = checkin_leg("built it", "50", None);
+        let frame = checkin_leg("built it", "50", false);
         let first = later(start, Duration::from_secs(10));
         let replay = later(start, Duration::from_secs(100));
         for now in [first, replay] {
@@ -1875,7 +1875,7 @@ mod tests {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
         let first = UnixSecs::now();
-        let mut waiting = checkin_leg("waits for review", "30", Some("user"));
+        let mut waiting = checkin_leg("waits for review", "30", true);
         waiting.timestamp = first;
         ingest_inbound(&mut tasks, &waiting);
         let rec = &tasks[&tid()];
@@ -1889,21 +1889,16 @@ mod tests {
             Some(progress_of(30)),
             "the progress of the check-in is kept"
         );
-        assert_eq!(
-            rec.waiting_on.as_deref(),
-            Some("user"),
-            "the tag names whom the worker waits on"
-        );
-        let mut plain = checkin_leg("review done", "40", None);
+        assert!(rec.waiting_user, "the tag names whom the worker waits on");
+        let mut plain = checkin_leg("review done", "40", false);
         plain.timestamp = first + Duration::from_secs(5);
         ingest_inbound(&mut tasks, &plain);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "a check-in without the tag clears it"
         );
         let long = "x".repeat(TASK_STATUS_TEXT_MAX_CHARS * 2);
-        let mut capped = checkin_leg(&long, "50", None);
+        let mut capped = checkin_leg(&long, "50", false);
         capped.timestamp = first + Duration::from_secs(10);
         ingest_inbound(&mut tasks, &capped);
         assert_eq!(
@@ -1926,7 +1921,7 @@ mod tests {
                     .last_progress = held.map(progress_of);
                 super::quarter_moved(
                     registry.get(&tid()),
-                    &authored_by("calm-otter", &checkin_leg("step", percent, None)),
+                    &authored_by("calm-otter", &checkin_leg("step", percent, false)),
                 )
             };
         assert!(!moved(&mut tasks, Some(30), "40"), "same quarter");
@@ -1994,16 +1989,11 @@ mod tests {
     fn an_artifact_clears_what_the_worker_waited_on() {
         let first = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        ingest_inbound(&mut tasks, &waiting_leg(Some("user"), first));
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("user"),
-            "the check-in names the user"
-        );
+        ingest_inbound(&mut tasks, &waiting_leg(true, first));
+        assert!(tasks[&tid()].waiting_user, "the check-in names the user");
         ingest_inbound(&mut tasks, &artifact_leg(first + Duration::from_secs(5)));
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the artifact ends the wait on the user"
         );
     }
@@ -2078,7 +2068,7 @@ mod tests {
     fn a_bystander_frame_changes_nothing_in_the_record() {
         let mut tasks = working_task_we_opened(Instant::now());
         let beat = beat_leg(0, UnixSecs::now());
-        let working = checkin_leg("sneaky", "40", Some("user"));
+        let working = checkin_leg("sneaky", "40", true);
         for frame in [&beat, &working] {
             super::ingest(
                 &mut tasks,
@@ -2099,8 +2089,8 @@ mod tests {
             !rec.legs_seen.contains(working.id.as_str()),
             "a stranger's leg id is not remembered"
         );
-        assert_eq!(
-            rec.waiting_on, None,
+        assert!(
+            !rec.waiting_user,
             "a stranger cannot name whom the worker waits on"
         );
     }
@@ -2136,10 +2126,10 @@ mod tests {
         let newer = later(start, Duration::from_secs(1));
         ingest_at(
             &mut tasks,
-            &waiting_leg(None, sent + Duration::from_secs(10)),
+            &waiting_leg(false, sent + Duration::from_secs(10)),
             newer,
         );
-        ingest_at(&mut tasks, &waiting_leg(None, sent), later(start, CHECKIN));
+        ingest_at(&mut tasks, &waiting_leg(false, sent), later(start, CHECKIN));
         assert_eq!(
             tasks[&tid()].last_skill_activity,
             newer,
@@ -2215,10 +2205,10 @@ mod tests {
     }
     /// A working status leg for `tid()` at wire time `at`, with a waiting reason
     /// when one is given.
-    fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> Message {
+    fn waiting_leg(waiting_user: bool, at: UnixSecs) -> Message {
         let mut frame = status_frame(
             TaskState::Working,
-            status_update_params::waiting_metadata(reason),
+            status_update_params::waiting_metadata(waiting_user),
         );
         frame.timestamp = at;
         frame
@@ -2248,43 +2238,38 @@ mod tests {
         let deliver = |registry: &mut HashMap<TaskId, TaskRecord>, frame| {
             ingest_inbound(registry, frame);
         };
-        let waiting = waiting_leg(Some("asks its user"), first);
-        let clear_same_second = waiting_leg(None, first);
-        let clear = waiting_leg(None, first + Duration::from_secs(10));
-        let waiting_again = waiting_leg(Some("asks again"), first + Duration::from_secs(20));
+        let waiting = waiting_leg(true, first);
+        let clear_same_second = waiting_leg(false, first);
+        let clear = waiting_leg(false, first + Duration::from_secs(10));
+        let waiting_again = waiting_leg(true, first + Duration::from_secs(20));
 
         deliver(&mut tasks, &waiting);
         deliver(&mut tasks, &clear_same_second);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "no waiting question before the leg"
         );
         ingest_inbound(&mut tasks, &waiting);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "a replayed --waiting-on leg of the same second must not set the reason again"
         );
 
         deliver(&mut tasks, &clear);
         ingest_inbound(&mut tasks, &waiting);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "a replayed --waiting-on leg must not set the reason again"
         );
 
         deliver(&mut tasks, &waiting_again);
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks again"),
+        assert!(
+            tasks[&tid()].waiting_user,
             "the waiting question is the newest one"
         );
         ingest_inbound(&mut tasks, &clear);
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks again"),
+        assert!(
+            tasks[&tid()].waiting_user,
             "a replayed older plain leg must not clear the reason"
         );
     }
@@ -2295,36 +2280,33 @@ mod tests {
     fn ingest_alone_ignores_a_same_second_waiting_replay() {
         let at = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        let waiting = waiting_leg(Some("asks its user"), at);
-        let clear = waiting_leg(None, at);
+        let waiting = waiting_leg(true, at);
+        let clear = waiting_leg(false, at);
 
         ingest_inbound(&mut tasks, &waiting);
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks its user"),
+        assert!(
+            tasks[&tid()].waiting_user,
             "the waiting question is the one asked"
         );
         ingest_inbound(&mut tasks, &clear);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the clear leg removes the waiting question"
         );
 
         ingest_inbound(&mut tasks, &waiting);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the replayed --waiting-on leg must not set the reason again"
         );
     }
 
     /// A working status leg for `tid()` at wire time `at`, with the worker's
     /// order value and a waiting reason when one is given.
-    fn ordered_leg(reason: Option<&str>, at: UnixSecs, order_ms: u64) -> Message {
+    fn ordered_leg(waiting_user: bool, at: UnixSecs, order_ms: u64) -> Message {
         let mut metadata = serde_json::json!({ "mesh:order_ms": order_ms });
-        if let Some(reason) = reason {
-            metadata["mesh:waiting"] = reason.into();
+        if waiting_user {
+            metadata["mesh:waiting_user"] = true.into();
         }
         let mut frame = status_frame(TaskState::Working, Some(metadata));
         frame.timestamp = at;
@@ -2338,14 +2320,13 @@ mod tests {
     fn a_waiting_leg_sent_before_a_same_second_clear_does_not_restore_it() {
         let at = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        let waiting = ordered_leg(Some("asks its user"), at, 1_000);
-        let clear = ordered_leg(None, at, 2_000);
+        let waiting = ordered_leg(true, at, 1_000);
+        let clear = ordered_leg(false, at, 2_000);
 
         ingest_inbound(&mut tasks, &clear);
         ingest_inbound(&mut tasks, &waiting);
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the older waiting leg must not restore its reason after the clear"
         );
     }
@@ -2356,21 +2337,16 @@ mod tests {
     fn a_leg_without_an_order_value_is_ordered_by_its_second() {
         let at = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        ingest_inbound(&mut tasks, &ordered_leg(None, at, 2_000));
+        ingest_inbound(&mut tasks, &ordered_leg(false, at, 2_000));
 
-        ingest_inbound(
-            &mut tasks,
-            &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
-        );
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks its user"),
+        ingest_inbound(&mut tasks, &waiting_leg(true, at + Duration::from_secs(1)));
+        assert!(
+            tasks[&tid()].waiting_user,
             "the waiting question is the one asked"
         );
-        ingest_inbound(&mut tasks, &waiting_leg(None, at));
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks its user"),
+        ingest_inbound(&mut tasks, &waiting_leg(false, at));
+        assert!(
+            tasks[&tid()].waiting_user,
             "an older second must not clear the reason"
         );
     }
@@ -2383,18 +2359,16 @@ mod tests {
         let mut tasks = working_task_we_opened(Instant::now());
         ingest_inbound(
             &mut tasks,
-            &ordered_leg(Some("asks its user"), at + Duration::from_secs(1), 1_000),
+            &ordered_leg(true, at + Duration::from_secs(1), 1_000),
         );
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks its user"),
+        assert!(
+            tasks[&tid()].waiting_user,
             "the waiting question is kept after an out of order leg"
         );
 
-        ingest_inbound(&mut tasks, &ordered_leg(None, at, 2_000));
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        ingest_inbound(&mut tasks, &ordered_leg(false, at, 2_000));
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the clear with the higher order value must win"
         );
     }
@@ -2405,35 +2379,30 @@ mod tests {
     fn an_ordered_leg_falls_back_to_the_second_after_an_unordered_waiting_leg() {
         let at = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        ingest_inbound(
-            &mut tasks,
-            &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
-        );
+        ingest_inbound(&mut tasks, &waiting_leg(true, at + Duration::from_secs(1)));
 
-        ingest_inbound(&mut tasks, &ordered_leg(None, at, 5_000));
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks its user"),
+        ingest_inbound(&mut tasks, &ordered_leg(false, at, 5_000));
+        assert!(
+            tasks[&tid()].waiting_user,
             "an older second with an order value must not clear a reason set without one"
         );
         ingest_inbound(
             &mut tasks,
-            &ordered_leg(None, at + Duration::from_secs(2), 6_000),
+            &ordered_leg(false, at + Duration::from_secs(2), 6_000),
         );
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the waiting question is cleared"
         );
     }
 
     /// The contract: only a `working` leg carries the reason. A leg for any
-    /// other live state clears it, even when it carries `mesh:waiting`.
+    /// other live state clears it, even when it carries `mesh:waiting_user`.
     #[test]
     fn only_a_working_leg_sets_the_waiting_reason() {
         let first = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        let metadata = || status_update_params::waiting_metadata(Some("asks its user"));
+        let metadata = || status_update_params::waiting_metadata(true);
         let mut leg = status_frame(TaskState::InputRequired, metadata());
         leg.timestamp = first;
         ingest_inbound(&mut tasks, &leg);
@@ -2442,9 +2411,8 @@ mod tests {
             TaskState::InputRequired,
             "the task waits for input"
         );
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "an input-required leg must not set the reason"
         );
     }
@@ -2460,10 +2428,9 @@ mod tests {
             "a leg after the terminal state is ignored"
         );
 
-        ingest_inbound(&mut tasks, &waiting_leg(Some("too late"), UnixSecs::now()));
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        ingest_inbound(&mut tasks, &waiting_leg(true, UnixSecs::now()));
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the waiting question is cleared after completion"
         );
     }
@@ -2491,7 +2458,7 @@ mod tests {
         );
     }
 
-    /// A working leg with `mesh:waiting` records the reason, and the next
+    /// A working leg with `mesh:waiting_user` records the flag, and the next
     /// status leg clears it.
     #[test]
     fn a_status_leg_sets_and_clears_the_waiting_reason() {
@@ -2509,18 +2476,16 @@ mod tests {
             );
         };
 
-        let waiting = serde_json::json!({ extensions::META_WAITING: "asks its user" });
+        let waiting = serde_json::json!({ extensions::META_WAITING_USER: true });
         ingest_leg(&mut tasks, status_frame(TaskState::Working, Some(waiting)));
-        assert_eq!(
-            tasks[&tid()].waiting_on.as_deref(),
-            Some("asks its user"),
+        assert!(
+            tasks[&tid()].waiting_user,
             "the waiting question is the one asked"
         );
 
         ingest_leg(&mut tasks, status_frame(TaskState::Working, None));
-        assert_eq!(
-            tasks[&tid()].waiting_on,
-            None,
+        assert!(
+            !tasks[&tid()].waiting_user,
             "the waiting question is cleared"
         );
     }

@@ -24,9 +24,9 @@ pub const META_REASON: &str = "mesh:reason";
 /// The initiator's one-line name for a task, so both parties label it
 /// identically. Absent on a brief from a peer that does not set it.
 pub const META_LABEL: &str = "mesh:label";
-/// Why a working task waits on its worker's own user. Rides a `working`
-/// status; the next status leg clears it.
-pub(super) const META_WAITING: &str = "mesh:waiting";
+/// Set to `true` on a check-in while the worker waits on its own user. The next status leg
+/// clears it, and a leg that leaves it out says the worker does not wait.
+pub(super) const META_WAITING_USER: &str = "mesh:waiting_user";
 /// When the worker sent a status leg, in milliseconds on its clock. Tells two
 /// legs of one wire second apart. Absent on a leg from a peer that does not
 /// send it, which then orders by the second alone.

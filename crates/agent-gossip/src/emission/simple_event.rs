@@ -68,8 +68,8 @@ pub(super) enum SimpleEvent<'source> {
         #[serde(skip_serializing_if = "Option::is_none")]
         label: Option<&'source str>,
         age_secs: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        waiting_on: Option<&'source str>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        waiting_user: bool,
         not_picked_up: bool,
         /// Pre-formatted line (see [`task_overdue_event`]).
         display: String,
@@ -194,10 +194,10 @@ struct TaskLine<'source> {
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<&'source str>,
-    /// Whom the worker waits on (a peer or `user`), from the leg's `mesh:waiting`.
+    /// `true` while the worker waits on its own user, from the leg's `mesh:waiting_user`.
     /// Absent on every other leg, so the leg that clears it carries no key.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub waiting_on: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub waiting_user: bool,
     /// How far the work is, 0 to 100, from a check-in. Absent on a leg with none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<u8>,
@@ -350,7 +350,7 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         peer,
         label,
         age_secs,
-        waiting_on,
+        waiting_user,
         not_picked_up,
     } = *fields;
     let short_id: String = task_id.as_str().chars().take(8).collect();
@@ -359,8 +359,8 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {} min",
         age_secs / 60
     )];
-    if let Some(waiting_on) = waiting_on {
-        parts.push(format!(" · waiting on {waiting_on}"));
+    if waiting_user {
+        parts.push(" · waiting on user".to_owned());
     }
     if not_picked_up {
         parts.push(" · not picked up".to_owned());
@@ -371,7 +371,7 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         peer: peer.as_str(),
         label,
         age_secs,
-        waiting_on,
+        waiting_user,
         not_picked_up,
         display,
     }
@@ -384,7 +384,7 @@ pub(super) struct TaskOverdueFields<'source> {
     pub(super) peer: &'source Nickname,
     pub(super) label: Option<&'source str>,
     pub(super) age_secs: u64,
-    pub(super) waiting_on: Option<&'source str>,
+    pub(super) waiting_user: bool,
     pub(super) not_picked_up: bool,
 }
 
@@ -648,9 +648,9 @@ pub(super) fn format_task_json(
     let checkin = status_update_params::status_payload(message)
         .ok()
         .filter(|payload| payload.status.state == crate::a2a::TaskState::Working);
-    let waiting_on = checkin
+    let waiting_user = checkin
         .as_ref()
-        .and_then(status_update_params::status_waiting);
+        .is_some_and(status_update_params::status_waiting_user);
     let progress: Option<u8> = checkin
         .as_ref()
         .and_then(status_update_params::leg_progress)
@@ -679,7 +679,7 @@ pub(super) fn format_task_json(
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
-            waiting_on,
+            waiting_user,
             progress,
             display,
             body,
@@ -719,7 +719,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             kind: "message",
             state: leg.state.map(crate::a2a::TaskState::friendly_name),
             label: leg.label,
-            waiting_on: None,
+            waiting_user: false,
             progress: None,
             display: task_display(TaskDisplayParams {
                 author: leg.author,
@@ -1017,14 +1017,14 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             peer,
             label,
             age_secs,
-            waiting_on,
+            waiting_user,
             not_picked_up,
         } => serde_json::to_string(&task_overdue_event(&TaskOverdueFields {
             task_id,
             peer,
             label: label.as_deref(),
             age_secs: *age_secs,
-            waiting_on: waiting_on.as_deref(),
+            waiting_user: *waiting_user,
             not_picked_up: *not_picked_up,
         }))
         .ok(),
