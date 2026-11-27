@@ -2,10 +2,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
-use habilis_network::iroh::Endpoint;
 use habilis_network::ops::{
-    MergeCtx, MeshSender, PendingSend, StateMergeParams, broadcast_state_merge, invite,
-    start_ping_round,
+    MergeCtx, PendingSend, StateMergeParams, broadcast_state_merge, invite, start_ping_round,
 };
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
@@ -30,7 +28,7 @@ use crate::emission;
 
 /// Command sent from CLI to the running server over IPC. App-side because its
 /// arms carry a2a-typed payloads (task id/state, gossip A2A calls); the engine's
-/// `transport::ipc` socket server is generic over this type and names none of it.
+/// `runtime::ipc` socket server is generic over this type and names none of it.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "command")]
 pub(crate) enum IpcCommand {
@@ -179,28 +177,11 @@ impl Addressed for IpcCommand {
     }
 }
 
-/// One IPC command plus the daemon's own identity (mesh/name/author) and app
-/// state it's served against — grouped so `handle_ipc_command` stays within
-/// the argument budget alongside its state/sender/output handles.
-pub(crate) struct IpcDispatchParams<'caller> {
-    pub(crate) command: IpcCommand,
-    pub(crate) resp_tx: oneshot::Sender<String>,
-    pub(crate) mesh: &'caller MeshId,
-    pub(crate) name: &'caller MeshName,
-    pub(crate) author: &'caller Nickname,
-    pub(crate) endpoint: &'caller Endpoint,
-    pub(crate) app: &'caller mut A2aApp,
-}
-
 /// What one IPC command is served against. Built once per command so each
 /// handler takes `self` plus its own payload.
 struct IpcRequest<'caller> {
     resp_tx: oneshot::Sender<String>,
-    mesh: &'caller MeshId,
     name: &'caller MeshName,
-    author: &'caller Nickname,
-    endpoint: &'caller Endpoint,
-    sender: &'caller MeshSender,
     output: &'caller emission::Output,
     state: &'caller mut EventLoopState,
     app: &'caller mut A2aApp,
@@ -226,13 +207,17 @@ impl IpcRequest<'_> {
     async fn broadcast(self, body: MessageBody) -> bool {
         let Self {
             resp_tx,
+            output,
+            state,
+            context,
+            ..
+        } = self;
+        let HandlerCtx {
             mesh,
             author,
             sender,
-            output,
-            state,
             ..
-        } = self;
+        } = *context;
         match send_broadcast(
             BroadcastParams {
                 mesh,
@@ -259,14 +244,18 @@ impl IpcRequest<'_> {
     async fn direct_message(self, to: Nickname, body: MessageBody) -> bool {
         let Self {
             resp_tx,
-            mesh,
-            author,
-            sender,
             output,
             state,
             app,
+            context,
             ..
         } = self;
+        let HandlerCtx {
+            mesh,
+            author,
+            sender,
+            ..
+        } = *context;
         match send_msg(
             MsgParams {
                 mesh,
@@ -295,14 +284,18 @@ impl IpcRequest<'_> {
     async fn task_status(self, request: StatusRequest) -> bool {
         let Self {
             resp_tx,
-            mesh,
-            author,
-            sender,
             output,
             state,
             app,
+            context,
             ..
         } = self;
+        let HandlerCtx {
+            mesh,
+            author,
+            sender,
+            ..
+        } = *context;
         let StatusRequest {
             task_id,
             task_state,
@@ -340,14 +333,18 @@ impl IpcRequest<'_> {
     async fn task_artifact(self, task_id: TaskId, text: String, file: Option<FileRef>) -> bool {
         let Self {
             resp_tx,
-            mesh,
-            author,
-            sender,
             output,
             state,
             app,
+            context,
             ..
         } = self;
+        let HandlerCtx {
+            mesh,
+            author,
+            sender,
+            ..
+        } = *context;
         match emit_task_artifact(
             TaskArtifactEmitParams {
                 mesh,
@@ -423,14 +420,18 @@ impl IpcRequest<'_> {
     async fn peers(self) -> bool {
         let Self {
             resp_tx,
-            mesh,
-            author,
-            endpoint,
-            sender,
             state,
             app,
+            context,
             ..
         } = self;
+        let HandlerCtx {
+            mesh,
+            author,
+            sender,
+            endpoint,
+            ..
+        } = *context;
         let readers = ask_readers(
             ReaderAskParams {
                 mesh,
@@ -448,13 +449,17 @@ impl IpcRequest<'_> {
     async fn a2a_call(self, call: A2aCallRequest) -> bool {
         let Self {
             resp_tx,
+            state,
+            app,
+            context,
+            ..
+        } = self;
+        let HandlerCtx {
             mesh,
             author,
             sender,
-            state,
-            app,
             ..
-        } = self;
+        } = *context;
         let A2aCallRequest {
             to,
             method,
@@ -487,13 +492,17 @@ impl IpcRequest<'_> {
     async fn merge(self, channel: Channel, merge: serde_json::Value) -> bool {
         let Self {
             resp_tx,
+            output,
+            state,
+            context,
+            ..
+        } = self;
+        let HandlerCtx {
             mesh,
             author,
             sender,
-            output,
-            state,
             ..
-        } = self;
+        } = *context;
         let outcome = broadcast_state_merge(
             state,
             StateMergeParams::new(MergeCtx::new(mesh, author, sender, output), channel, merge),
@@ -505,9 +514,7 @@ impl IpcRequest<'_> {
     }
 
     fn state_get(self) -> bool {
-        let _ = self
-            .resp_tx
-            .send(state_get_response(self.state, Channel::State));
+        let _ = self.resp_tx.send(state_get_response(self.state));
         false
     }
 
@@ -522,9 +529,10 @@ impl IpcRequest<'_> {
     }
 
     fn info(self) -> bool {
+        let HandlerCtx { mesh, author, .. } = *self.context;
         let _ = self
             .resp_tx
-            .send(info_response(self.mesh, self.name, self.author, self.state));
+            .send(info_response(mesh, self.name, author, self.state));
         false
     }
 
@@ -546,21 +554,15 @@ fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
 pub(crate) async fn handle_ipc_command(
-    params: IpcDispatchParams<'_>,
+    request: habilis_network::embed::IpcRequest<'_, IpcCommand>,
+    app: &mut A2aApp,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-    output: &emission::Output,
 ) -> bool {
-    let sender = context.sender;
-    let IpcDispatchParams {
-        command,
-        resp_tx,
-        mesh,
-        name,
-        author,
-        endpoint,
-        app,
-    } = params;
+    let command = request.command;
+    let resp_tx = request.response;
+    // A clone, so the render sink does not alias the `&mut app` passed alongside it.
+    let output = &app.output.clone();
     app.drain_delivered_legs();
     broadcast_params::retain_sent_legs(app, state);
     // The per-mesh socket path already routes a command to the right daemon,
@@ -569,18 +571,14 @@ pub(crate) async fn handle_ipc_command(
     // a symlinked runtime dir would otherwise misroute a signed broadcast). The
     // `Info` probe carries no mesh and is addressed purely by socket path.
     if let Some(cmd_mesh) = command.mesh_id()
-        && cmd_mesh != mesh
+        && cmd_mesh != context.mesh
     {
         let _ = resp_tx.send(json_error("command gossip id does not match this daemon"));
         return false;
     }
     let request = IpcRequest {
         resp_tx,
-        mesh,
-        name,
-        author,
-        endpoint,
-        sender,
+        name: request.name,
         output,
         state,
         app,
@@ -805,8 +803,8 @@ fn endpoint_entries(
 }
 
 /// The `agent-gossip state get` response: the derived document.
-fn state_get_response(state: &EventLoopState, channel: Channel) -> String {
-    let document = state.view(channel);
+fn state_get_response(state: &EventLoopState) -> String {
+    let document = state.view(Channel::State);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }

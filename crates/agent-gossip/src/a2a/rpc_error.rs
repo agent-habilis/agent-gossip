@@ -1,4 +1,4 @@
-use habilis_network::embed::{EventLoopState, KeyOfError};
+use habilis_network::embed::{EventLoopState, HandlerCtx, KeyOfError};
 use habilis_network::ops::{MergeCtx, MeshSender, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::{AuthorKey, Channel, MeshId, MessageBody, Nickname};
 use serde_json::Value;
@@ -258,18 +258,6 @@ pub(crate) fn get_task(app: &A2aApp, task_id: &TaskId, mesh: &MeshId) -> Result<
         .ok_or_else(|| RpcError::task_not_found(task_id))
 }
 
-/// One JSON-RPC op's identity (mesh/author/pubkey/local port) plus the app
-/// state it's resolved against — grouped so `handle_op` stays within the
-/// argument budget alongside its state/sender/output handles.
-pub(crate) struct HandleOpParams<'caller> {
-    pub(crate) op: A2aOp,
-    pub(crate) mesh: &'caller MeshId,
-    pub(crate) author: &'caller Nickname,
-    pub(crate) our_pubkey: AuthorKey,
-    pub(crate) a2a_port: u16,
-    pub(crate) app: &'caller mut A2aApp,
-}
-
 /// The error of a card route whose nickname names no one key of the roster: no live key uses it, or
 /// two or more do.
 pub(crate) fn address_error(nickname: &Nickname, error: KeyOfError) -> RpcError {
@@ -283,19 +271,19 @@ pub(crate) fn address_error(nickname: &Nickname, error: KeyOfError) -> RpcError 
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
 pub(crate) async fn handle_op(
-    params: HandleOpParams<'_>,
+    op: A2aOp,
+    app: &mut A2aApp,
     state: &mut EventLoopState,
-    sender: &MeshSender,
-    output: &emission::Output,
+    context: &HandlerCtx<'_>,
 ) -> Result<Value, RpcError> {
-    let HandleOpParams {
-        op,
+    let HandlerCtx {
         mesh,
         author,
-        our_pubkey,
-        a2a_port,
-        app,
-    } = params;
+        sender,
+        ..
+    } = *context;
+    // A clone, so the render sink does not alias the `&mut app` passed alongside it.
+    let output = &app.output.clone();
     match op {
         A2aOp::SendMessage { to, message } => {
             send_message(
@@ -358,16 +346,13 @@ pub(crate) async fn handle_op(
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
-            let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-            let mut card = super::card::full_card(author, our_pubkey, &seal_b58);
-            // Served over the localhost binding, so advertise the JSONRPC
-            // interface alongside the always-present gossip one.
-            card.supported_interfaces.push(super::AgentInterface {
-                url: format!("http://127.0.0.1:{a2a_port}/"),
-                protocol_binding: "JSONRPC".to_string(),
-                tenant: None,
-                protocol_version: super::PROTOCOL_VERSION.to_string(),
-            });
+            // Served over the localhost binding, so the card names the JSONRPC
+            // interface of this daemon alongside the always-present gossip one.
+            // Only the localhost binding parses a card op, so the port never
+            // reaches a gossip caller.
+            let own_url = format!("http://127.0.0.1:{}/", app.a2a_port());
+            let seal = state.identity().seal_public();
+            let card = super::card::peer_card(context.our_pubkey, author, Some(&seal), &own_url);
             serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
@@ -390,7 +375,7 @@ pub(crate) async fn handle_op(
                 });
             };
             // The route names the exact key, because two members can share a nickname.
-            let relay_url = format!("http://127.0.0.1:{a2a_port}/peers/{key}");
+            let relay_url = format!("http://127.0.0.1:{}/peers/{key}", app.a2a_port());
             let card = super::card::peer_card(key, &nickname, state.seal_key_of(&key), &relay_url);
             let card = serde_json::to_value(&card)
                 .map_err(|error| RpcError::internal(&error.to_string()))?;

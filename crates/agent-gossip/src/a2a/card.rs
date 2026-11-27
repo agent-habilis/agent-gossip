@@ -9,58 +9,62 @@ use super::{
     PROTOCOL_VERSION,
 };
 
-/// The bare-`<pubkey>` peer address that carries a member's Ed25519 identity in
-/// its `AgentInterface`. A2A v1.0 requires every card to declare ≥1 reachable
-/// interface with a `url`; a mesh peer has no HTTP endpoint, so its gossip
-/// interface is addressed by public key alone.
-#[must_use]
-pub(crate) fn peer_url(author_key: AuthorKey) -> String {
-    author_key.to_string()
-}
-
-/// The card of another member, built from what this node knows of it: its nickname and its author
-/// key. Nothing comes from the peer, so the skills, the description and the version are the ones of
-/// this daemon. `relay_url` is the address at the local binding that relays JSON-RPC to the member
-/// over gossip. `seal` is the key that the engine seals a directed body to; with no key the card
-/// leaves the `mesh-seal` extension out, so it never names a key that is not known.
-#[must_use]
-pub(crate) fn peer_card(
-    asked: AuthorKey,
-    nickname: &Nickname,
-    seal: Option<&PublicKey>,
-    relay_url: &str,
-) -> AgentCard {
-    let seal_b58 = seal.map(|key| bs58::encode(key.as_bytes()).into_string());
-    let mut card = full_card(nickname, asked, seal_b58.as_deref().unwrap_or_default());
-    if seal_b58.is_none() {
-        card.capabilities
-            .extensions
-            .retain(|extension| extension.uri != EXT_MESH_SEAL);
-    }
-    // The member has no HTTP endpoint of its own: this daemon relays JSON-RPC to it, so that a
-    // `SendMessage` at the relay address creates a task on the member.
-    card.supported_interfaces.push(AgentInterface {
-        url: relay_url.to_owned(),
-        protocol_binding: "JSONRPC".to_owned(),
-        tenant: None,
-        protocol_version: PROTOCOL_VERSION.to_owned(),
-    });
-    card
-}
-
-/// The card with every optional protocol field filled in.
-#[must_use]
-pub(crate) fn full_card(
-    nickname: &Nickname,
-    author_key: AuthorKey,
-    seal_pubkey_b58: &str,
-) -> AgentCard {
+/// The extensions every card declares, plus `mesh-seal` when the seal key is known: a card never
+/// names a key that is not known.
+fn extensions(seal: Option<&PublicKey>) -> Vec<AgentExtension> {
     let extension = |uri: &str, description: &str| AgentExtension {
         uri: uri.to_string(),
         description: Some(description.to_string()),
         required: None,
         params: None,
     };
+    let mut extensions = vec![
+        extension(
+            EXT_MESH_BROADCAST,
+            "gossip-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
+        ),
+        extension(
+            EXT_MESH_STATE,
+            "a shared RFC 7386 JSON document per gossip (state/meta channels)",
+        ),
+        extension(
+            EXT_MESH_A2A_RPC,
+            "serves A2A over gossip (request/response and request/stream): reads, task cancel, task creation, and streaming subscriptions directed at this member",
+        ),
+        extension(
+            EXT_MESH_BLOB,
+            "large files on a Part travel as a url reference (a ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
+        ),
+    ];
+    if let Some(key) = seal {
+        let seal_b58 = bs58::encode(key.as_bytes()).into_string();
+        extensions.push(AgentExtension {
+            uri: EXT_MESH_SEAL.to_string(),
+            description: Some(
+                "directed frames (those addressed with a `to`) are sealed to this X25519 key; relays forward + verify the signature but cannot read the body. Broadcast stays public.".to_string(),
+            ),
+            required: None,
+            params: Some(serde_json::json!({ "x25519": seal_b58 })),
+        });
+    }
+    extensions
+}
+
+/// The card of a member, this node or a peer, with every optional protocol field filled in.
+///
+/// It is built from what this node knows of the member: its nickname and its author key. Nothing
+/// comes from a peer, so the skills, the description and the version are the ones of this daemon.
+/// `seal` is the key that the engine seals a directed body to. `jsonrpc_url` is the address at the
+/// local binding that serves JSON-RPC for the member: a peer has no HTTP endpoint of its own, so
+/// this daemon relays to it over gossip, and a `SendMessage` at that address creates a task on the
+/// member.
+#[must_use]
+pub(crate) fn peer_card(
+    asked: AuthorKey,
+    nickname: &Nickname,
+    seal: Option<&PublicKey>,
+    jsonrpc_url: &str,
+) -> AgentCard {
     let modes: Vec<String> = ["text/plain", "application/json", "application/octet-stream"]
         .into_iter()
         .map(String::from)
@@ -71,44 +75,30 @@ pub(crate) fn full_card(
             "agent-gossip peer `{nickname}` — an AI agent reachable over the \
              mesh's A2A gossip binding"
         ),
-        supported_interfaces: vec![AgentInterface {
-            url: peer_url(author_key),
-            protocol_binding: GOSSIP_BINDING.to_string(),
-            tenant: None,
-            protocol_version: PROTOCOL_VERSION.to_string(),
-        }],
+        supported_interfaces: vec![
+            // A2A v1.0 requires every card to declare ≥1 reachable interface with a `url`. A
+            // mesh peer has no HTTP endpoint, so the bare public key is the address of its
+            // gossip interface, and carries its Ed25519 identity.
+            AgentInterface {
+                url: asked.to_string(),
+                protocol_binding: GOSSIP_BINDING.to_string(),
+                tenant: None,
+                protocol_version: PROTOCOL_VERSION.to_string(),
+            },
+            AgentInterface {
+                url: jsonrpc_url.to_owned(),
+                protocol_binding: "JSONRPC".to_owned(),
+                tenant: None,
+                protocol_version: PROTOCOL_VERSION.to_owned(),
+            },
+        ],
         version: crate::version().to_string(),
         documentation_url: None,
         capabilities: AgentCapabilities {
             streaming: Some(true),
             push_notifications: Some(false),
             extended_agent_card: Some(true),
-            extensions: vec![
-                extension(
-                    EXT_MESH_BROADCAST,
-                    "gossip-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
-                ),
-                extension(
-                    EXT_MESH_STATE,
-                    "a shared RFC 7386 JSON document per gossip (state/meta channels)",
-                ),
-                extension(
-                    EXT_MESH_A2A_RPC,
-                    "serves A2A over gossip (request/response and request/stream): reads, task cancel, task creation, and streaming subscriptions directed at this member",
-                ),
-                extension(
-                    EXT_MESH_BLOB,
-                    "large files on a Part travel as a url reference (a ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
-                ),
-                AgentExtension {
-                    uri: EXT_MESH_SEAL.to_string(),
-                    description: Some(
-                        "directed frames (those addressed with a `to`) are sealed to this X25519 key; relays forward + verify the signature but cannot read the body. Broadcast stays public.".to_string(),
-                    ),
-                    required: None,
-                    params: Some(serde_json::json!({ "x25519": seal_pubkey_b58 })),
-                },
-            ],
+            extensions: extensions(seal),
         },
         default_input_modes: modes.clone(),
         default_output_modes: modes,
