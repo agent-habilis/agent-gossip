@@ -82,13 +82,8 @@ impl InProcessSession {
         resp_rx.await.map_err(|_| SessionError::DroppedResponse)
     }
 
-    /// Create a new mesh as a poll-only, silent core (the MCP server).
-    ///
-    /// # Errors
-    /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
-    pub(crate) async fn create_poll(config: CreateConfig) -> Result<Self, CreateError> {
-        let (elc, io, advertiser) = create_setup(config, Output::silent()).await?;
-        Ok(Self::spawn(
+    fn spawn_poll(elc: EventLoopConfig, io: SurfacedIo, advertiser: Option<Advertiser>) -> Self {
+        Self::spawn(
             elc,
             io,
             SpawnEnv {
@@ -96,7 +91,16 @@ impl InProcessSession {
                 handle_signals: SignalHandling::Handle,
             },
             None,
-        ))
+        )
+    }
+
+    /// Create a new mesh as a poll-only, silent core (the MCP server).
+    ///
+    /// # Errors
+    /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
+    pub(crate) async fn create_poll(config: CreateConfig) -> Result<Self, CreateError> {
+        let (elc, io, advertiser) = create_setup(config, Output::silent()).await?;
+        Ok(Self::spawn_poll(elc, io, advertiser))
     }
 
     /// Join an existing mesh as a poll-only, silent core (the MCP server).
@@ -105,15 +109,7 @@ impl InProcessSession {
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
     pub(crate) async fn join_poll(config: JoinConfig) -> Result<Self, JoinError> {
         let (elc, io) = join_setup(config, Output::silent()).await?;
-        Ok(Self::spawn(
-            elc,
-            io,
-            SpawnEnv {
-                advertiser: None,
-                handle_signals: SignalHandling::Handle,
-            },
-            None,
-        ))
+        Ok(Self::spawn_poll(elc, io, None))
     }
 
     /// Join a topic (string-derived public mesh) as a poll-only, silent core
@@ -124,15 +120,7 @@ impl InProcessSession {
     /// endpoint/gossip failure.
     pub(crate) async fn topic_poll(config: TopicConfig) -> Result<Self, JoinError> {
         let (elc, io) = topic_setup(config, Output::silent()).await?;
-        Ok(Self::spawn(
-            elc,
-            io,
-            SpawnEnv {
-                advertiser: None,
-                handle_signals: SignalHandling::Handle,
-            },
-            None,
-        ))
+        Ok(Self::spawn_poll(elc, io, None))
     }
 
     pub(crate) fn mesh_id(&self) -> &MeshId {
