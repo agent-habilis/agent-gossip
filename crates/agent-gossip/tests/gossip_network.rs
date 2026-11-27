@@ -4602,6 +4602,132 @@ fn a_killed_daemon_is_not_listed_and_its_lock_file_stays() {
     );
 }
 
+/// SIGKILL the daemon of `member` and wait until the process is gone. A killed daemon removes nothing itself.
+fn kill_member(member: &MemberFiles) {
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    let dead_pid: u32 = member.pid.parse().expect("a pid is a number");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while process::is_alive(dead_pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the killed daemon is still alive"
+        );
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        member.socket.exists() && member.chunks.exists(),
+        "a killed daemon removes nothing itself"
+    );
+}
+
+fn assert_files_exist(member: &MemberFiles, when: &str) {
+    assert!(member.socket.exists(), "the socket is gone {when}");
+    assert!(member.chunks.exists(), "the chunk folder is gone {when}");
+}
+
+fn assert_files_removed(member: &MemberFiles, when: &str) {
+    assert!(
+        !member.socket.exists(),
+        "the socket of the dead member stays {when}: {}",
+        member.socket.display()
+    );
+    assert!(
+        !member.chunks.exists(),
+        "the chunk folder of the dead member stays {when}: {}",
+        member.chunks.display()
+    );
+}
+
+/// A killed daemon cannot remove its own socket and chunk folder. Its lock is free and its record names a
+/// process that is gone, so `leave` removes both.
+#[test]
+fn leave_removes_the_socket_and_chunks_of_a_killed_member() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("swept-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    assert_files_exist(&member, "while the daemon runs");
+    kill_member(&member);
+
+    leave_by_owner(&owner_pid);
+    assert_files_removed(&member, "after leave");
+}
+
+/// `session` reads the same registry as `leave` and removes the same leftovers, and a member that
+/// runs keeps both files through the `leave` of another member.
+#[test]
+fn a_live_member_keeps_its_files_while_leave_and_session_sweep_a_killed_one() {
+    let _serial = serial_guard();
+    let live = launch_detached_daemon("kept-by-sweep");
+    wait_ready(&live.state_file);
+    let live_files = member_files(&live.owner.0.id().to_string());
+    let dead = launch_detached_daemon("swept-by-session");
+    wait_ready(&dead.state_file);
+    let dead_owner = dead.owner.0.id().to_string();
+    let dead_files = member_files(&dead_owner);
+    kill_member(&dead_files);
+
+    session_report(&dead_owner);
+    assert_files_removed(&dead_files, "after session");
+    assert_files_exist(&live_files, "after the sweep of another member");
+    leave_by_owner(&dead_owner);
+    assert_files_exist(&live_files, "after leave of another member");
+}
+
+/// A daemon that starts holds the lock before it makes its socket, so a lock that someone holds means
+/// that the member can run: nothing is removed until the lock is free.
+#[test]
+fn leave_removes_nothing_while_the_lock_of_the_member_is_held() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("held-lock-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    kill_member(&member);
+
+    let lock = File::open(&member.lock).expect("the lock file of a dead member stays");
+    lock.lock().expect("the lock of a dead member is free");
+    leave_by_owner(&owner_pid);
+    assert_files_exist(&member, "while another process holds the lock");
+
+    drop(lock);
+    leave_by_owner(&owner_pid);
+    assert_files_removed(&member, "after the lock is free");
+}
+
+/// A record names a pid and the start of its process. A pid that a new process took has another start,
+/// so the record is not of a running daemon.
+#[test]
+fn a_record_whose_pid_was_reused_is_a_dead_member() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("reused-pid-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    kill_member(&member);
+
+    let text = fs::read_to_string(&member.lock).expect("the lock file holds the old record");
+    let mut record: serde_json::Value =
+        serde_json::from_str(text.trim()).expect("the record is one JSON line");
+    record["pid"] = daemon.owner.0.id().into();
+    record["start"] = 1.into();
+    fs::write(&member.lock, format!("{record}\n")).expect("the lock file is writable");
+
+    leave_by_owner(&owner_pid);
+    assert_files_removed(
+        &member,
+        "when the pid of the record runs with another start",
+    );
+}
+
 /// `confirmed` means that the daemon let go of its lock, so a start of the same mesh and nickname right after
 /// `leave` finds the lock free and is not refused. There is no retry in the start and no wait in the test.
 #[test]

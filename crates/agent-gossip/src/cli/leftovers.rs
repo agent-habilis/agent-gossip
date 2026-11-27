@@ -1,5 +1,10 @@
+use std::fs::File;
+use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
+
+use habilis_network::runtime::{DaemonState, read_record, registry};
+use habilis_network::util::mesh_runtime_dir;
 
 /// The tracing log of a member that does not run is the record of why its run ended. It stays this long
 /// before the scan removes it.
@@ -9,10 +14,65 @@ const DEAD_LOG_KEEP: Duration = Duration::from_hours(7 * 24);
 /// folder that this removal emptied. It takes no lock and asks no daemon: it reads only the age of a file
 /// and whether a socket sits beside it.
 ///
-/// A daemon removes its own socket and chunk folder at a clean stop, and the next start of a member
-/// that crashed clears what that member left, so no other cleanup runs here.
+/// A daemon removes its own socket and chunk folder at a clean stop. What a killed daemon leaves is
+/// removed by [`sweep_dead_members`].
 pub(super) fn sweep_logs(base: &Path) {
     sweep_orphan_logs(base, SystemTime::now());
+}
+
+/// Remove the control socket and the chunk folder of each member whose daemon was killed. A member is
+/// dead when its lock file holds a record that names a process that is gone, or a process with another
+/// start (the pid was reused), and nobody holds its lock.
+///
+/// Nothing waits, and no daemon is asked. The lock is tried without blocking and kept for the delete: a
+/// daemon that starts for the member takes the lock first, so it never loses the socket that it just
+/// made, and a start that comes while the lock is kept is refused as it is in the stop wait of `leave`.
+pub(super) fn sweep_dead_members(base: &Path) {
+    let Ok(locks) = registry(base) else {
+        return;
+    };
+    for lock in locks.flatten() {
+        sweep_dead_member(base, &lock);
+    }
+}
+
+fn sweep_dead_member(base: &Path, lock: &Path) {
+    let dead =
+        |record: &habilis_network::runtime::DaemonRecord| record.state() == DaemonState::Gone;
+    let Some(record) = read_record(lock).ok().flatten().filter(dead) else {
+        return;
+    };
+    let Ok(file) = File::open(lock) else {
+        return;
+    };
+    // A running daemon holds this lock, and so does a daemon that is starting. Either way nothing is
+    // removed. Any other failure of the try also leaves the files.
+    if file.try_lock().is_err() {
+        return;
+    }
+    // The record is read again with the lock kept: a daemon that ended its start before the try wrote a
+    // new record, and that record is not the one that was judged.
+    if read_record(lock).ok().flatten().as_ref() != Some(&record) {
+        return;
+    }
+    let dir = mesh_runtime_dir(base, record.mesh.as_str());
+    remove_socket(&dir.join(format!("{}.ipc.sock", record.nickname.as_str())));
+    remove_folder(&dir.join(format!("{}.chunks", record.nickname.as_str())));
+}
+
+fn remove_socket(path: &Path) {
+    // `symlink_metadata` does not follow a link, so a link in this place is never removed.
+    let is_socket = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_socket());
+    if is_socket {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn remove_folder(path: &Path) {
+    let is_folder = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_dir());
+    if is_folder {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 /// A log with no socket beside it that is 7 days old. A member that runs has its socket, so its log is

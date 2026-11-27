@@ -205,6 +205,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         left_json.push(obj);
     }
 
+    leftovers::sweep_dead_members(&base);
     leftovers::sweep_logs(&base);
 
     let report = serde_json::json!({
@@ -262,6 +263,7 @@ pub(crate) fn session(options: &SessionOpts) -> Result<()> {
     let anchor = session_anchor(*session_pid, process::parent_of(std::process::id()))?;
     let base = runtime_base();
     let live = discover(&base);
+    leftovers::sweep_dead_members(&base);
     leftovers::sweep_logs(&base);
     let (owned, other_sessions) = owned_sessions(live, anchor);
 
