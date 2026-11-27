@@ -5,15 +5,11 @@
 //! observes the artifact (review park). The point-to-point fetch + SHA-256
 //! verification is unit-tested in `src/blob` (loopback round-trip + adversarial).
 
-use std::time::Duration;
-
 use agent_gossip::TaskState;
 use agent_gossip::a2a::status_update_params;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
 use habilis_network::ops::blob::BlobTicket;
-
-const TASK_WAIT: Duration = MSG_TIMEOUT;
 
 /// A worker result that is a file becomes a `Part.url` blob reference on the
 /// artifact — never inline bytes — and the initiator sees the review park.
@@ -35,7 +31,10 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
         .expect("worker returned a Task id")
         .parse()
         .expect("valid task id");
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
 
     // A result file the worker "produced".
     let path =
@@ -50,7 +49,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     // worker's own sealed echo.
     assert!(
         alice
-            .wait_task_state(TaskState::InputRequired, TASK_WAIT)
+            .wait_task_state(TaskState::InputRequired, MSG_TIMEOUT)
             .await,
         "initiator never saw the file result"
     );

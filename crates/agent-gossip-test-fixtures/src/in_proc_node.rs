@@ -280,25 +280,16 @@ impl InProcNode {
             .expect("in-process state_get failed")
     }
 
-    /// Apply an RFC 7386 merge to the `meta` channel. Panics on rejection —
-    /// use [`Self::try_meta_merge`] to exercise rejection deliberately.
+    /// Apply an RFC 7386 merge to the `meta` channel.
     ///
     /// # Panics
     ///
-    /// Panics if the merge is rejected.
+    /// Panics if the merge is rejected (not a JSON object, or the loop stopped).
     pub async fn meta_merge(&self, merge: serde_json::Value) {
-        self.try_meta_merge(merge)
+        self.session
+            .meta_merge(merge)
             .await
             .expect("in-process meta_merge failed");
-    }
-
-    /// Like [`Self::meta_merge`] but returns the raw result.
-    ///
-    /// # Errors
-    ///
-    /// Returns the session error when the merge is rejected (not a JSON object, or the loop stopped).
-    pub async fn try_meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
-        self.session.meta_merge(merge).await
     }
 
     /// The current derived `meta`-channel document.
@@ -766,19 +757,6 @@ impl InProcNode {
         self.json_events()
             .filter(|value| value["event"] == "message" && value["type"] == ty)
             .collect()
-    }
-
-    /// Inbound `msg`-kind messages captured so far (includes self
-    /// echoes — filter on `is_self` if needed).
-    pub fn messages(&mut self) -> impl Iterator<Item = &Authored> + '_ {
-        self.pump();
-        self.drained.iter().filter_map(|event| {
-            if let OutputEvent::Message { message, .. } = event {
-                Some(&**message)
-            } else {
-                None
-            }
-        })
     }
 
     /// `msg` events from *other* peers only (drops our own echoes).

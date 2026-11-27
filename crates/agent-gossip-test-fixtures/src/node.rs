@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -184,20 +183,6 @@ impl Node {
         self.messages()
             .filter(|message| message.author == author && message.body == body)
             .count()
-    }
-
-    /// How many **distinct** messages from `author` have a body starting with
-    /// `prefix` — the convergence metric for the anti-entropy gap-recovery
-    /// tests (each sends `prefix-{i}` and waits for the full distinct set).
-    #[must_use]
-    pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
-        let messages: Vec<ChatMessage> = self.messages().collect();
-        let matching: Vec<&ChatMessage> = messages
-            .iter()
-            .filter(|message| message.author == author && message.body.starts_with(prefix))
-            .collect();
-        let distinct: HashSet<&String> = matching.iter().map(|message| &message.body).collect();
-        distinct.len()
     }
 
     /// Send SIGINT to the child process (triggers the ctrl-c handler).

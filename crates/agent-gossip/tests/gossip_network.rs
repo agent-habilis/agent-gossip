@@ -19,7 +19,7 @@ use common::{
     CONNECT_TIMEOUT, ChatMessage, InProcNode, MSG_TIMEOUT, Node, POLL, PresenceSubtype,
     RECOVERY_TIMEOUT, bin, chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll,
     cli_poll_long, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
-    wait_total, wait_until,
+    wait_until,
 };
 use habilis_network::util::process;
 use serde_json::json;
@@ -468,7 +468,11 @@ fn test_stdout_format_parseable() {
 
     let _ = cli_message(&mesh, &creator.nickname, "format check message");
 
-    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
+    let total = wait_until(
+        || creator.messages().count() + joiner.messages().count(),
+        2,
+        MSG_TIMEOUT,
+    );
     assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
 
     let mut msgs: Vec<ChatMessage> = creator.messages().collect();
@@ -514,7 +518,11 @@ fn test_oversize_body_splits_and_reassembles() {
     // body on each stream: the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
     let _ = cli_message(&mesh, &creator.nickname, &body);
-    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
+    let total = wait_until(
+        || creator.messages().count() + joiner.messages().count(),
+        2,
+        MSG_TIMEOUT,
+    );
     assert_eq!(
         total, 2,
         "the multipart body surfaces exactly once per node"
@@ -541,7 +549,11 @@ fn test_utf8_body_round_trip() {
     let _ = cli_message(&mesh, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
-    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
+    let total = wait_until(
+        || creator.messages().count() + joiner.messages().count(),
+        2,
+        MSG_TIMEOUT,
+    );
     assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
     let mut msgs: Vec<ChatMessage> = creator.messages().collect();
     msgs.extend(joiner.messages());
@@ -1702,7 +1714,11 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     // And messages flow across the re-seeded mesh.
     let id = cli_message(&mesh, &first.nickname, "re-seeded hello");
     assert!(!id.is_empty(), "msg returned empty id");
-    let total = wait_total(|| first.messages().count() + second.messages().count(), 1);
+    let total = wait_until(
+        || first.messages().count() + second.messages().count(),
+        1,
+        MSG_TIMEOUT,
+    );
     assert!(
         total >= 1,
         "no message crossed the re-seeded mesh\nfirst: {}\nsecond: {}",
@@ -2029,9 +2045,10 @@ fn test_join_after_creator_departed_with_surviving_member() {
     // Confirm the mesh is actually live before we kill the creator.
     let pre_id = cli_message(&mesh, &creator.nickname, "pre-death ping");
     assert!(!pre_id.is_empty(), "msg returned empty id");
-    let delivered = wait_total(
+    let delivered = wait_until(
         || creator.messages().count() + bystander.messages().count(),
         1,
+        MSG_TIMEOUT,
     );
     assert!(delivered >= 1, "creator/bystander never meshed pre-death");
 
@@ -2065,9 +2082,10 @@ fn test_join_after_creator_departed_with_surviving_member() {
     //    a message from the latecomer reaches the bystander.
     let post_id = cli_message(&mesh, &latecomer.nickname, "post-death hello");
     assert!(!post_id.is_empty(), "latecomer msg returned empty id");
-    let total = wait_total(
+    let total = wait_until(
         || bystander.messages().count() + latecomer.messages().count(),
         1,
+        MSG_TIMEOUT,
     );
     assert!(
         total >= 1,
@@ -2100,9 +2118,10 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // Confirm the mesh is live before killing the creator.
     let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
-        wait_total(
+        wait_until(
             || creator.messages().count() + bystander.messages().count(),
-            1
+            1,
+            MSG_TIMEOUT
         ) >= 1,
         "creator/bystander never meshed pre-death"
     );
