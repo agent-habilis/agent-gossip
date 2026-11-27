@@ -64,8 +64,7 @@ pub(crate) fn classify(
     // Only a task's own peer may read it. A read is not harmless here: the
     // response carries the id, counterparty, role and state of a task the
     // caller may have no part in, and that id set is the handle every other
-    // task-plane attack needs. `CancelTask` has always made this check; the
-    // reads did not, which left the reconnaissance step open.
+    // task-plane attack needs. A cancel is held to the same rule.
     let party_only: Box<dyn Fn(TaskId, A2aOp) -> Served + '_> = Box::new(|wanted, op| {
         let owner: Option<&AuthorKey> = app.tasks.get(&wanted).map(|rec| &rec.peer_key);
         let owner = owner.or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer_key));
@@ -99,21 +98,7 @@ pub(crate) fn classify(
             channel: Channel::Meta,
         }),
         "CancelTask" => match task_id() {
-            Ok(task_id) => {
-                // Party check: only a task's own peer may cancel it, so the
-                // caller can't cancel work it isn't part of.
-                let is_party = app
-                    .tasks
-                    .get(&task_id)
-                    .is_some_and(|rec| rec.peer_key == *requester);
-                if is_party {
-                    Served::Op(A2aOp::CancelTask { task_id })
-                } else {
-                    Served::Reject(RpcError::invalid_params(
-                        "not permitted: cancel is only allowed by the task's peer",
-                    ))
-                }
-            }
+            Ok(task_id) => party_only(task_id.clone(), A2aOp::CancelTask { task_id }),
             Err(error) => Served::Reject(error),
         },
         // Streaming create: identical to SendMessage (open the task); the

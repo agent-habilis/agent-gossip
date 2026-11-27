@@ -594,8 +594,7 @@ impl A2aApp {
             return;
         }
         if let Some(rec) = self.tasks.get_mut(&task_id) {
-            rec.state = crate::a2a::TaskState::Canceled;
-            rec.last_activity = Instant::now();
+            rec.close(crate::a2a::TaskState::Canceled, Instant::now());
         }
         self.late_cancels
             .push((task_id, *from_key, "call-timed-out"));
@@ -808,17 +807,7 @@ impl A2aApp {
                         peer_key: waiter.peer_key,
                         opens_task: waiter.opens_task,
                     };
-                    match waiter.blob_group {
-                        Some(group) => self.push_orphan(Some(OrphanBlob {
-                            group,
-                            evict_at,
-                            late_reply: Some(late),
-                        })),
-                        // A plain brief timed out too, and the worker may have opened the task:
-                        // its late reply still has to find the call and cancel it.
-                        None if late.opens_task => self.push_late_reply(late, evict_at),
-                        None => {}
-                    }
+                    self.keep_for_late_reply(late, waiter.blob_group, evict_at);
                     waiter.responder.send_timeout();
                     None
                 } else {
@@ -827,6 +816,26 @@ impl A2aApp {
             })
             .collect();
         self.a2a_waiters = survivors;
+    }
+
+    /// Keep a timed-out call that the worker may still answer, with the blob group it owns, if
+    /// any. A plain brief has no group, but the worker may have opened its task, so its late
+    /// reply still has to find the call and cancel it.
+    fn keep_for_late_reply(
+        &mut self,
+        late: LateReply,
+        blob_group: Option<ContentId>,
+        evict_at: Instant,
+    ) {
+        match blob_group {
+            Some(group) => self.push_orphan(Some(OrphanBlob {
+                group,
+                evict_at,
+                late_reply: Some(late),
+            })),
+            None if late.opens_task => self.push_late_reply(late, evict_at),
+            None => {}
+        }
     }
 
     /// Time out every outstanding A2A call on shutdown.

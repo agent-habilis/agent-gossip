@@ -235,7 +235,7 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
     let mut metadata = serde_json::json!({
         "mesh:peer": rec.peer.as_str(),
         "mesh:role": role(rec.role),
-        "mesh:ball": role(rec.ball),
+        "mesh:ball": role(rec.ball()),
         "mesh:review": rec.review,
     });
     if let Some(who) = &rec.waiting_on {

@@ -112,8 +112,6 @@ pub(crate) struct TaskRecord {
     pub legs_seen: BoundedFifoSet<String>,
     /// Last progress reported, replayed on keepalives.
     pub last_progress: Option<Progress>,
-    /// Which role currently owes the next move.
-    pub ball: TaskRole,
     /// Whom the worker waits on (a peer or `user`), from the `mesh:waiting` key
     /// of its last status leg. A tag only: it does not move the check-in clock.
     /// A check-in without it clears it.
@@ -149,6 +147,53 @@ pub(crate) struct PeerBeat {
 }
 
 impl TaskRecord {
+    /// A record of a task that has just begun, in `state`, with every clock at `now`.
+    pub(crate) fn open(
+        (peer_key, peer): (AuthorKey, Nickname),
+        role: TaskRole,
+        state: TaskState,
+        now: Instant,
+    ) -> Self {
+        Self {
+            peer_key,
+            peer,
+            role,
+            state,
+            review: false,
+            last_activity: now,
+            last_sent: now,
+            last_peer_activity: now,
+            last_skill_activity: now,
+            legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
+            last_progress: None,
+            waiting_on: None,
+            waiting_mark: None,
+            status_text: None,
+            label: None,
+            followup_seq: None,
+            last_notice: None,
+            peer_beat: None,
+        }
+    }
+
+    /// End the task in `state`. Stamping `last_activity` starts the freeze window the GC waits
+    /// for, so a late leg is still recognized as a duplicate and not as an unknown task.
+    pub(crate) fn close(&mut self, state: TaskState, now: Instant) {
+        self.state = state;
+        self.review = false;
+        self.last_activity = now;
+    }
+
+    /// Whoever owes the next move: the worker on a live task, the initiator once the task
+    /// parked for its input.
+    pub(crate) fn ball(&self) -> TaskRole {
+        if self.state == TaskState::InputRequired {
+            TaskRole::Initiator
+        } else {
+            TaskRole::Receiver
+        }
+    }
+
     /// Both parties beat every live task, whoever holds the ball: a human
     /// deciding, a reviewer reading, and a long build all look like silence,
     /// and each lost tasks at ~4 min. A beat proves the daemon is up, and the
@@ -696,33 +741,12 @@ pub(crate) fn adopt_initiator(
         Entry::Vacant(slot) => {
             // First adoption (task creation): open the initiator-side record at
             // the server-minted state.
-            slot.insert(TaskRecord {
-                peer_key: *peer_key,
-                peer: peer.clone(),
-                role: TaskRole::Initiator,
-                state: task_state,
-                review: false,
-                last_activity: now,
-                last_sent: now,
-                last_peer_activity: now,
-                last_skill_activity: now,
-                legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
-                last_progress: None,
-                waiting_on: None,
-                waiting_mark: None,
-                status_text: None,
-                label: None,
-                followup_seq: None,
-                last_notice: None,
-                peer_beat: None,
-                // Whoever owes the next move: the worker on a live task, us if
-                // it parked for our input.
-                ball: if task_state == TaskState::InputRequired {
-                    TaskRole::Initiator
-                } else {
-                    TaskRole::Receiver
-                },
-            });
+            slot.insert(TaskRecord::open(
+                (*peer_key, peer.clone()),
+                TaskRole::Initiator,
+                task_state,
+                now,
+            ));
         }
         Entry::Occupied(mut slot) => {
             // Already tracking. The worker-pushed status/artifact stream is the
@@ -748,9 +772,7 @@ pub(crate) fn adopt_initiator(
             rec.last_activity = now;
             rec.last_peer_activity = now;
             if task_state.is_terminal() {
-                rec.state = task_state;
-                rec.review = false;
-                rec.ball = TaskRole::Receiver;
+                rec.close(task_state, now);
             }
         }
     }
@@ -818,33 +840,14 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         && let Some(peer) = leg.peer
     {
         // The opening leg mints the record; a duplicate offer just touches it.
-        tasks
-            .entry(leg.task_id.clone())
-            .or_insert_with(|| TaskRecord {
-                peer_key: *leg.peer_key,
-                peer: peer.clone(),
-                role: if leg.mine {
-                    TaskRole::Initiator
-                } else {
-                    TaskRole::Receiver
-                },
-                state: TaskState::Submitted,
-                review: false,
-                last_activity: now,
-                last_sent: now,
-                last_peer_activity: now,
-                last_skill_activity: now,
-                legs_seen: BoundedFifoSet::new(TASK_LEGS_SEEN_CAP),
-                last_progress: None,
-                waiting_on: None,
-                waiting_mark: None,
-                status_text: None,
-                label: None,
-                followup_seq: None,
-                last_notice: None,
-                peer_beat: None,
-                ball: TaskRole::Receiver,
-            });
+        tasks.entry(leg.task_id.clone()).or_insert_with(|| {
+            TaskRecord::open(
+                (*leg.peer_key, peer.clone()),
+                TaskRole::Receiver,
+                TaskState::Submitted,
+                now,
+            )
+        });
     }
 
     let Some(rec) = tasks.get_mut(leg.task_id) else {
@@ -901,7 +904,6 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
             // The worker commits (accept) or resumes; it keeps the ball.
             rec.state = TaskState::Working;
             rec.review = false;
-            rec.ball = TaskRole::Receiver;
         }
         LegKind::Status(TaskState::InputRequired)
             if sender == TaskRole::Receiver
@@ -910,7 +912,6 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
             // The worker asks a question → the initiator owes the answer.
             rec.state = TaskState::InputRequired;
             rec.review = false;
-            rec.ball = TaskRole::Initiator;
         }
         LegKind::Text => {
             // A message into the task (the initiator's answer / approval /
@@ -922,7 +923,6 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
                 rec.state = TaskState::Working;
                 rec.review = false;
             }
-            rec.ball = sender.opposite();
         }
         LegKind::Artifact
             if sender == TaskRole::Receiver
@@ -933,7 +933,6 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
             // explicit accept first.)
             rec.state = TaskState::InputRequired;
             rec.review = true;
-            rec.ball = TaskRole::Initiator;
         }
         LegKind::Status(TaskState::Completed)
             if sender == TaskRole::Receiver
@@ -997,7 +996,6 @@ async fn send_cancels(
             context,
             BroadcastStatusParams {
                 peer_key,
-                task_id,
                 update: &update,
             },
         )
@@ -1100,8 +1098,7 @@ fn sweep_registry(
     for (task_id, rec) in tasks.iter_mut() {
         let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
         if !rec.state.is_terminal() && peer_silent {
-            rec.state = TaskState::Canceled;
-            rec.last_activity = now;
+            rec.close(TaskState::Canceled, now);
             expired.push((task_id.clone(), rec.peer_key));
         }
     }
@@ -1146,13 +1143,7 @@ pub(crate) fn fail_tasks_for_departed_peer(
     let now = Instant::now();
     for (task_id, rec) in tasks.iter_mut() {
         if rec.peer_key == *peer_key && !rec.state.is_terminal() {
-            rec.state = TaskState::Canceled;
-            // Start the terminal clock, so "ages into the GC" is true here as
-            // well: a task already idle when its peer left would otherwise be
-            // cancelled and reaped by the very next sweep, with no window in
-            // which a late leg is recognized as a duplicate rather than an
-            // unknown task.
-            rec.last_activity = now;
+            rec.close(TaskState::Canceled, now);
             out.task_timeout(task_id, emission::TaskGoneReason::PeerLeft);
             tracing::debug!(%task_id, peer = %peer_key, "task canceled (peer left)");
         }
@@ -1212,7 +1203,6 @@ pub(crate) async fn tick_task_keepalive(
             context,
             BroadcastStatusParams {
                 peer_key: &peer_key,
-                task_id: &task_id,
                 update: &update,
             },
         )
@@ -1229,9 +1219,6 @@ pub(crate) async fn tick_task_keepalive(
 /// handles.
 struct BroadcastStatusParams<'caller> {
     peer_key: &'caller AuthorKey,
-    /// The task id rides inside the status payload body (8.0); the envelope no
-    /// longer carries it, so this is unused here beyond documenting the leg.
-    task_id: &'caller TaskId,
     update: &'caller super::TaskStatusUpdate,
 }
 
@@ -1246,11 +1233,7 @@ async fn broadcast_status(
     context: &HandlerCtx<'_>,
     params: BroadcastStatusParams<'_>,
 ) -> bool {
-    let BroadcastStatusParams {
-        peer_key,
-        task_id: _task_id,
-        update,
-    } = params;
+    let BroadcastStatusParams { peer_key, update } = params;
     let Ok(body) = status_update_params::payload_body(update) else {
         return false;
     };
@@ -1337,12 +1320,12 @@ mod tests {
 
         // I initiated it and the worker holds the ball.
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), quiet);
+        open_as_initiator(&mut tasks, quiet);
         let rec = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
         assert_eq!(
-            rec.ball,
+            rec.ball(),
             TaskRole::Receiver,
             "the ball passes to the receiver"
         );
@@ -1385,9 +1368,8 @@ mod tests {
         let cadence = Duration::from_secs(30);
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(
+        open_as_initiator(
             &mut tasks,
-            &leg(LegKind::Offer, true),
             now.checked_sub(2 * cadence)
                 .expect("the test instant is far from the clock origin"),
         );
@@ -1410,7 +1392,7 @@ mod tests {
             .checked_sub(Duration::from_hours(25))
             .expect("the test instant is far from the clock origin");
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), day_ago);
+        open_as_initiator(&mut tasks, day_ago);
         // Only the daemons have spoken since: the peer's beat, and ours.
         apply(&mut tasks, &leg(LegKind::Beat, false), now);
         tasks
@@ -1448,7 +1430,7 @@ mod tests {
         let mesh = MeshId::from("test");
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         let peer_clock = tasks[&tid()].last_peer_activity;
 
         let payload = status_update_params::status_update(
@@ -1534,7 +1516,7 @@ mod tests {
     /// A task we opened (initiator) whose worker reported `working`.
     fn working_task_we_opened(now: Instant) -> HashMap<TaskId, TaskRecord> {
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Working), false),
@@ -2049,7 +2031,6 @@ mod tests {
             .expect("the test inserted this task earlier");
         parked.state = TaskState::InputRequired;
         parked.review = true;
-        parked.ball = TaskRole::Initiator;
         super::note_follow_up_sent(
             &mut tasks,
             &tid(),
@@ -2064,7 +2045,7 @@ mod tests {
         );
         assert!(!resumed.review, "nothing waits for a review any more");
         assert_eq!(
-            resumed.ball,
+            resumed.ball(),
             TaskRole::Receiver,
             "the worker holds the ball"
         );
@@ -2237,7 +2218,7 @@ mod tests {
     fn an_unaccepted_task_is_overdue_as_not_picked_up() {
         let start = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), start);
+        open_as_initiator(&mut tasks, start);
         let overdue = super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2)).0;
         assert_eq!(
             overdue.first().map(|notice| notice.not_picked_up),
@@ -2564,7 +2545,7 @@ mod tests {
     fn a_leg_on_a_closed_task_is_a_replay() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier")
@@ -2583,7 +2564,7 @@ mod tests {
         let timeout = Duration::from_mins(2);
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         let rec = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
@@ -2619,7 +2600,7 @@ mod tests {
         let timeout = Duration::from_mins(2);
         let now = Instant::now();
         let mut app = A2aApp::new();
-        apply(&mut app.tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut app.tasks, now);
         let rec = app
             .tasks
             .get_mut(&tid())
@@ -2701,7 +2682,7 @@ mod tests {
     fn the_same_leg_surfaces_once() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         let working = status_leg(false);
         super::mark_seen(&mut tasks, &tid(), working.id.as_str());
         assert!(
@@ -2717,7 +2698,7 @@ mod tests {
     fn beats_do_not_evict_legs_seen() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         let real = status_leg(false);
         super::mark_seen(&mut tasks, &tid(), real.id.as_str());
         for _ in 0..100 {
@@ -2735,7 +2716,7 @@ mod tests {
     fn a_new_leg_and_an_unknown_task_surface() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         super::mark_seen(&mut tasks, &tid(), status_leg(false).id.as_str());
         let fresh = status_leg(false);
         assert!(
@@ -2747,6 +2728,19 @@ mod tests {
             !super::is_replay(&tasks, &closed(), &unknown, &fresh.id),
             "the worker's first leg can beat the RPC response, so it must still surface"
         );
+    }
+
+    /// The record a sender holds once its brief is answered: the task, as an initiator, at
+    /// `Submitted`.
+    fn open_as_initiator(tasks: &mut HashMap<TaskId, TaskRecord>, now: Instant) {
+        tasks.entry(tid()).or_insert_with(|| {
+            TaskRecord::open(
+                (peer_key("calm-otter"), Nickname::from("calm-otter")),
+                TaskRole::Initiator,
+                TaskState::Submitted,
+                now,
+            )
+        });
     }
 
     fn leg(kind: LegKind, mine: bool) -> LegInfo<'static> {
@@ -2788,7 +2782,7 @@ mod tests {
         // inbound leg is credited to the worker — of a task `calm-otter`
         // accepted.
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Working), false),
@@ -3019,7 +3013,7 @@ mod tests {
         let now = Instant::now();
         let long_ago = now.checked_sub(timeout * 2).expect("test clock");
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), long_ago);
+        open_as_initiator(&mut tasks, long_ago);
         // Our daemon beat a moment ago; the worker, which beats, has said
         // nothing since.
         let rec = tasks
@@ -3036,7 +3030,7 @@ mod tests {
 
         // A beat from the peer keeps it live.
         let mut beaten = HashMap::new();
-        apply(&mut beaten, &leg(LegKind::Offer, true), long_ago);
+        open_as_initiator(&mut beaten, long_ago);
         apply(&mut beaten, &leg(LegKind::Beat, false), now);
         let (still_live, _) = super::sweep_registry(&mut beaten, &mut closed(), now, timeout);
         assert!(still_live.is_empty(), "the peer's beat keeps the task live");
@@ -3054,7 +3048,7 @@ mod tests {
     fn a_returned_task_is_adopted_only_from_its_own_worker() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Working), false),
@@ -3396,12 +3390,12 @@ mod tests {
         let mut tasks = HashMap::new();
         let now = Instant::now();
 
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         let rec = &tasks[&tid()];
         assert_eq!(rec.role, TaskRole::Initiator, "the initiator role is set");
         assert_eq!(rec.state, TaskState::Submitted, "the new task is submitted");
         assert_eq!(
-            rec.ball,
+            rec.ball(),
             TaskRole::Receiver,
             "a fresh offer waits on the worker to accept it"
         );
@@ -3417,7 +3411,7 @@ mod tests {
             "the worker's accept moves the task out of submitted"
         );
         assert_eq!(
-            tasks[&tid()].ball,
+            tasks[&tid()].ball(),
             TaskRole::Receiver,
             "the worker is busy, so the initiator has nothing to do yet"
         );
@@ -3434,7 +3428,7 @@ mod tests {
             "the task waits for input"
         );
         assert_eq!(
-            tasks[&tid()].ball,
+            tasks[&tid()].ball(),
             TaskRole::Initiator,
             "the worker asked a question, so only the initiator can move the task on"
         );
@@ -3448,7 +3442,7 @@ mod tests {
             "the task resumes working"
         );
         assert_eq!(
-            tasks[&tid()].ball,
+            tasks[&tid()].ball(),
             TaskRole::Receiver,
             "the initiator answered, so the worker acts again"
         );
@@ -3462,7 +3456,7 @@ mod tests {
         );
         assert!(tasks[&tid()].review, "the review flag is set");
         assert_eq!(
-            tasks[&tid()].ball,
+            tasks[&tid()].ball(),
             TaskRole::Initiator,
             "a returned result waits for the initiator to review it"
         );
@@ -3475,7 +3469,7 @@ mod tests {
             "the task resumes working"
         );
         assert_eq!(
-            tasks[&tid()].ball,
+            tasks[&tid()].ball(),
             TaskRole::Receiver,
             "the confirm sends the worker back to work"
         );
@@ -3508,7 +3502,7 @@ mod tests {
     fn a_completed_leg_cannot_close_a_task_that_never_started() {
         let mut tasks = HashMap::new();
         let now = Instant::now();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Submitted,
@@ -3545,7 +3539,7 @@ mod tests {
 
         // Declining an offer outright is a different leg, and still lands.
         let mut declined = HashMap::new();
-        apply(&mut declined, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut declined, now);
         apply(
             &mut declined,
             &leg(LegKind::Status(TaskState::Failed), false),
@@ -3563,7 +3557,7 @@ mod tests {
     fn terminal_is_frozen() {
         let mut tasks = HashMap::new();
         let now = Instant::now();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Rejected), false),
@@ -3600,7 +3594,7 @@ mod tests {
     fn out_of_order_is_ignored() {
         let mut tasks = HashMap::new();
         let now = Instant::now();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         // A confirm straight after the offer — no review to close.
         apply(
             &mut tasks,
@@ -3622,7 +3616,7 @@ mod tests {
     fn misdirected_statuses_are_ignored() {
         let mut tasks = HashMap::new();
         let now = Instant::now();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         // Initiator cannot accept its own offer.
         apply(
             &mut tasks,
@@ -3671,7 +3665,7 @@ mod tests {
     fn change_loops_back_to_working() {
         let mut tasks = HashMap::new();
         let now = Instant::now();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        open_as_initiator(&mut tasks, now);
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Working), false),
