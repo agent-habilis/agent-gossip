@@ -1,13 +1,13 @@
 use anyhow::Result;
 
-use super::args::{StateAction, StateOpts};
+use super::args::StateAction;
 use super::msg_response::MsgResponse;
 use crate::a2a::ipc_command::IpcCommand;
 
 /// Read or change the mesh's shared state via the running daemon. Emits the
 /// raw IPC JSON response — `{ok,...}` for `merge`, `{ok,document}` for `get`.
-pub(super) async fn state(options: StateOpts) -> Result<()> {
-    let (command, nickname) = match options.action {
+pub(super) async fn state(action: StateAction) -> Result<()> {
+    let (command, nickname) = match action {
         StateAction::Merge {
             gossip: mesh,
             nickname,

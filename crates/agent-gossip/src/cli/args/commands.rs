@@ -1,6 +1,6 @@
 use clap::Subcommand;
 
-use super::a2a_opts::A2aOpts;
+use super::a2a_action::A2aAction;
 use super::bell_check_opts::BellCheckOpts;
 use super::create_opts::CreateOpts;
 use super::discover_opts::DiscoverOpts;
@@ -8,13 +8,13 @@ use super::doctor_opts::DoctorOpts;
 use super::invite_opts::InviteOpts;
 use super::join_opts::JoinOpts;
 use super::leave_opts::LeaveOpts;
-use super::meta_opts::MetaOpts;
+use super::meta_action::MetaAction;
 use super::peers_opts::PeersOpts;
 use super::ping_opts::PingOpts;
 use super::poll_opts::PollOpts;
 use super::ready_opts::ReadyOpts;
 use super::session_opts::SessionOpts;
-use super::state_opts::StateOpts;
+use super::state_action::StateAction;
 use super::topic_opts::TopicOpts;
 use super::topology_opts::TopologyOpts;
 use crate::cli::agent::Agent;
@@ -105,8 +105,8 @@ pub(crate) enum Commands {
     /// exposer. The Agent Card's URLs are rewritten so discovery resolves
     /// through the bridge. Strictly 1:1 — one consumer per exposer at a time.
     A2a {
-        #[command(flatten)]
-        options: A2aOpts,
+        #[command(subcommand)]
+        action: A2aAction,
     },
 
     /// List the live peer roster of a gossip.
@@ -139,8 +139,8 @@ pub(crate) enum Commands {
     /// merge; `state get` prints the current document. Members react to a
     /// change via the `state` event on the daemon's `--output json` stream.
     State {
-        #[command(flatten)]
-        options: StateOpts,
+        #[command(subcommand)]
+        action: StateAction,
     },
 
     /// Read or change the gossip's meta state.
@@ -150,8 +150,8 @@ pub(crate) enum Commands {
     /// `meta merge` applies an RFC 7386 JSON Merge Patch; `meta get` prints the
     /// current document. The two channels are fully independent.
     Meta {
-        #[command(flatten)]
-        options: MetaOpts,
+        #[command(subcommand)]
+        action: MetaAction,
     },
 
     /// Print the multihop routing topology from a running daemon's point of view.

@@ -1,13 +1,13 @@
 use anyhow::Result;
 
-use super::args::{MetaAction, MetaOpts};
+use super::args::MetaAction;
 use super::msg_response::MsgResponse;
 use crate::a2a::ipc_command::IpcCommand;
 
 /// Read or change the mesh's `meta` channel via the running daemon — the
 /// independent counterpart of `state`. Same raw-JSON + exit-code contract.
-pub(super) async fn meta(options: MetaOpts) -> Result<()> {
-    let (command, nickname) = match options.action {
+pub(super) async fn meta(action: MetaAction) -> Result<()> {
+    let (command, nickname) = match action {
         MetaAction::Merge {
             gossip: mesh,
             nickname,

@@ -87,11 +87,11 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Poll { options } => poll(options).await,
         Commands::Ping { options } => ping(options).await,
-        Commands::A2a { options } => Box::pin(a2a(options.action)).await,
+        Commands::A2a { action } => Box::pin(a2a(action)).await,
         Commands::Peers { options } => peers(options).await,
         Commands::Invite { options } => invite(options).await,
-        Commands::State { options } => state(options).await,
-        Commands::Meta { options } => meta(options).await,
+        Commands::State { action } => state(action).await,
+        Commands::Meta { action } => meta(action).await,
         Commands::Topology { options } => topology_cmd(options).await,
         Commands::Ready { options } => ready_state_file::ready(options).await,
         Commands::Discover { options } => {
