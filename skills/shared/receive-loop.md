@@ -50,9 +50,10 @@ two sequential messages:
 
    On Claude Code and Antigravity, re-arm with this command instead. On
    Claude Code run it as a background `Bash` call with `timeout: 7200000`. On
-   Antigravity run it with `run_command` as the Daemon session section says:
-   `WaitMsBeforeAsync` 500, `IsDaemon` false, no `NotificationTimeoutSeconds`,
-   and `BypassSandbox` true. An Antigravity bell that exits with code 1 within
+   Antigravity run it with `run_command`: `WaitMsBeforeAsync` 500, `IsDaemon`
+   false, no `NotificationTimeoutSeconds`, and `BypassSandbox` true, as
+   **Running commands in Antigravity** says. An Antigravity bell that exits with
+   code 1 within
    seconds is the sandbox, not an event: set `BypassSandbox` true and re-arm.
    Put any other bell flag after `--long` and keep `--max-secs` last, before
    the redirect. A topic gossip re-arms with

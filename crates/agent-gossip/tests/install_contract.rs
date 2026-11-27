@@ -236,6 +236,34 @@ fn plug_and_doctor_say_when_the_bell_hook_is_not_installed() {
     std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
 }
 
+/// In agy 1.5.12 only the namespaced form of a plugin skill expands, so every
+/// place that tells a user what to type must give `/agent-gossip:gossip-*` for
+/// agy.
+#[test]
+fn the_docs_name_the_agy_command_prefix() {
+    let manual = include_str!("../../../docs/manual.txt");
+    let skills_page = include_str!("../../../packages/web/content/docs/skills.mdx");
+    for (name, text) in [
+        ("README", README),
+        ("installation doc", DOC),
+        ("manual", manual),
+        ("skills page", skills_page),
+    ] {
+        assert!(
+            text.contains("/agent-gossip:gossip-"),
+            "the {name} never gives the namespaced agy command"
+        );
+    }
+    let row = DOC
+        .lines()
+        .find(|line| line.starts_with("| Antigravity"))
+        .expect("the installation doc has an Antigravity row");
+    assert!(
+        row.contains("`/agent-gossip:gossip-create`"),
+        "the agy row must show the namespaced command: {row}"
+    );
+}
+
 /// agy's Standard Sandbox cannot reach the gossip daemon, so the doc the
 /// installing agent reads must say that every `agent-gossip` call in agy runs
 /// with the sandbox off.

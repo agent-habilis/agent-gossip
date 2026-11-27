@@ -4,10 +4,12 @@ Render user-facing skill commands with the current harness's command prefix.
 
 - Codex: `$gossip-*`
 - Pi: `/skill:gossip-*`
-- All other harnesses, Antigravity (agy) included: `/gossip-*`
+- Antigravity (agy): `/agent-gossip:gossip-*`
+- All other harnesses: `/gossip-*`
 
-Hold `$SKILL_PREFIX` as `$` for Codex, `/skill:` for Pi, and `/` otherwise. When printing usage,
-guards, or next-step instructions, render commands as:
+Hold `$SKILL_PREFIX` as `$` for Codex, `/skill:` for Pi, `/agent-gossip:` for
+Antigravity, and `/` otherwise. When printing usage, guards, or next-step
+instructions, render commands as:
 
 ```text
 ${SKILL_PREFIX}gossip-create

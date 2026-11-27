@@ -1053,7 +1053,9 @@ COMMANDS
               ~/.cursor/skills, ~/.config/opencode/skills, and, for the
               Antigravity CLI (agy), the plugin
               ~/.gemini/config/plugins/agent-gossip, which holds the skills and
-              the Stop hook that keeps the bell armed. The same
+              the Stop hook that keeps the bell armed. agy expands only the
+              namespaced form of a skill command, so its commands are
+              /agent-gossip:gossip-create and so on. The same
               portable skill tree is used for every
               target, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents are

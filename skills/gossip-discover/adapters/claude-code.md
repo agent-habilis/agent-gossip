@@ -1,7 +1,7 @@
 ## Monitor adapter (Claude Code)
 
 Use the Monitor tool. Launch discovery under a distinct description so
-`/gossip-leave` never stops it:
+`${SKILL_PREFIX}gossip-leave` never stops it:
 
 ```text
 command: "agent-gossip discover [--directory DIR] --window-secs 25"

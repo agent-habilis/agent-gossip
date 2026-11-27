@@ -61,12 +61,17 @@ On Antigravity, run each `Bash` call above with its `run_command` tool:
 
 - Tool call 1 and tool call 3 run in the foreground. agy moves a command to
   the background when it runs longer than `WaitMsBeforeAsync` (500 to 10000
-  ms). Set `WaitMsBeforeAsync` to 10000. If the result is a task id and not
-  the output, wait with `command_status` until the task ends, then read its
-  output.
+  ms), and it returns a task id and a log path, not the output. Set
+  `WaitMsBeforeAsync` to 10000. If that happens, wait for the completion
+  message that agy delivers by itself, with the exit code and the full
+  stdout, and never poll in a loop. To check on demand, call `manage_task`
+  with Action `status` and the `TaskId`.
 - Tool call 2 is the bell. Set `WaitMsBeforeAsync` to 500 and `IsDaemon` to
   false, and give it no `NotificationTimeoutSeconds`. agy moves it to the
   background after 500 ms and wakes you when it exits. Keep `--max-secs 7000`.
+
+agy runs the calls of one message one after the other, in order, so tool calls
+1, 2 and 3 run in that order.
 
 The `> /dev/null` and the `.stderr` file follow the same rules as the generic
 launch below.
@@ -100,7 +105,7 @@ agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json 
 The bell's exit is the signal; its output is discarded. Read content with a
 **foreground** poll per the **Receive loop** section. Any flag after
 `--long` above is part of the bell (a topic gossip's settle window on Claude
-Code): keep it on every re-arm.
+Code and Antigravity): keep it on every re-arm.
 
 **Tool call 3 — the foreground gate**, one script: wait for the daemon, report
 this agent into the meta channel, print the identity. `ready` polls with a

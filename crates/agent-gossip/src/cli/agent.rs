@@ -872,10 +872,17 @@ mod tests {
                 );
             }
             // Only the skills that launch the daemon run a foreground command
-            // that agy can move to the background.
+            // that agy can move to the background. agy 1.5.12 has no
+            // `command_status` tool: it delivers a completion message by itself
+            // and offers `manage_task` for a check on demand.
+            let waits = body.contains("`manage_task`") && body.contains("completion message");
             assert!(
-                skill == "gossip-reattach" || body.contains("`command_status`"),
-                "{skill}: no `command_status` for a command that agy backgrounds"
+                skill == "gossip-reattach" || waits,
+                "{skill}: a command that agy backgrounds is awaited by its completion message, or checked with `manage_task`"
+            );
+            assert!(
+                !body.contains("command_status"),
+                "{skill}: agy has no command_status tool"
             );
             assert!(
                 !body.contains("give the background bell the longest timeout that it accepts"),
@@ -892,7 +899,10 @@ mod tests {
         );
         let discover = rendered("gossip-discover");
         assert!(
-            discover.contains("`command_status`") && discover.contains("`BypassSandbox` true"),
+            discover.contains("`manage_task`")
+                && discover.contains("completion message")
+                && discover.contains("`BypassSandbox` true")
+                && !discover.contains("command_status"),
             "gossip-discover waits 25 s, longer than agy keeps a command in the foreground"
         );
     }
@@ -926,6 +936,83 @@ mod tests {
         assert!(
             rendered("gossip-topic").contains("a topic gossip on Claude Code and Antigravity"),
             "the receive loop must name agy beside Claude Code for the settle flag"
+        );
+        let flat: Vec<&str> = rendered("gossip-topic").split_whitespace().collect();
+        assert!(
+            flat.join(" ")
+                .contains("a topic gossip's settle window on Claude Code and Antigravity"),
+            "the daemon text must not say that the settle window is for Claude Code only"
+        );
+    }
+
+    /// agy 1.5.12 slash expansion matches only the namespaced form of a plugin
+    /// skill, so a bare `/gossip-join` does nothing there. The prefix text names
+    /// `/agent-gossip:` for agy and keeps the bare `/` for the others.
+    #[test]
+    fn agy_commands_carry_the_plugin_namespace() {
+        for skill in OWNED_SKILL_DIRS {
+            if *skill == "gossip-doctor" {
+                continue;
+            }
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            let body = flat.join(" ");
+            assert!(
+                body.contains("Antigravity (agy): `/agent-gossip:gossip-*`")
+                    && body.contains("`/agent-gossip:` for Antigravity"),
+                "{skill}: the prefix text must give agy the namespaced command"
+            );
+            for line in rendered(skill)
+                .lines()
+                .filter(|line| line.contains("/gossip-"))
+            {
+                assert!(
+                    line.contains("All other harnesses"),
+                    "{skill}: a bare /gossip- command that agy cannot run: {line}"
+                );
+            }
+        }
+    }
+
+    /// agy runs several `run_command` calls of one message one after the other,
+    /// in order, so the three calls of the session start run as daemon, bell,
+    /// gate.
+    #[test]
+    fn agy_text_says_that_parallel_calls_run_in_order() {
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            assert!(
+                flat.join(" ").contains("one after the other, in order"),
+                "{skill}: the agy text must say that the three calls run in order"
+            );
+        }
+    }
+
+    /// A reference read before a context compaction is gone after it, so the
+    /// body must say to read it again.
+    #[test]
+    fn skills_say_to_read_a_reference_again_after_a_compaction() {
+        for skill in OWNED_SKILL_DIRS {
+            if ["gossip-discover", "gossip-doctor", "gossip-leave"].contains(skill) {
+                continue;
+            }
+            let flat: Vec<&str> = skill_body(skill).split_whitespace().collect();
+            assert!(
+                flat.join(" ").contains("again after a context compaction"),
+                "{skill}: the SKILL.md must say to read a reference again after a compaction"
+            );
+        }
+    }
+
+    /// The pointer for the agy parameters names the section that holds the
+    /// sandbox rule, and that section is in every skill.
+    #[test]
+    fn the_bell_pointer_names_the_section_that_holds_the_sandbox_rule() {
+        let flat: Vec<&str> = rendered("gossip-ping").split_whitespace().collect();
+        let body = flat.join(" ");
+        assert!(
+            body.contains("as **Running commands in Antigravity** says")
+                && !body.contains("as the Daemon session section says"),
+            "ping has no Daemon session section, so the pointer must name the shared section"
         );
     }
 

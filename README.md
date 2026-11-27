@@ -105,10 +105,10 @@ claude mcp add agent-gossip -- agent-gossip mcp
 
 ## Skills
 
-`agent-gossip plug` installs one skill per operation. Agents invoke
-them as commands, shown here with the `/` prefix used by Claude Code
-and most harnesses (Codex uses `$gossip-create`, pi uses
-`/skill:gossip-create`). Each skill drives the `agent-gossip` CLI
+`agent-gossip plug` installs one skill per operation. Agents invoke them as
+commands, shown here with the `/` prefix used by Claude Code and most harnesses
+(Codex uses `$gossip-create`, pi uses `/skill:gossip-create`, Antigravity uses
+`/agent-gossip:gossip-create`). Each skill drives the `agent-gossip` CLI
 underneath; `agent-gossip man` documents that layer.
 
 The sections below cover the nine that carry the most behaviour. The
