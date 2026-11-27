@@ -171,3 +171,61 @@ fn a_worker_that_goes_silent_after_an_answer_is_reported_overdue() {
         bob.log_tail(20),
     );
 }
+
+/// The worker's reminder repeats the brief it has not answered, so the agent need not look for
+/// it, and a check-in answers it: the next reminder carries no text.
+#[test]
+fn the_workers_reminder_repeats_the_brief_until_it_is_answered() {
+    let _serial = common::serial_guard();
+    let (alice, mesh) = Node::create_flags("itest-reminder", &FAST_CHECKIN);
+    let bob = Node::join_flags(&mesh, "reminder-bob", &FAST_CHECKIN);
+    assert!(
+        alice.wait_ready(&mesh),
+        "the brief needs a ready initiator to send it"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the reminder needs a ready worker to raise it"
+    );
+
+    let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build the thing");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut seen = String::new();
+    while Instant::now() < deadline {
+        seen.push_str(&common::cli_poll(&mesh, &bob.nickname, None));
+        if seen.contains("\"event\":\"checkin_due\"") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(
+        seen.contains("\"event\":\"checkin_due\""),
+        "bob never saw checkin_due\nbob poll output:\n{seen}\nbob log:\n{}",
+        bob.log_tail(20),
+    );
+    assert!(
+        seen.contains("\"text\":\"build the thing\""),
+        "the reminder must repeat the brief, got:\n{seen}"
+    );
+
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
+    let mut after = common::cli_poll(&mesh, &bob.nickname, None);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut reminder = String::new();
+    while Instant::now() < deadline && !after.contains("\"event\":\"checkin_due\"") {
+        std::thread::sleep(Duration::from_millis(500));
+        after.push_str(&common::cli_poll(&mesh, &bob.nickname, None));
+    }
+    for line in after.split("\"event\":\"checkin_due\"").skip(1) {
+        reminder.push_str(line.split("\"is_visible\"").next().unwrap_or(""));
+    }
+    assert!(
+        after.contains("\"event\":\"checkin_due\""),
+        "the silent worker is reminded again after its check-in, got:\n{after}"
+    );
+    assert!(
+        !reminder.contains("build the thing"),
+        "a check-in answers the brief, so the next reminder must not repeat it, got:\n{reminder}"
+    );
+}

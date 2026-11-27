@@ -8,10 +8,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::error::TrySendError;
 
 use super::{
-    OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent, StateChangedParams,
-    TaskGoneReason, TaskId, TaskMessageLeg, TaskOverdueFields, checkin_due_event, emit, emit_json,
-    format_presence_json, peer_return_display, peer_timeout_display, ping_report_display,
-    print_message_json, simple_event, task_overdue_event,
+    CheckinDueFields, OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent,
+    StateChangedParams, TaskGoneReason, TaskId, TaskMessageLeg, TaskOverdueFields,
+    checkin_due_event, emit, emit_json, format_presence_json, peer_return_display,
+    peer_timeout_display, ping_report_display, print_message_json, simple_event,
+    task_overdue_event,
 };
 use crate::a2a::task_record::{CheckinDue, Overdue};
 use crate::a2a::{node, wire};
@@ -386,22 +387,28 @@ impl Output {
     }
 
     /// This worker owes a check-in. It rings the bell and is never shown.
-    pub(crate) fn checkin_due(&self, notice: &CheckinDue, followup_aged_out: bool) {
+    pub(crate) fn checkin_due(&self, notice: &CheckinDue) {
+        let unanswered = notice.unanswered.as_ref();
+        let text = unanswered.map(|unanswered| unanswered.text.as_str());
+        let truncated = unanswered.is_some_and(|unanswered| unanswered.truncated);
+        let has_file = unanswered.is_some_and(|unanswered| unanswered.has_file);
         self.dispatch(
             || OutputEvent::CheckinDue {
                 task_id: notice.task_id.clone(),
                 peer: notice.peer.clone(),
-                followup_seq: notice.followup_seq,
-                followup_aged_out,
+                text: text.map(str::to_owned),
+                truncated,
+                has_file,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
-                    &checkin_due_event(
-                        &notice.task_id,
-                        &notice.peer,
-                        notice.followup_seq,
-                        followup_aged_out,
-                    ),
+                    &checkin_due_event(&CheckinDueFields {
+                        task_id: &notice.task_id,
+                        peer: &notice.peer,
+                        text,
+                        truncated,
+                        has_file,
+                    }),
                     false,
                 ),
                 OutputMode::Silent => {}

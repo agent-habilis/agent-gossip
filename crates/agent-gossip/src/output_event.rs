@@ -160,10 +160,12 @@ pub enum OutputEvent {
         task_id: TaskId,
         /// The initiator.
         peer: Nickname,
-        /// The ring seq of the follow-up the worker has not answered yet.
-        followup_seq: Option<u64>,
-        /// `true` when that follow-up left the ring, so the worker must ask again.
-        followup_aged_out: bool,
+        /// The brief or follow-up the worker has not answered yet.
+        text: Option<String>,
+        /// `true` when the cap cut `text`.
+        truncated: bool,
+        /// `true` when that message carries a file the reminder does not repeat.
+        has_file: bool,
     },
     /// A delivery or read receipt for a message the local node sent.
     Receipt {

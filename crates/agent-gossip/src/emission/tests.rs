@@ -687,8 +687,9 @@ fn checkin_due_event_json_shape() {
     let event = OutputEvent::CheckinDue {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         peer: habilis_network::protocol::Nickname::from("calm-otter"),
-        followup_seq: Some(41),
-        followup_aged_out: false,
+        text: Some("which port?".to_owned()),
+        truncated: true,
+        has_file: false,
     };
     let json = simple_event::event_json(&event).expect("checkin_due event produces a JSON line");
     let parsed = parse(&json);
@@ -697,12 +698,13 @@ fn checkin_due_event_json_shape() {
         "the event field is checkin_due"
     );
     assert_eq!(
-        parsed["followup_seq"], 41,
-        "the reminder names the follow-up"
+        parsed["text"], "which port?",
+        "the reminder repeats the follow-up"
     );
-    assert_eq!(
-        parsed["followup_aged_out"], false,
-        "the follow-up is still in the ring"
+    assert_eq!(parsed["truncated"], true, "the cut is reported");
+    assert!(
+        parsed.get("has_file").is_none(),
+        "a flag that is not set carries no key, got: {parsed}"
     );
     assert!(!simple_event::is_visible(&event), "it is never shown");
     assert!(node::wakes(&event), "it must ring the bell");

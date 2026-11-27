@@ -1112,8 +1112,8 @@ struct RemoteMessage<'caller> {
     label: Option<&'caller str>,
 }
 
-/// Surface an incoming task message to our skill (a `task` event, kind:message), and point the
-/// worker's reminder at it.
+/// Surface an incoming task message to our skill (a `task` event, kind:message), and keep it for
+/// the worker's reminder.
 fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context: &HandlerCtx<'_>) {
     let RemoteMessage {
         payload,
@@ -1123,7 +1123,6 @@ fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context:
     } = *remote;
     let rec_state = app.tasks.get(task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
-    let seq_before = task_record::ring_bounds(app).map(|(_, newest)| newest);
     let mesh_name: &str = context.mesh.as_str();
     let peer_name: &str = context.author.as_str();
     app.output.task_message(&emission::TaskMessageLeg {
@@ -1139,14 +1138,12 @@ fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context:
         message: Some(payload),
         is_self: false,
     });
-    // The worker re-reads an unanswered brief or follow-up by its ring seq, so
-    // the reminder names it. The event gets its seq when the tap drains. A brief
-    // counts too: a worker that never saw it still owes the task a check-in.
-    if let Some(seq) = task_record::newest_task_message_seq(app, seq_before)
-        && let Some(rec) = app.tasks.get_mut(task_id)
+    // The reminder repeats an unanswered brief or follow-up. A brief counts too: a worker that
+    // never saw it still owes the task a check-in.
+    if let Some(rec) = app.tasks.get_mut(task_id)
         && rec.role == task_record::TaskRole::Receiver
     {
-        rec.followup_seq = Some(seq);
+        rec.unanswered = Some(task_record::Unanswered::of(payload));
     }
 }
 

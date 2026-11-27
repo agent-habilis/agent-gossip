@@ -78,8 +78,11 @@ pub(super) enum SimpleEvent<'source> {
         task_id: &'source str,
         peer: &'source str,
         #[serde(skip_serializing_if = "Option::is_none")]
-        followup_seq: Option<u64>,
-        followup_aged_out: bool,
+        text: Option<&'source str>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        has_file: bool,
         display: String,
     },
     Receipt {
@@ -390,19 +393,32 @@ pub(super) struct TaskOverdueFields<'source> {
 
 /// The `checkin_due` event: the worker's reminder. It is never shown, so its
 /// `display` only keeps the line readable in a raw poll.
-pub(super) fn checkin_due_event<'a>(
-    task_id: &'a TaskId,
-    peer: &'a Nickname,
-    followup_seq: Option<u64>,
-    followup_aged_out: bool,
-) -> SimpleEvent<'a> {
+pub(super) fn checkin_due_event<'a>(fields: &CheckinDueFields<'a>) -> SimpleEvent<'a> {
+    let CheckinDueFields {
+        task_id,
+        peer,
+        text,
+        truncated,
+        has_file,
+    } = *fields;
     SimpleEvent::CheckinDue {
         task_id: task_id.as_str(),
         peer: peer.as_str(),
-        followup_seq,
-        followup_aged_out,
+        text,
+        truncated,
+        has_file,
         display: format!("{DISPLAY_GLYPH} check-in due · `<{peer}>`"),
     }
+}
+
+/// The values of a `checkin_due` event, borrowed from its source.
+#[derive(Clone, Copy)]
+pub(super) struct CheckinDueFields<'source> {
+    pub(super) task_id: &'source TaskId,
+    pub(super) peer: &'source Nickname,
+    pub(super) text: Option<&'source str>,
+    pub(super) truncated: bool,
+    pub(super) has_file: bool,
 }
 
 /// `display` line for a `peer_return` event.
@@ -1031,14 +1047,16 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::CheckinDue {
             task_id,
             peer,
-            followup_seq,
-            followup_aged_out,
-        } => serde_json::to_string(&checkin_due_event(
+            text,
+            truncated,
+            has_file,
+        } => serde_json::to_string(&checkin_due_event(&CheckinDueFields {
             task_id,
             peer,
-            *followup_seq,
-            *followup_aged_out,
-        ))
+            text: text.as_deref(),
+            truncated: *truncated,
+            has_file: *has_file,
+        }))
         .ok(),
         OutputEvent::Receipt {
             from,

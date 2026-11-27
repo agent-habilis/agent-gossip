@@ -125,9 +125,9 @@ pub(crate) struct TaskRecord {
     pub status_text: Option<String>,
     /// The initiator's one-line name for the task, as the brief carried it.
     pub label: Option<String>,
-    /// The ring seq of the sender's follow-up the worker has not answered yet,
-    /// so a reminder can name it. Cleared by any leg the worker sends.
-    pub followup_seq: Option<u64>,
+    /// The brief or follow-up the worker has not answered yet, so a reminder can repeat it.
+    /// Cleared by any leg the worker sends.
+    pub unanswered: Option<Unanswered>,
     /// When this node last raised a reminder (worker) or an alarm (sender), so
     /// one task raises one per interval. Any check-in activity clears it.
     pub last_notice: Option<Instant>,
@@ -169,7 +169,7 @@ impl TaskRecord {
             waiting_mark: None,
             status_text: None,
             label: None,
-            followup_seq: None,
+            unanswered: None,
             last_notice: None,
             peer_beat: None,
         }
@@ -446,32 +446,6 @@ pub(crate) fn mark_seen(
     true
 }
 
-/// The seq of the newest `task_message` event in the ring above `after`, once the tap is drained.
-/// The ring can end with another event, such as the loss marker, so the newest seq is not
-/// necessarily the one a caller just emitted.
-pub(crate) fn newest_task_message_seq(app: &mut A2aApp, after: Option<u64>) -> Option<u64> {
-    use crate::emission::OutputEvent;
-
-    app.drain_surfaced_ring();
-    app.surfaced
-        .poll_since(None)
-        .events
-        .iter()
-        .rev()
-        .find(|item| {
-            matches!(item.event, OutputEvent::TaskMessage { .. })
-                && after.is_none_or(|after| item.seq > after)
-        })
-        .map(|item| item.seq)
-}
-
-/// The oldest and the newest seq the surfaced ring holds, once its tap is drained.
-pub(crate) fn ring_bounds(app: &mut A2aApp) -> Option<(u64, u64)> {
-    app.drain_surfaced_ring();
-    let batch = app.surfaced.poll_since(None);
-    Some((batch.events.first()?.seq, batch.events.last()?.seq))
-}
-
 /// Whether a status leg is not older than the one that last set `waiting`. When
 /// both legs carry an order value it decides, so two legs of one second stay in
 /// the order they were sent. Otherwise the wire second decides, as before.
@@ -520,12 +494,50 @@ pub(crate) struct Overdue {
     pub not_picked_up: bool,
 }
 
+/// The brief or follow-up that the worker has not answered, as a reminder repeats it.
+///
+/// The text is peer-controlled and bound for the worker's agent, so it loses its control
+/// characters except the newline and is capped at `TASK_UNANSWERED_TEXT_MAX_CHARS`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unanswered {
+    pub text: String,
+    /// Whether the cap cut the text.
+    pub truncated: bool,
+    /// Whether the message carries a file, which the reminder does not repeat.
+    pub has_file: bool,
+}
+
+impl Unanswered {
+    pub(crate) fn of(message: &super::Message) -> Self {
+        let lines: Vec<&str> = message
+            .parts
+            .iter()
+            .filter_map(|part| part.text.as_deref())
+            .collect();
+        let joined = lines.join("\n");
+        let mut visible = joined.chars().filter(|ch| !ch.is_control() || *ch == '\n');
+        let text: String = visible
+            .by_ref()
+            .take(tuning::TASK_UNANSWERED_TEXT_MAX_CHARS)
+            .collect();
+        let has_file = message
+            .parts
+            .iter()
+            .any(|part| part.raw.is_some() || part.url.is_some());
+        Self {
+            text,
+            truncated: visible.next().is_some(),
+            has_file,
+        }
+    }
+}
+
 /// A raised reminder: this worker owes a check-in.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct CheckinDue {
     pub task_id: TaskId,
     pub peer: Nickname,
-    pub followup_seq: Option<u64>,
+    pub unanswered: Option<Unanswered>,
 }
 
 /// The alarms and reminders that fall due at `now`, each marked so the next
@@ -571,7 +583,7 @@ pub(crate) fn due_checkins(
                     reminders.push(CheckinDue {
                         task_id: task_id.clone(),
                         peer: rec.peer.clone(),
-                        followup_seq: rec.followup_seq,
+                        unanswered: rec.unanswered.clone(),
                     });
                 }
             }
@@ -590,17 +602,8 @@ pub(crate) fn tick_checkins(app: &mut A2aApp) {
     for notice in &overdue {
         app.output.task_overdue(notice);
     }
-    // The ring is bounded, so the follow-up a reminder names may have aged out.
-    let oldest = if reminders.is_empty() {
-        None
-    } else {
-        ring_bounds(app).map(|(oldest, _)| oldest)
-    };
     for notice in &reminders {
-        let aged_out = notice
-            .followup_seq
-            .is_some_and(|seq| oldest.is_none_or(|oldest| seq < oldest));
-        app.output.checkin_due(notice, aged_out);
+        app.output.checkin_due(notice);
     }
 }
 
@@ -876,7 +879,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         rec.last_skill_activity = now;
         rec.last_notice = None;
         if leg.mine && rec.role == TaskRole::Receiver {
-            rec.followup_seq = None;
+            rec.unanswered = None;
         }
     }
 }
@@ -1263,9 +1266,13 @@ mod tests {
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{AuthorKey, Identity, Message, Nickname, UnixSecs};
 
-    use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
+    use super::{
+        IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, Unanswered, apply,
+    };
     use crate::a2a::status_update_params::Progress;
-    use crate::a2a::tuning::{TASK_LEGS_SEEN_CAP, TASK_STATUS_TEXT_MAX_CHARS};
+    use crate::a2a::tuning::{
+        TASK_LEGS_SEEN_CAP, TASK_STATUS_TEXT_MAX_CHARS, TASK_UNANSWERED_TEXT_MAX_CHARS,
+    };
     use crate::a2a::{
         TaskId, extensions, rpc_error, status_update_params, task_record, tuning, wire,
     };
@@ -1840,21 +1847,26 @@ mod tests {
         );
     }
 
-    /// The reminder names the follow-up the worker has not answered, until any leg of its own
+    /// The reminder repeats the follow-up the worker has not answered, until any leg of its own
     /// answers it.
     #[test]
-    fn the_reminder_carries_the_follow_up_seq_until_answered() {
+    fn the_reminder_carries_the_unanswered_text_until_answered() {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
+        let unanswered = Unanswered {
+            text: "which port?".to_owned(),
+            truncated: false,
+            has_file: false,
+        };
         tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier")
-            .followup_seq = Some(41);
+            .unanswered = Some(unanswered.clone());
         let reminders = super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN)).1;
         assert_eq!(
-            reminders.first().map(|due| due.followup_seq),
-            Some(Some(41)),
-            "the reminder names the follow-up"
+            reminders.first().map(|due| due.unanswered.clone()),
+            Some(Some(unanswered)),
+            "the reminder repeats the follow-up"
         );
         apply(
             &mut tasks,
@@ -1862,9 +1874,50 @@ mod tests {
             later(start, CHECKIN * 2),
         );
         assert_eq!(
-            tasks[&tid()].followup_seq,
+            tasks[&tid()].unanswered,
             None,
             "a leg of the worker answers it"
+        );
+    }
+
+    /// The text a reminder repeats is peer-controlled: control characters go, the newline stays,
+    /// and the cap cuts it and says so. A file is named by a flag, not repeated.
+    #[test]
+    fn the_unanswered_text_is_cleaned_and_capped() {
+        let part = |text: &str| crate::a2a::Part::text(text);
+        let message = |parts: Vec<crate::a2a::Part>| {
+            let mut message = crate::a2a::Message::text(crate::a2a::Role::User, "");
+            message.parts = parts;
+            message
+        };
+        let cleaned = Unanswered::of(&message(vec![part("a\u{7}b\nc"), part("d")]));
+        assert_eq!(
+            cleaned.text, "ab\nc\nd",
+            "the newline stays and the bell goes"
+        );
+        assert!(!cleaned.truncated, "a short text is not cut");
+        assert!(!cleaned.has_file, "no file part");
+
+        let long = "x".repeat(TASK_UNANSWERED_TEXT_MAX_CHARS + 1);
+        let capped = Unanswered::of(&message(vec![part(&long)]));
+        assert_eq!(
+            capped.text.chars().count(),
+            TASK_UNANSWERED_TEXT_MAX_CHARS,
+            "the cap holds"
+        );
+        assert!(capped.truncated, "the cut is reported");
+
+        let exact = "y".repeat(TASK_UNANSWERED_TEXT_MAX_CHARS);
+        assert!(
+            !Unanswered::of(&message(vec![part(&exact)])).truncated,
+            "a text of exactly the cap is whole"
+        );
+
+        let mut file = crate::a2a::Part::default();
+        file.url = Some("blob:abc".to_owned());
+        assert!(
+            Unanswered::of(&message(vec![file])).has_file,
+            "a file part is flagged"
         );
     }
 
