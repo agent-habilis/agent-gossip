@@ -238,8 +238,9 @@ worker shows as `progress` (an integer from 0 to 100), and no status text.
 A **check-in** is a `working` status leg from the worker, with a text (what
 changed) and a progress (0 to 100), and optionally `waiting_user`. The worker
 sends one at least every check-in interval (5 min by default). A check-in
-wakes you only when its progress moves into another quarter of the last
-check-in (0–24, 25–49, 50–74, 75–99, 100). The first progress after none and the beats never wake you.
+wakes you when its quarter changes from that of the last check-in (0–24,
+25–49, 50–74, 75–99, 100). The first progress after none and the beats never
+wake you.
 Otherwise its badge update, `working`, waits for your next batch. A
 `task_overdue`, a question, an artifact or a terminal state wakes you.
 
