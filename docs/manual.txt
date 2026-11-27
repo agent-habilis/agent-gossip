@@ -678,9 +678,7 @@ COMMANDS
 
               The keepalive proves that the worker's daemon is up, not that
               its agent works. So the worker's keepalive also carries
-              mesh:bell (whether the agent has a bell armed), mesh:last_poll
-              (seconds since its last foreground poll) and mesh:checkin_age
-              (the age of its last check-in). The sender owns the check that its task is
+              mesh:checkin_age (the age of its last check-in). The sender owns the check that its task is
               worked on, with one timer: the check-in interval X (5 minutes).
               X after its last activity on the task, the worker's daemon
               emits checkin_due, then every X, which rings the bell of the
@@ -1489,8 +1487,7 @@ JSON EVENTS
               sees it again every X. It states a fact and cancels nothing.
               Each part of the display after the age appears only when set:
               the tag the worker gave in --waiting-on, `not picked up` when
-              the worker never accepted, and what the last beat said about
-              the bell and the last poll. The event is visible: print its
+              the worker never accepted. The event is visible: print its
               display line. It rings the bell, except when the worker waits
               on `user`: then it goes on the ring without a wake. It fires
               from the age of the last check-in alone, also before the first
@@ -1499,11 +1496,10 @@ JSON EVENTS
                  {"event":"task_overdue","task_id":"<uuid>","peer":"calm-otter",
                   "label":"review the diff","age_secs":660,
                   "waiting_on":"user","not_picked_up":false,
-                  "bell":true,"last_poll_secs_ago":120,
-                  "display":"💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min · waiting on user · bell on, last poll 2 min ago"}
+                  "display":"💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min · waiting on user"}
 
-              The keys waiting_on, bell and last_poll_secs_ago are optional:
-              each is absent when the worker did not report it.
+              The key waiting_on is optional: it is absent when the worker
+              gave no tag.
 
        checkin_due
               The worker's daemon saw that the task owes a check-in: X after

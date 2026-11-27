@@ -249,7 +249,7 @@ interval, then again every interval. It states a fact, and it cancels nothing.
 The `display` line reads:
 
 ```text
-💬️ task overdue · `<worker>` · <label> · no check-in for 11 min[ · waiting on <x>][ · not picked up][ · bell on, last poll 2 min ago]
+💬️ task overdue · `<worker>` · <label> · no check-in for 11 min[ · waiting on <x>][ · not picked up]
 ```
 
 Each bracketed part appears only when it is set. Print it verbatim, set the
