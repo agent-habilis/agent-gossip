@@ -110,22 +110,6 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
 
-    /// First rival re-check shed of an `EagerProbed` public beacon (seconds).
-    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK_FIRST))]
-    pub rival_recheck_first_secs: u64,
-
-    /// Steady rival re-check cadence for a lone beacon holder (seconds).
-    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK))]
-    pub rival_recheck_secs: u64,
-
-    /// Steady rival re-check cadence while meshed (seconds).
-    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK_MESHED))]
-    pub rival_recheck_meshed_secs: u64,
-
-    /// Rival re-check cadence ceiling for a beacon holder with no peers (seconds).
-    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK_ALONE))]
-    pub rival_recheck_alone_secs: u64,
-
     /// How long a member that let go of the rendezvous waits before it comes back to it (seconds).
     #[arg(long, hide = true, default_value_t = secs(defaults::RENDEZVOUS_PERIODIC_RETURN))]
     pub rendezvous_periodic_return_secs: u64,
@@ -156,10 +140,6 @@ impl TuningOpts {
         tuning.directory_expiry = Duration::from_secs(self.directory_expiry_secs);
         tuning.backfill_interval = Duration::from_secs(self.backfill_interval_secs);
         tuning.directory_private = self.directory_private;
-        tuning.rival_recheck_first = Duration::from_secs(self.rival_recheck_first_secs);
-        tuning.rival_recheck = Duration::from_secs(self.rival_recheck_secs);
-        tuning.rival_recheck_meshed = Duration::from_secs(self.rival_recheck_meshed_secs);
-        tuning.rival_recheck_alone = Duration::from_secs(self.rival_recheck_alone_secs);
         tuning.rendezvous_periodic_return =
             Duration::from_secs(self.rendezvous_periodic_return_secs);
         tuning.topic_mdns_only = self.topic_mdns_only;

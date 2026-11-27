@@ -33,15 +33,7 @@ fn init_short_tuning() {
     // Probe budget self-clamps to min(HEAL_PROBE, heal_interval);
     // keep it at the full 5s — an mDNS resolve of the rendezvous id
     // takes a query round, and a too-short probe re-binds a duplicate.
-    let mut tuning = Tuning::DEFAULTS
-        .heal_interval(Duration::from_secs(5))
-        .rival_recheck_first(Duration::from_secs(3))
-        .rival_recheck(Duration::from_secs(8));
-    // Both halves of a split have an empty roster, so the alone ceiling
-    // is the cap this test's ramp actually meets.
-    tuning = tuning
-        .rival_recheck_meshed(Duration::from_secs(12))
-        .rival_recheck_alone(Duration::from_secs(12));
+    let mut tuning = Tuning::DEFAULTS.heal_interval(Duration::from_secs(5));
     tuning.topic_mdns_only = true;
     init(tuning);
 }
