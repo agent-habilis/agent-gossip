@@ -592,7 +592,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
                 now: Instant::now(),
             },
         );
-        replay = !applied.first_seen;
+        replay = !applied.news;
         quarter_moved = applied.quarter_moved;
         if replay {
             tracing::info!(
@@ -1028,7 +1028,7 @@ fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError>
 /// The task, whether the leg is new and the label of the brief, as [`apply_remote_leg`] applied it.
 struct RemoteLeg {
     task_id: crate::a2a::TaskId,
-    first_seen: bool,
+    news: bool,
     label: Option<String>,
     /// Whether the message opens the task.
     brief: bool,
@@ -1099,10 +1099,10 @@ fn apply_remote_leg(
     {
         rec.label.clone_from(&label);
     }
-    let first_seen = applied.first_seen;
+    let news = applied.news;
     Ok(RemoteLeg {
         task_id,
-        first_seen,
+        news,
         label,
         brief: kind == LegKind::Offer,
     })
@@ -1163,13 +1163,13 @@ fn ingest_remote_message(
 ) -> Result<serde_json::Value, RpcError> {
     let RemoteLeg {
         task_id,
-        first_seen,
+        news,
         label,
         brief,
     } = apply_remote_leg(payload, (requester_key, requester), app, Instant::now())?;
     // A replayed message changes nothing the skill has not seen, so it neither surfaces nor
     // rings the bell; the caller still gets the task snapshot below.
-    if first_seen {
+    if news {
         let remote = RemoteMessage {
             payload,
             requester: (requester_key, requester),
@@ -1566,11 +1566,11 @@ mod classify_tests {
         let leg =
             super::apply_remote_leg(&follow_up, (&requester_key, &requester), &mut app, first)
                 .expect("the follow-up names an open task");
-        assert!(leg.first_seen, "the first copy is new");
+        assert!(leg.news, "the first copy is new");
         let replayed =
             super::apply_remote_leg(&follow_up, (&requester_key, &requester), &mut app, replay)
                 .expect("a replay is still a valid leg");
-        assert!(!replayed.first_seen, "the second copy is a replay");
+        assert!(!replayed.news, "the second copy is a replay");
         assert_eq!(
             app.tasks[&opened.task_id].last_skill_activity, first,
             "the replay left the clock where the first copy set it"

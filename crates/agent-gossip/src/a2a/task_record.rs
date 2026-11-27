@@ -57,7 +57,7 @@ impl TaskRole {
 
 /// When the status leg that set or cleared `waiting` was sent: its wire second,
 /// and its order value when its peer sent one.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WaitingMark {
     at: UnixSecs,
     order: Option<u64>,
@@ -121,10 +121,11 @@ pub(crate) struct TaskRecord {
     /// status leg. A label only: it does not move the check-in clock. A check-in without it
     /// clears it.
     pub waiting_user: bool,
-    /// The status leg that last set or cleared `waiting_user`. A leg older than this
-    /// is a replay and changes nothing. A worker clock that steps back drops
-    /// newer waiting updates until it passes this time again, the same exposure
-    /// as `is_stale`, accepted.
+    /// The worker's leg that last set or cleared `waiting_user`. A leg of the worker older than
+    /// this is not news: it moves no state, no clock and no flag. The other party's legs are not
+    /// compared with it, since they come from another clock. A worker clock that steps back
+    /// drops newer waiting updates until it passes this time again, the same exposure as
+    /// `is_stale`, accepted.
     pub waiting_mark: Option<WaitingMark>,
     /// What changed, from the last check-in leg, capped. Not replayed.
     pub status_text: Option<String>,
@@ -244,8 +245,8 @@ pub(crate) struct LegInfo<'source> {
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
-    /// Whether the leg is news: its id is new and it is not older than the leg that last
-    /// decided the waiting flag. A leg that is not news changes neither the state nor a clock.
+    /// Whether the leg is news, as [`Applied::news`] says. A leg that is not news changes
+    /// neither the state nor a clock.
     pub news: bool,
 }
 
@@ -313,9 +314,10 @@ pub(crate) enum LegSource<'caller> {
 /// What a received leg turned out to be, for the layer that surfaces it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Applied {
-    /// Whether the leg is news: its id is new to the record and its task is still open. A leg
-    /// that is not news stays off the surface, and it moves no clock.
-    pub first_seen: bool,
+    /// Whether the leg is news: its id is new to the record, its task is still open, and, when
+    /// the worker sent it, it is not older than the worker's leg that last decided the waiting
+    /// flag. A leg that is not news stays off the surface, and it moves no state and no clock.
+    pub news: bool,
     /// Whether a check-in put the progress in another quarter.
     pub quarter_moved: bool,
 }
@@ -323,7 +325,7 @@ pub(crate) struct Applied {
 impl Applied {
     /// A leg that belongs to no task, or to a task of another peer.
     const NONE: Self = Self {
-        first_seen: false,
+        news: false,
         quarter_moved: false,
     };
 }
@@ -440,8 +442,12 @@ pub(crate) fn apply_leg(
     let seen = facts
         .id
         .is_some_and(|id| held.is_some_and(|rec| rec.legs_seen.contains(id)));
+    // The mark orders the worker's legs only. A leg of the other party, such as the sender's
+    // cancel, is stamped by another clock and is never compared with it.
+    let from_worker = !mine && held.is_some_and(|rec| rec.role == TaskRole::Initiator);
     let newer = mine
         || !ordered
+        || !from_worker
         || held.is_none_or(|rec| is_newer_than_waiting(rec, facts.at, facts.order));
     let reach = apply(
         tasks,
@@ -468,7 +474,7 @@ pub(crate) fn apply_leg(
     let quarter_moved = record_frame_facts(tasks, task_id, &facts, (mine, seen));
     let finished = reach == Reach::Finished || closed.get(task_id).is_some();
     Applied {
-        first_seen: !seen && !finished,
+        news: !seen && newer && !finished,
         quarter_moved: quarter_moved && !finished,
     }
 }
@@ -503,7 +509,8 @@ fn record_frame_facts(
     // replay an old leg, so two checks gate the update: `is_newer_than_waiting` drops a leg older
     // than the last answer, and `seen` drops a leg already taken in, which covers a replay in the
     // same second as the answer. A finished task waits for nothing.
-    let current = !seen && is_newer_than_waiting(rec, facts.at, facts.order);
+    let from_worker = mine == (rec.role == TaskRole::Receiver);
+    let current = from_worker && !seen && is_newer_than_waiting(rec, facts.at, facts.order);
     let mut quarter_moved = false;
     match facts.kind {
         LegKind::Status(_) if rec.state.is_terminal() => rec.waiting_user = false,
@@ -1375,7 +1382,8 @@ mod tests {
     use habilis_network::protocol::{AuthorKey, Identity, Message, Nickname, UnixSecs};
 
     use super::{
-        IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, Unanswered, apply,
+        IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, Unanswered,
+        WaitingMark, apply,
     };
     use crate::a2a::status_update_params::Progress;
     use crate::a2a::tuning::{
@@ -1991,8 +1999,8 @@ mod tests {
         receive(&mut tasks, &status_leg(false));
         let question = status_frame(TaskState::InputRequired, None);
         assert!(
-            receive(&mut tasks, &question).first_seen,
-            "the question is news"
+            receive(&mut tasks, &question).news,
+            "a question seen for the first time is worth surfacing"
         );
         assert_eq!(
             tasks[&tid()].state,
@@ -2011,7 +2019,7 @@ mod tests {
             "the answer resumes it"
         );
         assert!(
-            !receive(&mut tasks, &question).first_seen,
+            !receive(&mut tasks, &question).news,
             "the second copy of the question is a replay"
         );
         assert_eq!(
@@ -2031,8 +2039,8 @@ mod tests {
             receive_follow_up(registry, id, later(start, Duration::from_secs(10)))
         };
         assert!(
-            message(&mut tasks, "m-a").first_seen,
-            "the follow-up is news"
+            message(&mut tasks, "m-a").news,
+            "a follow-up seen for the first time is worth surfacing"
         );
         apply(
             &mut tasks,
@@ -2045,7 +2053,7 @@ mod tests {
             "the worker asked a question"
         );
         assert!(
-            !message(&mut tasks, "m-a").first_seen,
+            !message(&mut tasks, "m-a").news,
             "the second copy of the follow-up is a replay"
         );
         assert_eq!(
@@ -2076,7 +2084,10 @@ mod tests {
             "the result parks the task for review"
         );
         assert!(tasks[&tid()].review, "the task awaits the review");
-        ingest_at(&mut tasks, &ordered_leg(false, sent, 1_500), start);
+        assert!(
+            !receive(&mut tasks, &ordered_leg(false, sent, 1_500)).news,
+            "a check-in sent before the artifact is not news, so it stays off the surface"
+        );
         assert_eq!(
             tasks[&tid()].state,
             TaskState::InputRequired,
@@ -2091,6 +2102,36 @@ mod tests {
         );
     }
 
+    /// The mark orders the worker's legs. The sender's cancel is stamped by another clock, so a
+    /// cancel that its clock puts a second before the worker's last leg must still end the task.
+    #[test]
+    fn a_cancel_from_the_sender_is_not_compared_with_the_workers_mark() {
+        let sent = UnixSecs::now();
+        let start = Instant::now();
+        let mut tasks = task_we_serve(start);
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .waiting_mark = Some(WaitingMark::new(sent, Some(5_000)));
+        let mut cancel = status_frame(TaskState::Canceled, None);
+        cancel.timestamp = sent - Duration::from_secs(1);
+        let applied = receive(&mut tasks, &cancel);
+        assert!(
+            applied.news,
+            "the worker takes the cancel in although the clock of its sender runs a second behind"
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Canceled,
+            "the worker stops working a task that its sender canceled"
+        );
+        assert_eq!(
+            tasks[&tid()].waiting_mark,
+            Some(WaitingMark::new(sent, Some(5_000))),
+            "the sender's leg leaves the worker's mark alone"
+        );
+    }
+
     /// A follow-up or a brief that a relay delivers twice is news only the first time, and a
     /// follow-up to a task that already closed is not news at all.
     #[test]
@@ -2101,15 +2142,15 @@ mod tests {
             receive_follow_up(registry, id, later(start, Duration::from_secs(10)))
         };
         assert!(
-            message(&mut tasks, "m-1").first_seen,
-            "the first copy is news"
+            message(&mut tasks, "m-1").news,
+            "the first copy of a message is worth surfacing"
         );
         assert!(
-            !message(&mut tasks, "m-1").first_seen,
+            !message(&mut tasks, "m-1").news,
             "the second copy is a replay"
         );
         assert!(
-            message(&mut tasks, "m-2").first_seen,
+            message(&mut tasks, "m-2").news,
             "another follow-up is news again"
         );
         tasks
@@ -2117,7 +2158,7 @@ mod tests {
             .expect("the test inserted this task earlier")
             .state = TaskState::Completed;
         assert!(
-            !message(&mut tasks, "m-3").first_seen,
+            !message(&mut tasks, "m-3").news,
             "a closed task has nothing to tell its worker"
         );
     }
@@ -2133,11 +2174,11 @@ mod tests {
             receive_follow_up(&mut tasks, &format!("leg-{index}"), start);
         }
         assert!(
-            !receive_follow_up(&mut tasks, &format!("leg-{}", cap * 10 - 1), start).first_seen,
+            !receive_follow_up(&mut tasks, &format!("leg-{}", cap * 10 - 1), start).news,
             "the newest id is remembered"
         );
         assert!(
-            receive_follow_up(&mut tasks, "leg-0", start).first_seen,
+            receive_follow_up(&mut tasks, "leg-0", start).news,
             "the oldest id was forgotten, so the set did not grow"
         );
     }
@@ -2878,7 +2919,7 @@ mod tests {
             .state = TaskState::Completed;
         let late = status_leg(false);
         assert!(
-            !receive(&mut tasks, &late).first_seen,
+            !receive(&mut tasks, &late).news,
             "a relay can deliver an old frame, and a closed task must not surface it twice"
         );
     }
@@ -2905,7 +2946,7 @@ mod tests {
         assert!(tasks.is_empty(), "the registry is empty after the reap");
         let late = status_leg(false);
         assert!(
-            !receive_with(&mut tasks, &reaped_ids, &tid(), &late).first_seen,
+            !receive_with(&mut tasks, &reaped_ids, &tid(), &late).news,
             "the reap forgets the record but the id list must still catch old frames"
         );
     }
@@ -3011,11 +3052,11 @@ mod tests {
         open_as_initiator(&mut tasks, now);
         let working = status_leg(false);
         assert!(
-            receive(&mut tasks, &working).first_seen,
+            receive(&mut tasks, &working).news,
             "the first copy of a leg is news"
         );
         assert!(
-            !receive(&mut tasks, &working).first_seen,
+            !receive(&mut tasks, &working).news,
             "the second copy of the same leg is a replay"
         );
     }
@@ -3034,7 +3075,7 @@ mod tests {
             ingest_inbound(&mut tasks, &status_leg(true));
         }
         assert!(
-            !receive(&mut tasks, &real).first_seen,
+            !receive(&mut tasks, &real).news,
             "a leg the task already saw is a replay"
         );
     }
@@ -3049,12 +3090,12 @@ mod tests {
         receive(&mut tasks, &status_leg(false));
         let fresh = status_leg(false);
         assert!(
-            receive(&mut tasks, &fresh).first_seen,
+            receive(&mut tasks, &fresh).news,
             "a live task must keep surfacing its new legs"
         );
         let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
         assert!(
-            receive_with(&mut tasks, &closed(), &unknown, &fresh).first_seen,
+            receive_with(&mut tasks, &closed(), &unknown, &fresh).news,
             "the worker's first leg can beat the RPC response, so it must still surface"
         );
     }

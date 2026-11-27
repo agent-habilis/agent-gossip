@@ -870,12 +870,11 @@ fn json_ok_record(id: &MessageId, message: &Authored) -> String {
 mod tests {
     use habilis_network::runtime::ipc::Addressed;
 
-    use crate::a2a::TaskState;
-
     use super::{
         EndpointCandidate, IpcCommand, MeshId, MessageBody, Nickname, TaskId, WorkerLeg,
         endpoint_entries,
     };
+    use crate::a2a::TaskState;
 
     // ── Topology endpoints ─────────────────────────────────────────
 

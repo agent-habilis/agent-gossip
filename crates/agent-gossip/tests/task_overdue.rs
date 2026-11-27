@@ -217,7 +217,6 @@ fn the_workers_reminder_repeats_the_brief_until_it_is_answered() {
     common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
     // A reminder raised before the check-in may still wait in the ring. Read it past, so that
     // what comes after was raised after the check-in.
-    std::thread::sleep(Duration::from_millis(500));
     let _older = common::cli_poll(&mesh, &bob.nickname, None);
     let again_deadline = Instant::now() + Duration::from_secs(30);
     let mut after = String::new();
