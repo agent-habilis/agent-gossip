@@ -105,11 +105,9 @@ struct MessageHeader<'source> {
     pub gossip: &'source str,
     pub author: &'source str,
     /// Author's full Ed25519 public key (hex) — the cryptographic identity
-    /// behind the display `author`. `Some` on every signed (real) message;
-    /// `None` (omitted) only for unsigned test fixtures. Agents should key
+    /// behind the display `author`. Agents should key
     /// trust/disambiguation on this, not the nickname.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pubkey: Option<String>,
+    pub pubkey: String,
     pub ts: i64,
 }
 
@@ -160,8 +158,7 @@ struct TaskLine<'source> {
     pub id: &'source str,
     pub gossip: &'source str,
     pub author: &'source str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pubkey: Option<String>,
+    pub pubkey: String,
     pub ts: i64,
     pub to: &'source str,
     /// The addressee's key. Absent on a leg that arrived over the request/response binding,
@@ -221,8 +218,7 @@ struct StateLine<'source> {
     ty: &'static str,
     gossip: &'source str,
     author: &'source str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pubkey: Option<String>,
+    pubkey: String,
     ts: i64,
     merge: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,7 +229,7 @@ struct StateLine<'source> {
 }
 
 fn message_header<'a>(message: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
-    let pubkey = Some(message.key().to_string());
+    let pubkey = message.key().to_string();
     MessageHeader {
         event: "message",
         id: message.id.as_str(),
@@ -435,7 +431,7 @@ pub(super) fn format_presence_json(
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
         header: MessageHeader {
-            pubkey: Some(peer.to_string()),
+            pubkey: peer.to_string(),
             ..message_header(message, "presence")
         },
         subtype,
@@ -554,7 +550,7 @@ pub(super) fn format_task_json(
     let author = message.author.as_str();
     let to_text = to_label(to, addressee_name);
     let to_pubkey = to.to_string();
-    let pubkey = Some(message.key().to_string());
+    let pubkey = message.key().to_string();
     // Only a `working` leg carries the reason, as in the record.
     let waiting = status_update_params::status_payload(message)
         .ok()
@@ -713,7 +709,7 @@ pub(super) fn format_state_json(
     let what = state_change_summary(merge.as_ref());
     let label = channel.label();
     let author = event.author.as_str();
-    let pubkey = Some(event.key().to_string());
+    let pubkey = event.key().to_string();
     let merge_value = merge.unwrap_or(serde_json::Value::Null);
     stamp_visibility(
         serde_json::to_string(&StateLine {
@@ -798,7 +794,7 @@ fn formatted_json(event: &OutputEvent) -> Option<String> {
                 body: text,
             });
             let payload = message.as_deref().and_then(message_without_text);
-            let pubkey = Some(author_key.to_string());
+            let pubkey = author_key.to_string();
             let ts = UnixSecs::now().as_secs();
             let line = TaskLine {
                 event: "task",
