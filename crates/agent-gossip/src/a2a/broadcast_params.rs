@@ -23,7 +23,7 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
-use crate::a2a::rpc_error::PeerRef;
+use crate::a2a::rpc_error::{PeerRef, is_send_message};
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::status_update_params::Progress;
 use crate::a2a::surfaced_event::PollResponder::Typed;
@@ -1989,14 +1989,14 @@ pub(crate) async fn broadcast_a2a_call(
         responder,
         blob_group,
         opens_task,
-        restarts_clock: method == "SendMessage",
+        restarts_clock: is_send_message(method),
     }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
     // Directed request over the shared RPC sender: unicast per frame,
     // transparently splitting a large sealed body into shard frames.
-    if let Err(error) = send_directed_rpc(
+    let sent = send_directed_rpc(
         DirectedRpcParams {
             mesh,
             author,
@@ -2006,11 +2006,28 @@ pub(crate) async fn broadcast_a2a_call(
         state,
         sender,
     )
-    .await
-    {
-        if method == served::READER_GET {
+    .await;
+    match sent {
+        // The follow-up hands the task back at dispatch: a reply that never arrives must not
+        // leave the record parked on us with the check-in clock stopped.
+        Ok(()) => {
+            if is_send_message(method)
+                && let Some(task_id) = params["message"]["taskId"]
+                    .as_str()
+                    .and_then(crate::a2a::TaskId::from_uuid_str)
+            {
+                task_record::note_follow_up_sent(
+                    &mut app.tasks,
+                    &task_id,
+                    &peer_key,
+                    Instant::now(),
+                );
+            }
+        }
+        Err(error) if method == served::READER_GET => {
             tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
-        } else {
+        }
+        Err(error) => {
             tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
         }
     }

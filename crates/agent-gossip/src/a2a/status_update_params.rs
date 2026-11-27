@@ -604,7 +604,10 @@ impl Progress {
     /// zero. A done above the total counts as complete.
     #[must_use]
     pub fn from_fraction((done, total): (u64, u64)) -> Option<Self> {
-        let percent = done.min(total).checked_mul(100)?.checked_div(total)?;
+        // u128 holds `u64::MAX * 100`, so a huge fraction cannot overflow into `None`.
+        let percent = u128::from(done.min(total))
+            .checked_mul(100)?
+            .checked_div(u128::from(total))?;
         u8::try_from(percent).ok().map(Self)
     }
 }
@@ -993,6 +996,11 @@ mod tests {
             Progress::from_fraction((150, 100)).map(Progress::percent),
             Some(100),
             "more done than the total counts as complete"
+        );
+        assert_eq!(
+            Progress::from_fraction((u64::MAX, u64::MAX)).map(Progress::percent),
+            Some(100),
+            "a huge fraction still stands for its percentage"
         );
         assert_eq!(
             Progress::from_fraction((1, 0)),

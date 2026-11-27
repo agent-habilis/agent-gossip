@@ -314,6 +314,15 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
         }
     }
+    // A delivered result answers whatever the worker waited on, and no check-in needs to say so.
+    if kind == LegKind::Artifact
+        && first_seen
+        && !rec.state.is_terminal()
+        && is_newer_than_waiting(rec, frame.timestamp, None)
+    {
+        rec.waiting_on = None;
+        rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, None));
+    }
 }
 
 /// Keep what a status leg says about the work. A check-in sets the tag, the
@@ -436,7 +445,7 @@ fn checkin_age(rec: &TaskRecord, now: Instant) -> Duration {
     let local = now.duration_since(rec.last_skill_activity);
     let stated = rec.peer_beat.and_then(|beat| {
         beat.checkin_age_secs
-            .map(|age| Duration::from_secs(age) + now.duration_since(beat.at))
+            .map(|age| Duration::from_secs(age).saturating_add(now.duration_since(beat.at)))
     });
     stated.map_or(local, |stated| stated.min(local))
 }
@@ -738,6 +747,36 @@ pub(crate) fn adopt_initiator(
             }
         }
     }
+}
+
+/// Record a follow-up we just sent into a task we opened. It hands the task back to the worker
+/// at dispatch, not on the reply, so a lost reply or request leaves no record parked on us with
+/// the check-in clock stopped.
+pub(crate) fn note_follow_up_sent(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    task_id: &TaskId,
+    peer_key: &AuthorKey,
+    now: Instant,
+) {
+    if tasks
+        .get(task_id)
+        .is_none_or(|rec| rec.role != TaskRole::Initiator)
+    {
+        return;
+    }
+    apply(
+        tasks,
+        &LegInfo {
+            task_id,
+            peer_key,
+            peer: None,
+            kind: LegKind::Text,
+            mine: true,
+            fraction: None,
+            first_seen: true,
+        },
+        now,
+    );
 }
 
 /// Give the initiator-side record the task label its worker echoed in `GetTask`,
@@ -1997,6 +2036,110 @@ mod tests {
         assert!(
             !super::quarter_moved(tasks.get(&tid()), &authored_by("calm-otter", &beat)),
             "a beat never wakes"
+        );
+    }
+
+    /// An artifact frame for `tid()` from the worker, stamped at `at`.
+    fn artifact_leg(at: UnixSecs) -> Message {
+        use habilis_network::protocol::{AppFrameParams, MeshId, MessageBody};
+
+        let mesh = MeshId::from("test");
+        let payload = status_update_params::artifact_update(&mesh, &tid(), "the result");
+        let mut frame = Message::new_app(
+            &mesh,
+            &Nickname::from("calm-otter"),
+            AppFrameParams::new(
+                wire::app_tag(wire::ARTIFACT),
+                Some(peer_key("worker-bot")),
+                None,
+                MessageBody::try_new(
+                    &serde_json::to_string(&payload).expect("a test value serializes to JSON"),
+                )
+                .expect("a test value serializes to JSON"),
+            ),
+        );
+        frame.timestamp = at;
+        frame
+    }
+
+    /// A delivered result answers what the worker waited on, so a rework that then stalls
+    /// raises an alarm that rings, not one filed under `waiting on user`.
+    #[test]
+    fn an_artifact_clears_what_the_worker_waited_on() {
+        let first = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        ingest_inbound(&mut tasks, &waiting_leg(Some("user"), first));
+        assert_eq!(
+            tasks[&tid()].waiting_on.as_deref(),
+            Some("user"),
+            "the check-in names the user"
+        );
+        ingest_inbound(&mut tasks, &artifact_leg(first + Duration::from_secs(5)));
+        assert_eq!(
+            tasks[&tid()].waiting_on,
+            None,
+            "the artifact ends the wait on the user"
+        );
+    }
+
+    /// The follow-up hands the task back to the worker at dispatch, so the check-in clock runs
+    /// again even when the request or its reply is lost.
+    #[test]
+    fn a_follow_up_resumes_a_task_that_waited_on_input() {
+        let start = Instant::now();
+        let mut tasks = task_we_opened_with_checkins(start);
+        let parked = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
+        parked.state = TaskState::InputRequired;
+        parked.review = true;
+        parked.ball = TaskRole::Initiator;
+        super::note_follow_up_sent(
+            &mut tasks,
+            &tid(),
+            &peer_key("calm-otter"),
+            later(start, CHECKIN),
+        );
+        let resumed = &tasks[&tid()];
+        assert_eq!(
+            resumed.state,
+            TaskState::Working,
+            "the answer resumes the task"
+        );
+        assert!(!resumed.review, "nothing waits for a review any more");
+        assert_eq!(
+            resumed.ball,
+            TaskRole::Receiver,
+            "the worker holds the ball"
+        );
+        assert_eq!(
+            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 3))
+                .0
+                .len(),
+            1,
+            "a worker silent after the answer is overdue 2·X later"
+        );
+    }
+
+    /// The age in a beat comes from the peer and has no bound; it must not panic the sender.
+    #[test]
+    fn an_unbounded_beat_age_cannot_panic_the_alarm() {
+        let start = Instant::now();
+        let mut tasks = task_we_opened_with_checkins(start);
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .peer_beat = Some(super::PeerBeat {
+            checkin_age_secs: Some(u64::MAX),
+            reader: None,
+            at: start,
+        });
+        assert_eq!(
+            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2))
+                .0
+                .len(),
+            1,
+            "the local age wins over an absurd stated age"
         );
     }
 

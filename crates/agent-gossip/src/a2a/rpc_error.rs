@@ -124,6 +124,12 @@ pub(crate) struct A2aRequest {
     pub response: oneshot::Sender<Result<Value, RpcError>>,
 }
 
+/// Whether `method` hands the peer a message: `SendMessage` and its streaming twin share one
+/// meaning, so every caller that asks asks here.
+pub(crate) fn is_send_message(method: &str) -> bool {
+    matches!(method, "SendMessage" | "SendStreamingMessage")
+}
+
 /// Map a JSON-RPC `method` + `params` (+ the URL-derived target) to an op.
 ///
 /// # Errors

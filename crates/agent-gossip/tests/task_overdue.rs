@@ -141,3 +141,67 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
         "the bell rang for the quarter move, got:\n{events}"
     );
 }
+
+/// A worker that asks a question and then falls silent after the answer is reported too: the
+/// answer hands the task back to the worker, so the sender's check-in clock runs again.
+#[test]
+fn a_worker_that_goes_silent_after_an_answer_is_reported_overdue() {
+    let _serial = common::serial_guard();
+    let (alice, mesh) = Node::create_flags("itest-answered", &FAST_CHECKIN);
+    let bob = Node::join_flags(&mesh, "answered-bob", &FAST_CHECKIN);
+    assert!(
+        alice.wait_ready(&mesh),
+        "an overdue report needs a ready initiator to receive it"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "an overdue report needs a ready worker to fall silent"
+    );
+
+    let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
+    common::cli_task_status(
+        &mesh,
+        &bob.nickname,
+        &task_id,
+        "working",
+        Some("accepted: build it"),
+        Some("0"),
+    );
+    common::cli_task_status(
+        &mesh,
+        &bob.nickname,
+        &task_id,
+        "input-required",
+        Some("which port?"),
+        None,
+    );
+    let question = common::cli_poll(&mesh, &alice.nickname, None);
+    assert!(
+        question.contains("which port?"),
+        "the question must reach the sender before it answers, got:\n{question}"
+    );
+    let answer = common::cli_task_followup(
+        &common::FollowupParams::new(&mesh, &alice.nickname, &bob.nickname, &task_id)
+            .with_text("port 8080"),
+    );
+    assert_eq!(
+        answer["result"]["task"]["id"], task_id,
+        "the answer lands on the same task, got: {answer}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut seen = String::new();
+    while Instant::now() < deadline {
+        seen.push_str(&common::cli_poll(&mesh, &alice.nickname, None));
+        if seen.contains("\"event\":\"task_overdue\"") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(
+        seen.contains("\"event\":\"task_overdue\""),
+        "alice never saw task_overdue after the answer to {}\nalice poll output:\n{seen}\nbob log:\n{}",
+        bob.nickname,
+        bob.log_tail(20),
+    );
+}
