@@ -1,7 +1,7 @@
 use super::agent::home_drift_warning;
 use super::ready_state_file::ReadyStateFile;
 
-/// Print the session identity as a JSON object for `agent-gossip ready --output json`,
+/// Print the session identity as a JSON object for `agent-gossip ready`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"gossip":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
