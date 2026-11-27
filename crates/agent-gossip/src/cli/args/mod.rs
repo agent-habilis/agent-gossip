@@ -6,12 +6,15 @@
 //! imperative per-command logic lives in the parent [`super`] module.
 
 pub(crate) use self::a2a_action::A2aAction;
+pub(crate) use self::artifact_args::ArtifactArgs;
 pub(crate) use self::bell_check_opts::BellCheckOpts;
+pub(crate) use self::call_args::CallArgs;
 pub(crate) use self::cli::Cli;
 pub(crate) use self::commands::Commands;
 pub(crate) use self::create_opts::CreateOpts;
 pub(crate) use self::discover_opts::DiscoverOpts;
 pub(crate) use self::doctor_opts::DoctorOpts;
+pub(crate) use self::expose_args::ExposeArgs;
 pub(crate) use self::invite_opts::InviteOpts;
 pub(crate) use self::join_opts::{DEFAULT_ROOM_ENV, GossipArg, resolve_target};
 pub(crate) use self::leave_opts::LeaveOpts;
@@ -27,15 +30,19 @@ pub(crate) use self::session_opts::SessionOpts;
 pub(crate) use self::shared_server_opts::SharedServerOpts;
 pub(crate) use self::state_action::StateAction;
 pub(crate) use self::state_opts::StateOpts;
+pub(crate) use self::status_args::StatusArgs;
 pub(crate) use self::topic_opts::TopicOpts;
 pub(crate) use self::topology_opts::TopologyOpts;
 
 mod a2a_action;
 mod a2a_opts;
+mod artifact_args;
 mod bell_check_opts;
+mod call_args;
 mod create_opts;
 mod discover_opts;
 mod doctor_opts;
+mod expose_args;
 mod invite_opts;
 mod join_opts;
 mod leave_opts;
@@ -54,6 +61,7 @@ mod session_opts;
 mod shared_server_opts;
 mod state_action;
 mod state_opts;
+mod status_args;
 mod topic_opts;
 mod topology_opts;
 pub(crate) mod transport;
