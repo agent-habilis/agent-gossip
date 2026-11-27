@@ -124,6 +124,19 @@ pub(crate) struct A2aRequest {
     pub response: oneshot::Sender<Result<Value, RpcError>>,
 }
 
+pub(crate) fn task_id_param(params: &Value) -> Result<TaskId, RpcError> {
+    params["id"]
+        .as_str()
+        .and_then(TaskId::from_uuid_str)
+        .ok_or_else(|| RpcError::invalid_params("params.id must be a task id (uuid)"))
+}
+
+pub(crate) fn message_param(params: &Value) -> Result<super::Message, RpcError> {
+    serde_json::from_value(params["message"].clone()).map_err(|error| {
+        RpcError::invalid_params(&format!("params.message is not an A2A Message: {error}"))
+    })
+}
+
 /// Map a JSON-RPC `method` + `params` (+ the URL-derived target) to an op.
 ///
 /// # Errors
@@ -133,37 +146,23 @@ pub(crate) fn parse_op(
     params: &Value,
     target: Option<PeerRef>,
 ) -> Result<A2aOp, RpcError> {
-    let task_id_param = || {
-        params["id"]
-            .as_str()
-            .and_then(TaskId::from_uuid_str)
-            .ok_or_else(|| RpcError::invalid_params("params.id must be a task id (uuid)"))
-    };
     match method {
         // `SendStreamingMessage` shares `SendMessage`'s create semantics; the
         // streaming events ride the worker's pushed status/artifact frames (the
         // gossip push plane). The SSE `text/event-stream` edge encoding for an
         // off-the-shelf HTTP client is layered on top of that plane.
-        "SendMessage" | "SendStreamingMessage" => {
-            let message: super::Message = serde_json::from_value(params["message"].clone())
-                .map_err(|error| {
-                    RpcError::invalid_params(&format!(
-                        "params.message is not an A2A Message: {error}"
-                    ))
-                })?;
-            Ok(A2aOp::SendMessage {
-                to: target,
-                message,
-            })
-        }
+        "SendMessage" | "SendStreamingMessage" => Ok(A2aOp::SendMessage {
+            to: target,
+            message: message_param(params)?,
+        }),
         // Subscribe returns the current snapshot; the caller (a party) keeps
         // receiving the worker's pushed frames.
         "GetTask" | "SubscribeToTask" => Ok(A2aOp::GetTask {
-            task_id: task_id_param()?,
+            task_id: task_id_param(params)?,
         }),
         "ListTasks" => Ok(A2aOp::ListTasks { peer: None }),
         "CancelTask" => Ok(A2aOp::CancelTask {
-            task_id: task_id_param()?,
+            task_id: task_id_param(params)?,
         }),
         // The authenticated extended card. We have nothing extra to gate behind
         // auth, so it returns the same full card `own_card` builds.
@@ -191,17 +190,10 @@ pub(crate) fn parse_op(
         // Streaming and push-notification configs are declared off in the
         // card (`capabilities`); a client that calls them anyway gets the
         // standard method-not-found.
-        other => Err(RpcError {
-            code: -32601,
-            message: format!("method not found: {other}"),
-        }),
+        other => Err(RpcError::method_not_found(other)),
     }
 }
 
-/// The A2A `Task` object for a live record — what `tasks/get`/`tasks/list`
-/// return and what a task-creating `message/send` echoes. History/artifact
-/// accumulation is not stored daemon-side (the event stream carries them);
-/// mesh-specific coordinates ride `metadata`.
 /// The `ListTasks` payload. `peer` scopes the listing to that counterparty's
 /// tasks — what a remote caller may see; `None` lists everything, for the
 /// local binding whose caller owns the daemon.
@@ -221,6 +213,10 @@ fn list_tasks(app: &A2aApp, peer: Option<&AuthorKey>, mesh: &MeshId) -> Value {
     serde_json::json!({ "tasks": tasks })
 }
 
+/// The A2A `Task` object for a live record — what `tasks/get`/`tasks/list`
+/// return and what a task-creating `message/send` echoes. History/artifact
+/// accumulation is not stored daemon-side (the event stream carries them);
+/// mesh-specific coordinates ride `metadata`.
 pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> Value {
     let role = |value: TaskRole| match value {
         TaskRole::Initiator => "initiator",
@@ -416,7 +412,7 @@ struct SendMessageParams<'caller> {
 /// A **broadcast** `message/send` (no addressee): re-author the wire payload
 /// from the client Message's text projection (role/context/extension stamping
 /// stays the daemon's job) and flood it. A *directed* `message/send` (task
-/// creation) never reaches here — the localhost dispatch (`handle_a2a_arm`)
+/// creation) never reaches here — the localhost dispatch (`handle_http`)
 /// intercepts it and routes it through the gossip request/response waiter, and
 /// the gossip serve path ingests it directly — so a `Some(to)` here is a bug.
 async fn send_message(
