@@ -47,7 +47,6 @@ pub(crate) enum Output {
     /// (pull) sees the same events its `events()` subscription (push) does.
     Capture {
         tx: UnboundedSender<OutputEvent>,
-        filter_self: bool,
         tap: Option<SurfacedTap>,
     },
 }
@@ -114,13 +113,7 @@ impl Output {
                 filter_self,
                 tap: Some(tap),
             },
-            Output::Capture {
-                tx, filter_self, ..
-            } => Output::Capture {
-                tx,
-                filter_self,
-                tap: Some(tap),
-            },
+            Output::Capture { tx, .. } => Output::Capture { tx, tap: Some(tap) },
         }
     }
 
@@ -135,16 +128,13 @@ impl Output {
 
     /// Capture every event into `tx` (the library API / in-process tests).
     pub(crate) fn capture(tx: UnboundedSender<OutputEvent>) -> Self {
-        Self::Capture {
-            tx,
-            filter_self: false,
-            tap: None,
-        }
+        Self::Capture { tx, tap: None }
     }
 
     fn filters_self(&self) -> bool {
         match self {
-            Self::Stream { filter_self, .. } | Self::Capture { filter_self, .. } => *filter_self,
+            Self::Stream { filter_self, .. } => *filter_self,
+            Self::Capture { .. } => false,
         }
     }
 
