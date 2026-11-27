@@ -450,7 +450,6 @@ mod tests {
             .await
             .expect("a live session accepts a broadcast while the mesh is up");
         let sent = echo.id.clone();
-        assert_eq!(echo.id, sent, "the echo carries the sent message id");
         assert_eq!(
             echo.author.as_str(),
             "alice-replay",
