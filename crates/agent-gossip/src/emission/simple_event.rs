@@ -668,8 +668,7 @@ fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Val
 }
 
 /// Format an RPC `message/send` task leg (the initiator's brief / answer /
-/// approval, surfaced on the worker; or the created `Task` adopted on the
-/// initiator) as a `{"event":"task","kind":"message",...}` line.
+/// approval, surfaced on the worker) as a `{"event":"task","kind":"message",...}` line.
 pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     stamp_visibility(
         serde_json::to_string(&TaskLine {

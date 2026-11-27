@@ -116,26 +116,12 @@ pub(crate) const SURFACED_EVENTS_BYTES_CAP: usize = MAX_LOGICAL_BODY_BYTES;
 /// queue (`NODE_INBOUND_CAP`).
 pub(crate) const SURFACED_TAP_CAP: usize = 1024;
 
-/// How many blob groups of calls that produced no task wait for their eviction. Each waits at
-/// most one task timeout, and one waiter makes one entry, so a count above the waiter cap is a
-/// burst of timeouts. Past the cap the entry that is due first leaves the list and its group goes
-/// to the next sweep; the call keeps awaiting its late reply (see `LATE_REPLIES_CAP`). A released
-/// group that the list of released groups forgets waits for the caps of the blob store. The store of
-/// the pinned engine has all three caps: bytes (4 GiB), entries (`MAX_BLOB_STORE_ENTRIES`, 4096)
-/// and owners of one blob (`MAX_BLOB_OWNERS`, 64).
+/// How many blob groups of openings that never reached a worker wait for the next task sweep. One
+/// waiter makes at most one entry, so a count above the waiter cap is a burst of failed openings.
+/// Past the cap the oldest entry is forgotten, and its blob waits for the caps of the blob store.
+/// The store of the pinned engine has all three caps: bytes (4 GiB), entries
+/// (`MAX_BLOB_STORE_ENTRIES`, 4096) and owners of one blob (`MAX_BLOB_OWNERS`, 64).
 pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
-
-/// How many timed-out calls await a late reply without a group in the orphan list: the calls whose
-/// group the orphan cap released. An entry is about 100 bytes and lives at most one task timeout.
-/// Past the cap the entry that is due first is forgotten: a worker that answers that call late
-/// then runs a task that nothing cancels, a gap that this cap accepts. Each drop is counted in
-/// `late_replies_forgotten` and logged as a warning.
-pub(crate) const LATE_REPLIES_CAP: usize = 1024;
-
-/// How many blob groups of calls one task may hold. A task keeps the groups of its calls until it
-/// is reaped, and a follow-up that carries a file adds one. A call past the cap is refused with a
-/// failed reason, before its file is offloaded: the user must know that the file was not sent.
-pub(crate) const CALL_BLOB_GROUPS_PER_TASK_CAP: usize = 64;
 
 /// How many cancels owed to workers wait for the next task sweep. A cancel is user work that
 /// the worker needs, so a full list is not dropped: the receive path sends the cancels at once.
@@ -207,7 +193,6 @@ pub(crate) struct Tuning {
     pub(crate) unsent_legs_cap: usize,
     pub(crate) own_legs_bytes_cap: usize,
     pub(crate) unsent_legs_bytes_cap: usize,
-    pub(crate) call_blob_groups_per_task_cap: usize,
 }
 
 impl Tuning {
@@ -221,7 +206,6 @@ impl Tuning {
         unsent_legs_cap: UNSENT_LEGS_CAP,
         own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
         unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
-        call_blob_groups_per_task_cap: CALL_BLOB_GROUPS_PER_TASK_CAP,
     };
 }
 
@@ -279,10 +263,6 @@ pub(crate) fn own_legs_bytes_cap() -> usize {
 
 pub(crate) fn unsent_legs_bytes_cap() -> usize {
     current().unsent_legs_bytes_cap
-}
-
-pub(crate) fn call_blob_groups_per_task_cap() -> usize {
-    current().call_blob_groups_per_task_cap
 }
 
 #[cfg(test)]

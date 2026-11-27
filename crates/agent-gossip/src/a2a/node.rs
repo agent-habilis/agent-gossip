@@ -796,14 +796,9 @@ async fn handle_a2a_rpc(
     } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.key()) {
         // Only act on a response to a call WE actually issued (a matching
         // outstanding waiter). An unsolicited response is ignored — otherwise
-        // any member could inject phantom initiator-side task records by forging
-        // responses. The waiter adopts the authoritative `Task` a `SendMessage`
-        // returned.
-        app.fulfill_a2a_waiter(
-            corr,
-            (&message.key(), &message.author),
-            message.body.as_str(),
-        );
+        // any member could move initiator-side task records by forging responses. The waiter
+        // reconciles the authoritative `Task` a reply returned.
+        app.fulfill_a2a_waiter(corr, &message.key(), message.body.as_str());
         // No test drives this call: the event-loop types have no test constructor. The decision
         // itself, `late_cancels_full`, has a test at 10 times the cap. If this line goes, the
         // owed cancels wait for the next task sweep and the list can pass its cap.

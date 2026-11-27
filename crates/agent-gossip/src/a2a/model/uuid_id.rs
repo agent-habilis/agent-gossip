@@ -19,7 +19,7 @@ const fn error_text(kind: u8) -> &'static str {
 
 /// A UUID-string id newtype with validating deserialize, so a crafted
 /// non-UUID id is rejected at parse. One const-generic type, three ids: the sender-minted
-/// message id, the server-minted task id, and the gossip RPC correlation id.
+/// message id, the initiator-minted task id, and the gossip RPC correlation id.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct UuidId<const KIND: u8>(String);

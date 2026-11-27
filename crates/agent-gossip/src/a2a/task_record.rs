@@ -2,8 +2,8 @@
 //! lifecycle.
 //!
 //! A task is a directed, multi-leg conversation whose wire form is pure A2A:
-//! a `message/send` (no `taskId`) opens it — the worker mints the id and
-//! returns the `Task` — then `TaskStatusUpdate`s and mid-task `message/send`s
+//! a `message/send` with `mesh:seq` 1 opens it — the initiator mints the id and
+//! the worker returns the `Task` — then `TaskStatusUpdate`s and mid-task `message/send`s
 //! advance it, a `TaskArtifactUpdate` returns the result, and the **worker's**
 //! `completed` status closes it (after the initiator's approval message). The
 //! daemon owns only the *coarse* lifecycle — state advance, the per-task idle
@@ -17,7 +17,6 @@
 //! record is frozen. Local triggers (the timeout) *broadcast* a terminal
 //! `canceled` status so the other side converges.
 
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -225,8 +224,8 @@ impl TaskRecord {
 /// What one applied leg *is*, reduced from its wire form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LegKind {
-    /// The task-creating `message/send` (no `taskId`) — the worker mints the id
-    /// and opens the record; the initiator adopts it from the RPC response.
+    /// The task-creating `message/send` (`mesh:seq` 1) — the initiator minted the id and opened
+    /// its record at dispatch; the worker opens its own when the message arrives.
     Offer,
     /// A mid-task `message/send` carrying a `taskId` (the initiator's answer /
     /// approval / change request, applied from the RPC path).
@@ -418,9 +417,9 @@ fn facts_of_message(id: &str, opens_task: bool) -> Facts<'_> {
 /// Apply one leg to the registry: the one place that decides whether a leg is news, for a frame
 /// and for a message of the RPC path alike, whoever sent it. A leg is news when its id is new to
 /// the record and it is not older than the leg that last decided the waiting flag, and a task
-/// that closed (or that the sweep reaped) has no news. An unknown task still counts as open: the
-/// initiator's record comes from the RPC response, and the worker's first leg can arrive ahead
-/// of it. A leg that is not news moves no state and no clock.
+/// that closed (or that the sweep reaped) has no news. A leg for a task that we hold no record
+/// of is no news either: the initiator opened its record at dispatch. A leg that is not news moves
+/// no state and no clock.
 pub(crate) fn apply_leg(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     closed: &ClosedTasks,
@@ -478,7 +477,7 @@ pub(crate) fn apply_leg(
     let quarter_moved = record_frame_facts(tasks, task_id, &facts, (mine, seen));
     let finished = reach == Reach::Finished || closed.get(task_id).is_some();
     Applied {
-        news: !seen && newer && !finished,
+        news: !seen && newer && !finished && reach != Reach::Unknown,
         quarter_moved: quarter_moved && !finished,
     }
 }
@@ -811,74 +810,52 @@ pub(crate) fn admit_new_task(
     Admission::Ok
 }
 
-/// The value cluster [`adopt_initiator`] needs beyond its `tasks` registry
-/// handle.
+/// The value cluster [`reconcile_initiator`] needs beyond its `tasks` registry handle.
 #[derive(Clone, Copy)]
-pub(crate) struct AdoptInitiatorParams<'caller> {
+pub(crate) struct ReconcileParams<'caller> {
     pub(crate) task_id: &'caller TaskId,
     pub(crate) peer_key: &'caller AuthorKey,
-    pub(crate) peer: &'caller Nickname,
     pub(crate) task_state: TaskState,
     pub(crate) now: Instant,
 }
 
-/// Upsert the **initiator**-side record for a task whose authoritative `Task`
-/// the worker just returned over RPC (`message/send` create/follow-up). The
-/// worker (server) is the source of truth for the task's state, so we mirror
-/// `task_state` rather than replay legs. Terminal records are frozen.
-pub(crate) fn adopt_initiator(
+/// Reconcile the **initiator**-side record of a task with the authoritative `Task` that its
+/// worker returned over RPC (`SendMessage` or `GetTask`). The worker (server) is the source of
+/// truth for the state of the task, but the record exists from dispatch, so a reply never creates
+/// one: a task that this node holds no record of is left alone. Terminal records are frozen.
+pub(crate) fn reconcile_initiator(
     tasks: &mut HashMap<TaskId, TaskRecord>,
-    params: AdoptInitiatorParams<'_>,
+    params: ReconcileParams<'_>,
 ) {
-    let AdoptInitiatorParams {
+    let ReconcileParams {
         task_id,
         peer_key,
-        peer,
         task_state,
         now,
     } = params;
-    // A refused adoption leaves no record here; the worker still holds its own.
-    if !tasks.contains_key(task_id) && admit_new_task(tasks, peer_key) != Admission::Ok {
+    let Some(rec) = tasks.get_mut(task_id) else {
+        return;
+    };
+    // Only from the task's own worker. The caller has already proved this response answers a call
+    // we made to `peer_key`, but that says nothing about *which* task the answer may name: any
+    // peer we call once could otherwise return a Task id belonging to a different peer and drive
+    // it terminal, or keep refreshing it past the reaper. The record's own counterparty is the
+    // authority.
+    if rec.peer_key != *peer_key || rec.role != TaskRole::Initiator {
         return;
     }
-    match tasks.entry(task_id.clone()) {
-        Entry::Vacant(slot) => {
-            // First adoption (task creation): open the initiator-side record at
-            // the server-minted state.
-            slot.insert(TaskRecord::open(
-                (*peer_key, peer.clone()),
-                TaskRole::Initiator,
-                task_state,
-                now,
-            ));
-        }
-        Entry::Occupied(mut slot) => {
-            // Already tracking. The worker-pushed status/artifact stream is the
-            // authoritative source of *live* transitions, so a late or reordered
-            // RPC snapshot (e.g. a `GetTask` reply that raced the artifact push)
-            // must NOT regress a live non-terminal state. But a **terminal**
-            // snapshot is final truth — it repairs a terminal frame we missed
-            // (a frame that was lost and that nothing sends again), the reconciliation path a
-            // manual `GetTask` gives.
-            let rec = slot.get_mut();
-            // …and only from the task's own worker. The caller has already
-            // proved this response answers a call we made to `peer`, but that
-            // says nothing about *which* task the answer may name: any peer we
-            // call once could otherwise return a Task id belonging to a
-            // different peer and drive it terminal, or keep refreshing it past
-            // the reaper. The record's own counterparty is the authority.
-            if rec.peer_key != *peer_key {
-                return;
-            }
-            if rec.state.is_terminal() {
-                return;
-            }
-            rec.last_activity = now;
-            rec.last_peer_activity = now;
-            if task_state.is_terminal() {
-                rec.close(task_state, now);
-            }
-        }
+    // The worker-pushed status/artifact stream is the authoritative source of *live* transitions,
+    // so a late or reordered RPC snapshot (e.g. a `GetTask` reply that raced the artifact push)
+    // must NOT regress a live non-terminal state. But a **terminal** snapshot is final truth: it
+    // repairs a terminal frame we missed (a frame that was lost and that nothing sends again),
+    // the reconciliation path a manual `GetTask` gives.
+    if rec.state.is_terminal() {
+        return;
+    }
+    rec.last_activity = now;
+    rec.last_peer_activity = now;
+    if task_state.is_terminal() {
+        rec.close(task_state, now);
     }
 }
 
@@ -1162,8 +1139,7 @@ pub(crate) async fn tick_task_sweep(
         out.task_timeout(task_id, emission::TaskGoneReason::Timeout);
         tracing::debug!(%task_id, peer = %peer_key, "task evicted (idle-debounce timeout)");
     }
-    // A task a late reply opened is unknown to the caller's agent, so it gets
-    // no `task_timeout` line — only the worker is told.
+    // The cancels that the receive path owes go out with the ones of the sweep.
     let late_cancels = app.take_late_cancels();
     let mut cancels: Vec<(&TaskId, &AuthorKey, &str)> = expired
         .iter()
@@ -1178,14 +1154,14 @@ pub(crate) async fn tick_task_sweep(
 
     // A reaped task's offloaded blobs go with it — unlink their spool files
     // (the review window has long closed).
-    let call_blobs = app.take_call_blobs(&reaped, now);
+    let orphans = app.take_orphan_blobs();
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
                 .evict_content(&ContentId::new(task_id.as_str()))
                 .await;
         }
-        for group in &call_blobs {
+        for group in &orphans {
             server.evict_content(group).await;
         }
     }
@@ -2583,19 +2559,18 @@ mod tests {
         );
     }
 
-    /// An adopted reply refreshes the reaper clocks but not the check-in clock, so a sender that
+    /// A reconciled reply refreshes the reaper clocks but not the check-in clock, so a sender that
     /// probes more often than 2·X still gets its alarm; only a follow-up restarts it.
     #[test]
-    fn an_adopted_reply_does_not_delay_the_alarm() {
+    fn a_reconciled_reply_does_not_delay_the_alarm() {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
         let probe = later(start, CHECKIN);
-        super::adopt_initiator(
+        super::reconcile_initiator(
             &mut tasks,
-            super::AdoptInitiatorParams {
+            super::ReconcileParams {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter"),
-                peer: &Nickname::from("calm-otter"),
                 task_state: TaskState::Working,
                 now: probe,
             },
@@ -3089,10 +3064,10 @@ mod tests {
         );
     }
 
-    /// Pin: a new leg on a live task surfaces, and so does a leg for a task we
-    /// do not know yet (the worker's first leg can beat the RPC response).
+    /// A new leg on a live task surfaces, and a leg for a task we hold no record of does not: the
+    /// initiator opened its record at dispatch, so such a leg is for a task that is not ours.
     #[test]
-    fn a_new_leg_and_an_unknown_task_surface() {
+    fn a_new_leg_surfaces_and_a_leg_for_an_unknown_task_does_not() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         open_as_initiator(&mut tasks, now);
@@ -3104,8 +3079,12 @@ mod tests {
         );
         let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
         assert!(
-            receive_with(&mut tasks, &closed(), &unknown, &fresh).news,
-            "the worker's first leg can beat the RPC response, so it must still surface"
+            !receive_with(&mut tasks, &closed(), &unknown, &fresh).news,
+            "no record means no task of ours, so the leg is not news"
+        );
+        assert!(
+            !tasks.contains_key(&unknown),
+            "a leg for an unknown task opens no record"
         );
     }
 
@@ -3346,42 +3325,6 @@ mod tests {
         );
     }
 
-    /// An initiator-side adoption respects the registry cap, as a remote offer does.
-    ///
-    /// Pre-fix `adopt_initiator` inserted with no admission check, so the registry
-    /// grew past `TASKS_CAP` and every remote offer was refused after.
-    #[test]
-    fn an_initiator_adoption_past_the_cap_is_refused() {
-        let mut tasks = HashMap::new();
-        let now = Instant::now();
-        for index in 0..10 * tuning::TASKS_CAP {
-            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
-            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
-            super::adopt_initiator(
-                &mut tasks,
-                super::AdoptInitiatorParams {
-                    task_id: &task_id,
-                    peer_key: &AuthorKey::from([u8::try_from(index % 64).expect("below 64"); 32]),
-                    peer: &peer,
-                    task_state: TaskState::Working,
-                    now,
-                },
-            );
-        }
-        assert_eq!(
-            tasks.len(),
-            tuning::TASKS_CAP,
-            "10 times the cap was offered: the registry holds the cap, no more and no less"
-        );
-        let last = TaskId::from(
-            format!("550e8400-e29b-41d4-a716-{:012}", 10 * tuning::TASKS_CAP - 1).as_str(),
-        );
-        assert!(
-            !tasks.contains_key(&last),
-            "the last offered task was refused, not kept"
-        );
-    }
-
     /// A task the sweep cancels survives that same sweep.
     ///
     /// Both passes read one `now`, and the expiry pass used to set `Canceled`
@@ -3461,7 +3404,7 @@ mod tests {
         assert!(still_live.is_empty(), "the peer's beat keeps the task live");
     }
 
-    /// An RPC `Task` snapshot is adopted only from the task's own worker.
+    /// An RPC `Task` snapshot is reconciled only from the task's own worker.
     ///
     /// The receive path already proves the response answers a call we made to
     /// that peer, but a call to *anyone* was enough: pre-fix, one reply naming
@@ -3470,7 +3413,7 @@ mod tests {
     /// snapshot refreshed `last_activity` unconditionally, which held any of
     /// our tasks off the reaper for as long as the caller kept answering.
     #[test]
-    fn a_returned_task_is_adopted_only_from_its_own_worker() {
+    fn a_returned_task_is_reconciled_only_from_its_own_worker() {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         open_as_initiator(&mut tasks, now);
@@ -3481,13 +3424,12 @@ mod tests {
         );
         let before = tasks[&tid()].last_activity;
 
-        let adopt = |registry: &mut HashMap<TaskId, TaskRecord>, peer: &str, state, when| {
-            super::adopt_initiator(
+        let reconcile = |registry: &mut HashMap<TaskId, TaskRecord>, peer: &str, state, when| {
+            super::reconcile_initiator(
                 registry,
-                super::AdoptInitiatorParams {
+                super::ReconcileParams {
                     task_id: &tid(),
                     peer_key: &peer_key(peer),
-                    peer: &Nickname::from(peer),
                     task_state: state,
                     now: when,
                 },
@@ -3497,7 +3439,7 @@ mod tests {
         let later = now
             .checked_add(Duration::from_mins(5))
             .expect("the test instant cannot overflow");
-        adopt(&mut tasks, "wire-thistle", TaskState::Failed, later);
+        reconcile(&mut tasks, "wire-thistle", TaskState::Failed, later);
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Working,
@@ -3514,8 +3456,8 @@ mod tests {
             "nor refresh the reaper's own clock"
         );
 
-        // The real worker's snapshot is still adopted.
-        adopt(&mut tasks, "calm-otter", TaskState::Failed, later);
+        // The real worker's snapshot is still reconciled.
+        reconcile(&mut tasks, "calm-otter", TaskState::Failed, later);
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Failed,
@@ -4161,15 +4103,14 @@ mod tests {
 
     /// The same rule for the snapshot that an RPC reply returns.
     #[test]
-    fn a_returned_task_is_not_adopted_from_a_key_that_shares_the_worker_name() {
+    fn a_returned_task_is_not_reconciled_from_a_key_that_shares_the_worker_name() {
         let now = Instant::now();
         let mut tasks = working_task_we_opened(now);
-        super::adopt_initiator(
+        super::reconcile_initiator(
             &mut tasks,
-            super::AdoptInitiatorParams {
+            super::ReconcileParams {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter-twin"),
-                peer: &Nickname::from("calm-otter"),
                 task_state: TaskState::Failed,
                 now: now + Duration::from_mins(5),
             },

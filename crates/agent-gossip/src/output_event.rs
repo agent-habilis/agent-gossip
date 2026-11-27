@@ -126,7 +126,7 @@ pub enum OutputEvent {
         /// one — absent from a peer that does not set it.
         label: Option<String>,
         /// The A2A `Message` the leg carried, for its non-text parts (a file's
-        /// `Part.url`). `None` on the initiator's adopted-`Task` leg.
+        /// `Part.url`). `None` when the leg has no message to show.
         message: Option<Box<crate::a2a::Message>>,
         /// `true` when the local node sent the leg.
         is_self: bool,

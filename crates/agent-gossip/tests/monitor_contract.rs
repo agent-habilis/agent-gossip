@@ -2556,9 +2556,12 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
 /// may live on for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
+    // Both daemons stop beating a task that no agent touches for 3 s, so the initiator's sweep
+    // sees the worker silent and cancels the task: nothing else cancels a timed-out call.
     let fast_reap = [
         ("--task-timeout-secs", "3"),
         ("--task-keepalive-secs", "1"),
+        ("--task-skill-silence-max-secs", "3"),
         ("--sweep-interval-secs", "1"),
     ];
     let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
@@ -2629,9 +2632,12 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
 /// task may live on for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
+    // Both daemons stop beating a task that no agent touches for 3 s, so the initiator's sweep
+    // sees the worker silent and cancels the task: nothing else cancels a timed-out call.
     let fast_reap = [
         ("--task-timeout-secs", "3"),
         ("--task-keepalive-secs", "1"),
+        ("--task-skill-silence-max-secs", "3"),
         ("--sweep-interval-secs", "1"),
     ];
     let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
