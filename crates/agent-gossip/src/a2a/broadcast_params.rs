@@ -42,7 +42,7 @@ fn commit_outbound_part(
 ) {
     if echo {
         let authored = message.authored();
-        out.print_message_ex(&authored, true, addressee_name(state, &authored).as_ref());
+        out.print_message(&authored, true, addressee_name(state, &authored).as_ref());
     }
     logging::log_out(message);
 }
@@ -539,7 +539,7 @@ async fn send_single_broadcast(
             .ok_or_else(|| {
                 anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
             })?;
-        out.print_message_ex(&plain, true, addressee_name(state, &plain).as_ref());
+        out.print_message(&plain, true, addressee_name(state, &plain).as_ref());
         return Ok((id, plain));
     }
     send_msg_part(
@@ -623,7 +623,7 @@ pub(crate) async fn send_broadcast(
     )?;
     let (header, group) = shards.send(state, sender, out).await?;
     let logical = reassembly::synthesize_from(&header, body.plain, &group);
-    out.print_message_ex(&logical, true, addressee_name(state, &logical).as_ref());
+    out.print_message(&logical, true, addressee_name(state, &logical).as_ref());
     Ok((logical.id.clone(), logical))
 }
 
@@ -897,7 +897,7 @@ fn print_echo(
 ) {
     match echo_as {
         EchoAs::Task => out.print_task(echo, true, addressee),
-        EchoAs::Chat => out.print_message_ex(echo, true, addressee),
+        EchoAs::Chat => out.print_message(echo, true, addressee),
     }
 }
 

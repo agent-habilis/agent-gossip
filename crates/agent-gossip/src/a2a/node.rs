@@ -401,7 +401,7 @@ fn route_content(
         (wire::BROADCAST, None) => Routed {
             loggable: surface_chat(message, surfaceable, app, |out, surface| {
                 if surface {
-                    out.print_message(message, None);
+                    out.print_message(message, false, None);
                 }
                 true
             }),
@@ -599,7 +599,7 @@ fn handle_msg(
     self_name: &Nickname,
 ) -> bool {
     if surfaceable {
-        out.print_message(message, Some(self_name));
+        out.print_message(message, false, Some(self_name));
     }
     true
 }

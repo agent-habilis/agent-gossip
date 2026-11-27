@@ -187,14 +187,9 @@ impl Output {
         });
     }
 
-    pub(crate) fn print_message(&self, message: &Authored, addressee_name: Option<&Nickname>) {
-        self.print_message_ex(message, false, addressee_name);
-    }
-
-    /// Print a message with an optional self flag (for echo-back).
-    /// When `filter_self` is enabled, self-authored messages are
-    /// suppressed. Presence events should use `print_presence` instead.
-    pub(crate) fn print_message_ex(
+    /// `is_self` marks the echo of a message that this node sent. When `filter_self` is enabled,
+    /// self-authored messages are suppressed. Presence events should use `print_presence` instead.
+    pub(crate) fn print_message(
         &self,
         message: &Authored,
         is_self: bool,
