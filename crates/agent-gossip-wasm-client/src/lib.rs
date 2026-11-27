@@ -17,18 +17,17 @@
 //! import init, { GossipPeer } from "./agent_gossip_wasm_client.js";
 //!
 //! await init();
-//! const peer = await GossipPeer.create(null, null);
+//! const peer = await GossipPeer.create(null);
 //! ```
 
 pub use self::gossip_peer::GossipPeer;
 pub use self::start::start;
 
-mod gossip_driver;
 mod err;
+mod gossip_driver;
 mod gossip_peer;
 mod max_connections;
 mod parse_nickname;
-mod parse_path_mode;
 mod spawn_peer;
 mod start;
 mod wire;

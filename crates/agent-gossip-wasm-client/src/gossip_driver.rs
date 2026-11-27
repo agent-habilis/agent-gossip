@@ -1,6 +1,7 @@
 //! The application seam the engine drives, and the buffer the page polls.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use habilis_network::embed::{
@@ -14,11 +15,6 @@ use habilis_network::protocol::{
 use serde::Serialize;
 
 use crate::wire;
-
-/// What the page asks the loop to do. Opaque to the engine.
-pub(crate) enum Request {
-    Broadcast(String),
-}
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ChatMessage {
@@ -85,6 +81,14 @@ impl Inbox {
                 kind,
             });
         });
+    }
+
+    fn push_send_failure(&self, error: &impl fmt::Display) {
+        self.push(
+            "system".to_owned(),
+            format!("could not send: {error}"),
+            "system",
+        );
     }
 
     fn note_peer(&self, nickname: &str) {
@@ -188,7 +192,7 @@ impl NodeApp for GossipDriver {
         // Anything outside the taxonomy this client speaks is dropped whole
         // rather than surfaced: a signed frame with an arbitrary tag must
         // not reach the page. Broadcast chat is public by definition: directed
-        // tags are sealed, and this client does not send them yet — see `Request`.
+        // tags are sealed, and this client does not send them yet — see `wire.rs`.
         AppClass::NONE
             .plus_if(AppClass::PUSH, is_broadcast)
             .plus_if(AppClass::VALID, is_broadcast || tag.is_none())
@@ -232,7 +236,8 @@ impl NodeApp for GossipDriver {
 
 #[async_trait::async_trait]
 impl NodeDriver for GossipDriver {
-    type Session = Request;
+    /// The text the page asks the loop to broadcast.
+    type Session = String;
     type Http = ();
     type Ipc = ();
 
@@ -247,12 +252,10 @@ impl NodeDriver for GossipDriver {
 
     async fn handle_session(
         &mut self,
-        request: Self::Session,
+        text: Self::Session,
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) -> bool {
-        let Request::Broadcast(text) = request;
-
         let id = MessageId::random();
         let payload = A2aMessage {
             message_id: id.as_str(),
@@ -294,22 +297,14 @@ impl NodeDriver for GossipDriver {
                         .map_err(anyhow::Error::from)
                         .and_then(|result| result);
                     if let Err(error) = outcome {
-                        inbox.push(
-                            "system".to_owned(),
-                            format!("could not send: {error}"),
-                            "system",
-                        );
+                        inbox.push_send_failure(&error);
                     }
                 });
             }
             // `Done`: sent, or handed to a warm connection, so nothing is left to wait for.
             Ok(_) => {}
             Err(error) => {
-                self.inbox.push(
-                    "system".to_owned(),
-                    format!("could not send: {error}"),
-                    "system",
-                );
+                self.inbox.push_send_failure(&error);
                 return false;
             }
         }
