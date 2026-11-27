@@ -2278,6 +2278,9 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-late");
 
     let (sent, _bytes) = scratch_file("late.tar");
+    // A worker that runs can answer before a deadline of 0 s fires: the call then returns the task and proves
+    // nothing. A stopped worker cannot answer, so the call always times out, and the brief reaches it after.
+    worker.stop();
     let out: std::process::Output = cli_call(
         &mesh,
         &creator.nickname,
@@ -2291,6 +2294,7 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     )
     .output()
     .expect("a2a call command failed to spawn");
+    worker.cont();
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("timed out"),
         "the call must time out before the reply: {}",
