@@ -1,7 +1,7 @@
 use anyhow::Result;
 use habilis_network::ops::blob;
 use habilis_network::ops::blob::BlobTicket;
-use habilis_network::protocol::{MeshId, MeshName, Nickname};
+use habilis_network::protocol::{MeshName, MessageBody, Nickname};
 
 use super::a2a_call_request::A2aCallRequest;
 use super::a2a_call_sugar::A2aCallSugar;
@@ -30,10 +30,19 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             legacy_output: _,
         } => discover(directory, lookups).await,
         A2aAction::Broadcast { session, text } => {
-            broadcast(session.gossip, &session.nickname, text).await
+            let command = IpcCommand::Broadcast {
+                mesh: session.gossip,
+                body: message_body(&text)?,
+            };
+            send_and_print_id(&command, &session.nickname, "message").await
         }
         A2aAction::Msg { session, to, text } => {
-            send_msg(session.gossip, &session.nickname, to, text).await
+            let command = IpcCommand::Msg {
+                mesh: session.gossip,
+                to,
+                body: message_body(&text)?,
+            };
+            send_and_print_id(&command, &session.nickname, "message").await
         }
         A2aAction::Call(args) => call(args).await,
         A2aAction::Status(args) => status(args).await,
@@ -95,20 +104,13 @@ async fn discover(directory: Option<MeshName>, lookups: LookupArgs) -> Result<()
     .await
 }
 
-async fn broadcast(mesh: MeshId, nickname: &Nickname, text: String) -> Result<()> {
-    let body = habilis_network::protocol::MessageBody::try_new(&text)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let response = super::send::send(&IpcCommand::Broadcast { mesh, body }, nickname).await?;
-    let id = finish_send(&response, "message")?;
-    println!("{id}");
-    Ok(())
+fn message_body(text: &str) -> Result<MessageBody> {
+    MessageBody::try_new(text).map_err(|error| anyhow::anyhow!("{error}"))
 }
 
-async fn send_msg(mesh: MeshId, nickname: &Nickname, to: Nickname, text: String) -> Result<()> {
-    let body = habilis_network::protocol::MessageBody::try_new(&text)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let response = super::send::send(&IpcCommand::Msg { mesh, to, body }, nickname).await?;
-    let id = finish_send(&response, "message")?;
+async fn send_and_print_id(command: &IpcCommand, nickname: &Nickname, what: &str) -> Result<()> {
+    let response = super::send::send(command, nickname).await?;
+    let id = finish_send(&response, what)?;
     println!("{id}");
     Ok(())
 }
@@ -189,10 +191,7 @@ async fn status(args: StatusArgs) -> Result<()> {
         note,
         waiting,
     };
-    let response = super::send::send(&command, &nickname).await?;
-    let id = finish_send(&response, "task status")?;
-    println!("{id}");
-    Ok(())
+    send_and_print_id(&command, &nickname, "task status").await
 }
 
 async fn artifact(args: ArtifactArgs) -> Result<()> {
@@ -220,10 +219,7 @@ async fn artifact(args: ArtifactArgs) -> Result<()> {
         file_name,
         file_mime,
     };
-    let response = super::send::send(&command, &nickname).await?;
-    let id = finish_send(&response, "task artifact")?;
-    println!("{id}");
-    Ok(())
+    send_and_print_id(&command, &nickname, "task artifact").await
 }
 
 async fn fetch(
