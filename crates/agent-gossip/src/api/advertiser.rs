@@ -2,14 +2,10 @@ use std::fmt;
 use std::sync::atomic::Ordering;
 
 use habilis_network::ops::directory;
-use habilis_network::ops::directory::directory_mesh;
 use habilis_network::protocol::{LookupOpts, MeshId, MeshName};
 pub(crate) use habilis_network::runtime::DIRECTORY_ADVERTISER_COHOST;
-use habilis_network::runtime::tuning::advertise_interval;
 use habilis_network::runtime::{EventLoopConfig, LiveCount};
 use tokio::task::JoinHandle;
-
-use super::MeshSession;
 
 /// Spawn the directory re-broadcast task for `cfg`'s mesh: wire a fresh
 /// live-peer counter into `cfg.live_count`, then re-send the
@@ -50,41 +46,13 @@ pub(crate) fn spawn_advertiser(
     lookups: LookupOpts,
 ) -> Advertiser {
     let mesh_id = config.mesh_id().clone();
-    Advertiser(tokio::spawn(async move {
-        // Reach the directory over the advertised mesh's own lookups, so an
-        // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and
-        // discoverers must use the same lookups to meet.
-        let mesh = directory_mesh(&directory, lookups);
-        // Co-host the directory rendezvous from t=0 so a beacon exists
-        // before any discoverer subscribes (a `Deferred` advertiser would
-        // only beacon at the first heal tick, after discoverers already
-        // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
-        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
-        {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::warn!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    directory = %directory,
-                    "directory advertise: could not join the directory; gossip stays unlisted"
-                );
-                return;
-            }
-        };
-        let mut ticker = tokio::time::interval(advertise_interval());
-        loop {
-            ticker.tick().await;
-            let ad = ad_with_peers(&mesh_id, live_count.load(Ordering::Relaxed));
-            if let Err(error) = session.broadcast(ad.to_body()).await {
-                tracing::debug!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    "directory advertise: re-broadcast failed (will retry next tick)"
-                );
-            }
-        }
-    }))
+    // Reach the directory over the advertised mesh's own lookups, so an
+    // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and
+    // discoverers must use the same lookups to meet.
+    let next_ad = move || ad_with_peers(&mesh_id, live_count.load(Ordering::Relaxed)).to_body();
+    Advertiser(tokio::spawn(super::directory::advertise(
+        directory, lookups, next_ad,
+    )))
 }
 
 /// `Ad` has no constructor, so the ad is built through its validating `Deserialize`.

@@ -17,17 +17,14 @@ use anyhow::Result;
 use habilis_network::ops::directory;
 use habilis_network::protocol::{LookupOpts, LookupSet, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::CoHostPolicy;
-use habilis_network::runtime::tuning::{
-    advertise_interval, directory_expiry, directory_private_for_test,
-};
+use habilis_network::runtime::tuning::{directory_expiry, directory_private_for_test};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
-use crate::api::{
-    DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory, event_sink,
-};
+use crate::api::directory::Collector;
+use crate::api::{MeshSession, directory as api_directory, event_sink};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
 /// flood of hostile ads must not grow the picker without bound.
@@ -151,9 +148,9 @@ impl TicketListings {
     }
 }
 
-/// Advertise `ad` into `directory` on a timer, reachable over `lookups`. Returns
-/// the task handle; dropping it leaves the directory. A directory-join failure
-/// logs and ends the task — the bridge keeps serving, just unlisted.
+/// Advertise `ad` into `directory` on a timer, reachable over `lookups`. The
+/// task runs until the caller aborts the returned handle. A directory-join
+/// failure logs and ends the task — the bridge keeps serving, just unlisted.
 ///
 /// # Errors
 /// The ad fails to serialize into a message body (a bad label).
@@ -165,33 +162,11 @@ pub(crate) fn spawn_ticket_advertiser(
     // Validate/render once, eagerly — a bad label errors at spawn, not silently
     // every tick.
     let body = ad.to_body()?;
-    Ok(tokio::spawn(async move {
-        let mesh = directory::directory_mesh(&directory, lookups);
-        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
-        {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::warn!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    directory = %directory,
-                    "a2a advertise: could not join the directory; ticket stays unlisted"
-                );
-                return;
-            }
-        };
-        let mut ticker = tokio::time::interval(advertise_interval());
-        loop {
-            ticker.tick().await;
-            if let Err(error) = session.broadcast(body.clone()).await {
-                tracing::debug!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    "a2a advertise: re-broadcast failed (will retry next tick)"
-                );
-            }
-        }
-    }))
+    Ok(tokio::spawn(api_directory::advertise(
+        directory,
+        lookups,
+        move || body.clone(),
+    )))
 }
 
 /// A ticket-directory change observed by a [`TicketDirectory`].
@@ -219,28 +194,31 @@ impl event_sink::Evictable for TicketDirectoryEvent {
 /// background, and ages out silent publishers.
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
-    session: Option<MeshSession>,
-    events_rx: Option<event_sink::EventReceiver<TicketDirectoryEvent>>,
-    task: Option<JoinHandle<()>>,
+    session: MeshSession,
+    collector: Collector,
 }
 
 impl TicketDirectory {
     /// Open directory `name` and collect a2a ticket ads over `lookups` — the
     /// same topic-coupling rule as mesh discovery: advertiser and discoverer
-    /// meet only over the same lookups.
+    /// meet only over the same lookups. Returns the directory and its event
+    /// stream (`Found` / `Lost`).
     ///
     /// # Errors
     /// The directory session cannot be established.
-    pub(crate) async fn open(name: MeshName, lookups: LookupSet) -> Result<Self> {
+    pub(crate) async fn open(
+        name: &MeshName,
+        lookups: LookupSet,
+    ) -> Result<(Self, event_sink::EventReceiver<TicketDirectoryEvent>)> {
         let resolved =
             api_directory::resolve_lookups_or_public(!directory_private_for_test(), lookups);
-        let mesh = directory::directory_mesh(&name, resolved);
+        let mesh = directory::directory_mesh(name, resolved);
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let mut listings = TicketListings::default();
         let (events_tx, events_rx) = event_sink::event_feed();
 
-        let task = tokio::spawn(async move {
+        let collector = Collector::spawn(async move {
             let ttl = directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
@@ -269,47 +247,21 @@ impl TicketDirectory {
             }
         });
 
-        Ok(Self {
-            session: Some(session),
-            events_rx: Some(events_rx),
-            task: Some(task),
-        })
+        Ok((Self { session, collector }, events_rx))
     }
 
-    /// Take the event stream (`Found` / `Lost`). Single-consumer:
-    /// returns the receiver once, then `None`.
-    pub(crate) fn events(&mut self) -> Option<event_sink::EventReceiver<TicketDirectoryEvent>> {
-        self.events_rx.take()
-    }
-
-    /// The directory session's `(mesh id, nickname)` while open — for
-    /// `logging::attach`.
-    pub(crate) fn session_identity(&self) -> Option<(&MeshId, &Nickname)> {
-        self.session
-            .as_ref()
-            .map(|session| (session.mesh_id(), session.nickname()))
+    /// The directory session's `(mesh id, nickname)` — for `logging::attach`.
+    pub(crate) fn session_identity(&self) -> (&MeshId, &Nickname) {
+        (self.session.mesh_id(), self.session.nickname())
     }
 
     /// Leave the directory and stop collecting.
     ///
     /// # Errors
     /// Propagates a clean-shutdown error from [`MeshSession::leave`].
-    pub(crate) async fn close(mut self) -> Result<()> {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-        if let Some(session) = self.session.take() {
-            session.leave().await?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for TicketDirectory {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
+    pub(crate) async fn close(self) -> Result<()> {
+        drop(self.collector);
+        Ok(self.session.leave().await?)
     }
 }
 

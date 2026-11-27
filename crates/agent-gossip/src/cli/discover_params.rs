@@ -25,15 +25,11 @@ pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
     let name = directory.unwrap_or_else(|| {
         MeshName::try_new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
     });
-    let mut discoverer = TicketDirectory::open(name.clone(), lookups).await?;
+    let (discoverer, mut events) = TicketDirectory::open(&name, lookups).await?;
     // Route the directory session's logs to its per-member file so the JSON
     // stream stays clean.
-    if let Some((mesh, nickname)) = discoverer.session_identity() {
-        logging::attach(mesh, nickname);
-    }
-    let mut events = discoverer
-        .events()
-        .expect("ticket discoverer events receiver is available exactly once");
+    let (mesh, nickname) = discoverer.session_identity();
+    logging::attach(mesh, nickname);
 
     let mut sigterm = sigterm_stream();
     loop {
