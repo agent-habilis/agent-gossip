@@ -2656,7 +2656,6 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
 /// cancelled at the worker too: the caller was told the call failed, so no
 /// task may live on for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "needs R1 fix"]
 async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
     let fast_reap = [
         ("--task-timeout-secs", "3"),
