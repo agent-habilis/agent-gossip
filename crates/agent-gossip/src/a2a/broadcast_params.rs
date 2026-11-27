@@ -1989,7 +1989,6 @@ pub(crate) async fn broadcast_a2a_call(
         responder,
         blob_group,
         opens_task,
-        restarts_clock: is_send_message(method),
     }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
@@ -2608,7 +2607,6 @@ mod call_blob_group_tests {
                 peer: &Nickname::from("bob"),
                 task_state: TaskState::Working,
                 now: Instant::now(),
-                restarts_clock: true,
             },
         );
 
@@ -3101,7 +3099,6 @@ mod open_task_gate_tests {
                 peer: &Nickname::from("bob"),
                 task_state: TaskState::Working,
                 now: Instant::now(),
-                restarts_clock: true,
             },
         );
 
@@ -3130,7 +3127,6 @@ mod open_task_gate_tests {
                 peer: &Nickname::from("bob"),
                 task_state: TaskState::Working,
                 now: Instant::now(),
-                restarts_clock: true,
             },
         );
         let follow_up = serde_json::json!({ "message": { "taskId": task_id.as_str() } });

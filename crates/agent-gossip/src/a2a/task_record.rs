@@ -675,9 +675,6 @@ pub(crate) struct AdoptInitiatorParams<'caller> {
     pub(crate) peer: &'caller Nickname,
     pub(crate) task_state: TaskState,
     pub(crate) now: Instant,
-    /// Whether the reply restarts the check-in clock: a follow-up's reply does, a bare `GetTask`
-    /// probe does not, or a sender that probes more often than 2·X would never see an alarm.
-    pub(crate) restarts_clock: bool,
 }
 
 /// Upsert the **initiator**-side record for a task whose authoritative `Task`
@@ -694,7 +691,6 @@ pub(crate) fn adopt_initiator(
         peer,
         task_state,
         now,
-        restarts_clock,
     } = params;
     // A refused adoption leaves no record here; the worker still holds its own.
     if !tasks.contains_key(task_id) && admit_new_task(tasks, peer_key) != Admission::Ok {
@@ -756,9 +752,6 @@ pub(crate) fn adopt_initiator(
             }
             rec.last_activity = now;
             rec.last_peer_activity = now;
-            if restarts_clock {
-                rec.last_skill_activity = now;
-            }
             if task_state.is_terminal() {
                 rec.state = task_state;
                 rec.review = false;
@@ -2240,27 +2233,23 @@ mod tests {
         );
     }
 
-    /// A `GetTask` probe refreshes the reaper clocks but not the check-in clock, so a sender
-    /// that probes more often than 2·X still gets its alarm; the reply to a follow-up restarts it.
+    /// An adopted reply refreshes the reaper clocks but not the check-in clock, so a sender that
+    /// probes more often than 2·X still gets its alarm; only a follow-up restarts it.
     #[test]
-    fn a_get_task_adoption_does_not_delay_the_alarm() {
+    fn an_adopted_reply_does_not_delay_the_alarm() {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
         let probe = later(start, CHECKIN);
-        let adopt = |registry: &mut HashMap<TaskId, TaskRecord>, now, restarts_clock| {
-            super::adopt_initiator(
-                registry,
-                super::AdoptInitiatorParams {
-                    task_id: &tid(),
-                    peer_key: &peer_key("calm-otter"),
-                    peer: &Nickname::from("calm-otter"),
-                    task_state: TaskState::Working,
-                    now,
-                    restarts_clock,
-                },
-            );
-        };
-        adopt(&mut tasks, probe, false);
+        super::adopt_initiator(
+            &mut tasks,
+            super::AdoptInitiatorParams {
+                task_id: &tid(),
+                peer_key: &peer_key("calm-otter"),
+                peer: &Nickname::from("calm-otter"),
+                task_state: TaskState::Working,
+                now: probe,
+            },
+        );
         assert_eq!(
             tasks[&tid()].last_peer_activity,
             probe,
@@ -2272,14 +2261,6 @@ mod tests {
                 .len(),
             1,
             "the alarm is due 2·X after the last check-in, whatever the probes"
-        );
-        let mut answered = working_task_we_opened(start);
-        adopt(&mut answered, probe, true);
-        assert!(
-            super::due_checkins(&mut answered, CHECKIN, later(start, CHECKIN * 2))
-                .0
-                .is_empty(),
-            "the reply to a follow-up restarts the clock"
         );
     }
 
@@ -2997,7 +2978,6 @@ mod tests {
                     peer: &peer,
                     task_state: TaskState::Working,
                     now,
-                    restarts_clock: true,
                 },
             );
         }
@@ -3125,7 +3105,6 @@ mod tests {
                     peer: &Nickname::from(peer),
                     task_state: state,
                     now: when,
-                    restarts_clock: true,
                 },
             );
         };
@@ -3810,7 +3789,6 @@ mod tests {
                 peer: &Nickname::from("calm-otter"),
                 task_state: TaskState::Failed,
                 now: now + Duration::from_mins(5),
-                restarts_clock: true,
             },
         );
         assert_eq!(
