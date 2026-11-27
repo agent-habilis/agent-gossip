@@ -931,15 +931,7 @@ pub(crate) struct TaskStatusParams<'caller> {
 
 /// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the other
 /// party from the task record and push the status to it. `--text` becomes the
-/// status note and nothing more — there is no progress reporting here. A
-/// `done/total` fraction can only ride a *beat*, and the sole beat producer is
-/// the daemon keepalive, which sources its fraction from `last_fraction` — a
-/// field written only from a *received* beat. The loop has no source, so the
-/// fraction is unreachable on every node. Giving a worker real progress needs a
-/// producer, and it is not a one-liner: `beat_metadata` sets the beat marker, and
-/// `ingest` routes any beat-marked status to `LegKind::Beat`, which does not
-/// advance state — so naively tagging a `working` status with a fraction would
-/// swallow the transition.
+/// status note and nothing more.
 ///
 /// # Errors
 /// `waiting requires state working` if a reason comes with another state;

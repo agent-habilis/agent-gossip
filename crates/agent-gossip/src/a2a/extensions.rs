@@ -17,10 +17,6 @@ pub const EXT_MESH_SEAL: &str = "https://agent-habilis.dev/a2a/ext/mesh-seal/v1"
 
 /// Metadata key set to `true` on a keepalive status; marks it as plumbing, not a state change.
 pub const META_BEAT: &str = "mesh:beat";
-/// Metadata key for finished units of work in a progress beat. Sent with `META_TOTAL`.
-pub const META_DONE: &str = "mesh:done";
-/// Metadata key for all units of work in a progress beat. Sent with `META_DONE`.
-pub const META_TOTAL: &str = "mesh:total";
 /// Metadata key for the free-text reason that goes with a status update.
 pub const META_REASON: &str = "mesh:reason";
 /// The initiator's one-line name for a task, so both parties label it

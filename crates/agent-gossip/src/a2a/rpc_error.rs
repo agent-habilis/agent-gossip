@@ -451,10 +451,9 @@ async fn send_message(
     )
     .await
     .map_err(|error| RpcError::internal(&error.to_string()))?;
-    // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof; a broadcast
+    // A2A v1.0 `SendMessage` returns a oneof keyed by member name; a broadcast
     // has no task, so echo the daemon-authored Message as `{"message": …}`.
     let echo: super::Message = serde_json::from_str(frame.body.as_str())
         .map_err(|error| RpcError::internal(&error.to_string()))?;
-    serde_json::to_value(super::SendMessageResponse::Message(echo))
-        .map_err(|error| RpcError::internal(&error.to_string()))
+    Ok(serde_json::json!({ "message": echo }))
 }

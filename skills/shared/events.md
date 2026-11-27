@@ -225,9 +225,8 @@ approval — show it and approve or ask for changes. `status-update` is the work
 **asking you a question** — answer it. Both are answered the same way, with a
 follow-up that carries `--task-id` (see the initiator flow below).
 
-`task_progress` is a **liveness** beat. It carries `done` and `total` only when
-the worker reports a percentage. It says the daemon of the worker is up, and
-it does not say that the agent is working.
+`task_progress` is a **liveness** beat. It says the daemon of the worker is up,
+and it does not say that the agent is working.
 
 `task_stalled` is the one task event with `is_visible` true. The daemon of the
 initiator emits it when the worker beat shows that the agent of the worker has

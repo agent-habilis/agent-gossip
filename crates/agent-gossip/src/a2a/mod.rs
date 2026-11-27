@@ -1,15 +1,11 @@
 pub use self::extensions::{
     EXT_MESH_A2A_RPC, EXT_MESH_BLOB, EXT_MESH_BROADCAST, EXT_MESH_SEAL, EXT_MESH_STATE,
-    GOSSIP_BINDING, META_BEAT, META_DONE, META_LABEL, META_REASON, META_TOTAL,
+    GOSSIP_BINDING, META_BEAT, META_LABEL, META_REASON,
 };
 pub use self::model::{
     A2aRpcId, AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, Artifact,
-    Message, MessageId, PROTOCOL_VERSION, Part, Role, SendMessageResponse, StreamResponse, Task,
-    TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, friendly_state,
-};
-// Compatibility facade: the HTTP tunnel is a bridge subsystem, not A2A core.
-pub(crate) use crate::tunnel::{
-    ExposeParams, TicketDirectory, TicketDirectoryEvent, expose, ticket_requires_password,
+    Message, MessageId, PROTOCOL_VERSION, Part, Role, TaskArtifactUpdate, TaskId, TaskState,
+    TaskStatus, TaskStatusUpdate, friendly_state,
 };
 
 pub(crate) mod a2a_app;

@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{
-    Artifact, Message, MessageId, Part, Role, Task, TaskArtifactUpdate, TaskId, TaskState,
-    TaskStatus, TaskStatusUpdate,
+    Artifact, Message, MessageId, Part, Role, TaskArtifactUpdate, TaskId, TaskState, TaskStatus,
+    TaskStatusUpdate,
 };
 
 fn fixture_message() -> Message {
@@ -116,7 +116,7 @@ mod snapshots {
     use habilis_network::protocol::messages::Verified;
 
     use super::{
-        Artifact, Part, Task, TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate,
+        Artifact, Part, TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate,
         fixture_message,
     };
     use crate::a2a::wire;
@@ -177,25 +177,6 @@ mod snapshots {
             .as_bytes()
             .to_vec();
         insta::assert_snapshot!(String::from_utf8(bytes).expect("the bytes are printable ASCII"));
-    }
-
-    #[test]
-    fn snap_a2a_task() {
-        let task = Task {
-            id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-            context_id: "test".to_string(),
-            status: TaskStatus {
-                state: TaskState::Working,
-                message: None,
-                timestamp: Some("2026-01-01T00:00:00Z".to_string()),
-            },
-            artifacts: Vec::new(),
-            history: vec![fixture_message()],
-            metadata: None,
-        };
-        insta::assert_snapshot!(
-            serde_json::to_string(&task).expect("a test value serializes to JSON")
-        );
     }
 
     #[test]

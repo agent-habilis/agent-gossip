@@ -5,8 +5,8 @@ use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::frame_payload_error::FramePayloadError;
 use super::{
-    EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
-    TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
+    EXT_MESH_BROADCAST, META_BEAT, META_LABEL, Message, Part, Role, TaskArtifactUpdate, TaskId,
+    TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
 /// Compose a broadcast chat payload.
@@ -289,17 +289,10 @@ pub fn status_update(mesh: &MeshId, params: StatusUpdateParams<'_>) -> TaskStatu
     }
 }
 
-/// The beat metadata for a keepalive/progress status: the wire-static
-/// plumbing marker plus an optional `done/total` fraction.
+/// The beat metadata for a keepalive status: the wire-static plumbing marker.
 #[must_use]
-pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    map.insert(META_BEAT.to_string(), serde_json::Value::Bool(true));
-    if let Some((done, total)) = fraction {
-        map.insert(META_DONE.to_string(), done.into());
-        map.insert(META_TOTAL.to_string(), total.into());
-    }
-    serde_json::Value::Object(map)
+pub fn beat_metadata() -> serde_json::Value {
+    serde_json::json!({ META_BEAT: true })
 }
 
 /// Whether the local agent of a worker is reading: the answer a beat carries so
@@ -315,11 +308,8 @@ pub struct ReaderBeat {
 
 /// As [`beat_metadata`], plus the worker's [`ReaderBeat`] when it has polled.
 #[must_use]
-pub fn beat_metadata_with_reader(
-    fraction: Option<(u64, u64)>,
-    reader: Option<ReaderBeat>,
-) -> serde_json::Value {
-    let mut meta = beat_metadata(fraction);
+pub fn beat_metadata_with_reader(reader: Option<ReaderBeat>) -> serde_json::Value {
+    let mut meta = beat_metadata();
     if let (Some(reader), Some(map)) = (reader, meta.as_object_mut()) {
         map.insert(META_BELL.to_string(), reader.bell.into());
         map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
@@ -422,16 +412,6 @@ pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
         bell: meta.get(META_BELL)?.as_bool()?,
         last_poll_secs: meta.get(META_LAST_POLL)?.as_u64()?,
     })
-}
-
-/// The `done/total` fraction a beat carries, if any.
-#[must_use]
-pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
-    let meta = update.metadata.as_ref()?;
-    Some((
-        meta.get(META_DONE)?.as_u64()?,
-        meta.get(META_TOTAL)?.as_u64()?,
-    ))
 }
 
 /// The initiator's one-line task label (`mesh:label`), when the brief carries one.

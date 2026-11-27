@@ -112,8 +112,6 @@ pub(crate) struct TaskRecord {
     /// the same leg again, so the app remembers what it has shown. Beats are
     /// never recorded: at one every 30 s they would evict every real id.
     pub surfaced_legs: BoundedFifoSet<MessageId>,
-    /// Last progress fraction reported, replayed on keepalives.
-    pub last_fraction: Option<(u64, u64)>,
     /// Which role currently owes the next move.
     pub ball: TaskRole,
     /// Why the worker waits on its own user, from the `mesh:waiting` key of its
@@ -222,8 +220,6 @@ pub(crate) struct LegInfo<'source> {
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
-    /// `done/total` carried by a beat (else `None`).
-    pub fraction: Option<(u64, u64)>,
 }
 
 /// The value cluster [`ingest`] needs beyond its `tasks` registry handle.
@@ -238,7 +234,7 @@ pub(crate) struct IngestLegParams<'caller> {
 /// Feed one **validated logical** task frame into the registry from the
 /// broadcast (`mine = true`) or receive (`mine = false`) path. The single
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
-/// peer and the beat fraction) and advances the machine. A frame that
+/// peer) and advances the machine. A frame that
 /// belongs to no task is a no-op.
 ///
 /// Returns the worker's [`ReaderBeat`] when the frame is a fresh inbound beat
@@ -272,23 +268,23 @@ pub(crate) fn ingest(
     let mut waiting = None;
     let mut order = None;
     let mut reader = None;
-    let (kind, fraction) = match tag.as_str() {
+    let kind = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = status_update_params::status_payload(frame) else {
                 return None;
             };
             if status_update_params::is_beat(&payload) {
                 reader = status_update_params::beat_reader(&payload);
-                (LegKind::Beat, status_update_params::beat_fraction(&payload))
+                LegKind::Beat
             } else {
                 if payload.status.state == TaskState::Working {
                     waiting = status_update_params::status_waiting(&payload);
                 }
                 order = status_update_params::status_order(&payload);
-                (LegKind::Status(payload.status.state), None)
+                LegKind::Status(payload.status.state)
             }
         }
-        wire::ARTIFACT => (LegKind::Artifact, None),
+        wire::ARTIFACT => LegKind::Artifact,
         _ => return None,
     };
     if kind == LegKind::Beat && !mine && is_stale(frame) {
@@ -304,7 +300,6 @@ pub(crate) fn ingest(
             peer: None,
             kind,
             mine,
-            fraction,
         },
         now,
     );
@@ -512,7 +507,6 @@ pub(crate) fn adopt_initiator(
                 last_skill_activity: now,
                 peer_beats: false,
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
-                last_fraction: None,
                 waiting: None,
                 waiting_mark: None,
                 last_stall_event: None,
@@ -591,7 +585,6 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_skill_activity: now,
                 peer_beats: false,
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
-                last_fraction: None,
                 waiting: None,
                 waiting_mark: None,
                 last_stall_event: None,
@@ -617,9 +610,6 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     }
 
     advance(rec, leg.kind, leg.mine);
-    if let Some(fraction) = leg.fraction {
-        rec.last_fraction = Some(fraction);
-    }
     rec.last_activity = now;
     if leg.mine {
         rec.last_sent = now;
@@ -918,9 +908,6 @@ pub(crate) async fn tick_task_keepalive(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
-    /// `(task_id, peer, state, last_fraction)` for one keepalive-due task.
-    type KeepaliveDue = (TaskId, AuthorKey, TaskState, Option<(u64, u64)>);
-
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
     let (bell, last_poll) = super::node::reader_liveness(app, context);
@@ -932,16 +919,15 @@ pub(crate) async fn tick_task_keepalive(
         .tasks
         .iter()
         .filter(|(_, rec)| rec.should_keepalive(now, cadence));
-    let due: Vec<KeepaliveDue> = quiet
-        .map(|(task_id, rec)| (task_id.clone(), rec.peer_key, rec.state, rec.last_fraction))
+    let due: Vec<(TaskId, AuthorKey, TaskState)> = quiet
+        .map(|(task_id, rec)| (task_id.clone(), rec.peer_key, rec.state))
         .collect();
 
-    for (task_id, peer_key, task_state, fraction) in due {
+    for (task_id, peer_key, task_state) in due {
         let update = status_update_params::status_update(
             context.mesh,
-            status_update_params::StatusUpdateParams::new(&task_id, task_state).with_metadata(
-                status_update_params::beat_metadata_with_reader(fraction, reader),
-            ),
+            status_update_params::StatusUpdateParams::new(&task_id, task_state)
+                .with_metadata(status_update_params::beat_metadata_with_reader(reader)),
         );
         let sent = broadcast_status(
             state,
@@ -1213,7 +1199,7 @@ mod tests {
         let payload = status_update_params::status_update(
             &mesh,
             status_update_params::StatusUpdateParams::new(&tid(), TaskState::Working)
-                .with_metadata(status_update_params::beat_metadata(None)),
+                .with_metadata(status_update_params::beat_metadata()),
         );
         let mut beat = Message::new_app(
             &mesh,
@@ -1257,7 +1243,7 @@ mod tests {
     fn status_leg(beat: bool) -> Message {
         status_frame(
             TaskState::Working,
-            beat.then(|| status_update_params::beat_metadata(None)),
+            beat.then(status_update_params::beat_metadata),
         )
     }
 
@@ -1319,9 +1305,7 @@ mod tests {
     fn beat_from_worker(reader: Option<ReaderBeat>) -> Message {
         status_frame(
             TaskState::Working,
-            Some(status_update_params::beat_metadata_with_reader(
-                None, reader,
-            )),
+            Some(status_update_params::beat_metadata_with_reader(reader)),
         )
     }
 
@@ -1991,7 +1975,6 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind,
             mine,
-            fraction: None,
         }
     }
 
@@ -2013,7 +1996,6 @@ mod tests {
             peer: Some(outsider),
             kind,
             mine: false,
-            fraction: None,
         };
 
         // We are the *initiator* — the side the attack lands on, since an
@@ -2121,7 +2103,6 @@ mod tests {
                     peer: Some(&Nickname::from("a-peer")),
                     kind: LegKind::Offer,
                     mine: false,
-                    fraction: None,
                 },
                 now,
             );
@@ -2354,7 +2335,6 @@ mod tests {
                 peer: Some(Box::leak(Box::new(Nickname::from("wire-thistle")))),
                 kind: LegKind::Offer,
                 mine: false,
-                fraction: None,
             },
             now,
         );
@@ -2379,7 +2359,6 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from(peer)))),
             kind: LegKind::Offer,
             mine: false,
-            fraction: None,
         };
         let live_id = "550e8400-e29b-41d4-a716-446655440001";
         let staying_id = "550e8400-e29b-41d4-a716-446655440002";
@@ -3011,7 +2990,6 @@ mod tests {
                     peer: Some(&Nickname::from("wire-thistle")),
                     kind: LegKind::Offer,
                     mine: false,
-                    fraction: None,
                 },
                 Instant::now(),
             );
@@ -3038,7 +3016,6 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind: LegKind::Offer,
             mine: false,
-            fraction: None,
         };
         let left_id = "550e8400-e29b-41d4-a716-446655440001";
         let twin_id = "550e8400-e29b-41d4-a716-446655440002";

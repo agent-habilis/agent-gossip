@@ -215,7 +215,6 @@ mod tests {
                 peer: Some(&Nickname::from(peer)),
                 kind: Offer,
                 mine: false,
-                fraction: None,
             },
             std::time::Instant::now(),
         );

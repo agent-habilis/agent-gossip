@@ -495,7 +495,7 @@ fn task_progress_event_json_shape() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::Working,
             note: None,
-            metadata: Some(status_update_params::beat_metadata(Some((35, 100)))),
+            metadata: Some(status_update_params::beat_metadata()),
         },
     );
     let json = simple_event::event_json(&OutputEvent::Task {
@@ -505,8 +505,7 @@ fn task_progress_event_json_shape() {
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);
-    // A beat renders as a distinct `task_progress` event with its
-    // `done`/`total`, never as a content `task` event.
+    // A beat renders as a distinct `task_progress` event, never as a content `task` event.
     assert_eq!(
         parsed["event"], "task_progress",
         "the event field is task_progress"
@@ -515,12 +514,11 @@ fn task_progress_event_json_shape() {
         parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
         "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
     );
-    assert_eq!(parsed["done"], 35, "the done field is 35");
-    assert_eq!(parsed["total"], 100, "the total field is 100");
+    assert!(parsed.get("done").is_none(), "a beat carries no fraction");
     assert!(parsed.get("phase").is_none(), "the phase key is absent");
     assert_eq!(
-        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100",
-        "the progress line names both peers and the 35 of 100 fraction"
+        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: working",
+        "the progress line names both peers"
     );
 }
 
@@ -818,7 +816,7 @@ mod snapshots {
         insta::assert_snapshot!(snap_status(
             crate::a2a::TaskState::Working,
             None,
-            Some(status_update_params::beat_metadata(Some((35, 100)))),
+            Some(status_update_params::beat_metadata()),
         ));
     }
 

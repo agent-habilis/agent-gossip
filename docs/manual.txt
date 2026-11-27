@@ -1439,14 +1439,14 @@ JSON EVENTS
               (under the command list) for how the flow is driven.
 
        task_progress
-              The worker's liveness + percent beat (a `working` status marked
+              The worker's liveness beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
-              record. done/total are omitted when progress is indeterminate.
+              record.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "to_pubkey":"<hex>","task_id":"<uuid>","done":35,"total":100,
-                  "display":"💬️ task progress `<from>` → `<to>`: 35/100",
+                  "to_pubkey":"<hex>","task_id":"<uuid>",
+                  "display":"💬️ task progress `<from>` → `<to>`: working",
                   "self":false}
 
        task_timeout
