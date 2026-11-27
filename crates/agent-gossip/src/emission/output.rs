@@ -367,7 +367,6 @@ impl Output {
                 age_secs: notice.age_secs,
                 waiting_on: notice.waiting_on.clone(),
                 not_picked_up: notice.not_picked_up,
-                reader: notice.reader,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
@@ -378,7 +377,6 @@ impl Output {
                         age_secs: notice.age_secs,
                         waiting_on: notice.waiting_on.as_deref(),
                         not_picked_up: notice.not_picked_up,
-                        reader: notice.reader,
                     }),
                     true,
                 ),

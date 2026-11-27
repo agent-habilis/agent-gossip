@@ -612,7 +612,6 @@ fn task_peer_left_event_json_shape() {
 fn task_overdue_event_json_shape() {
     use super::OutputEvent;
     use crate::a2a::TaskId;
-    use crate::a2a::status_update_params::ReaderBeat;
     let event = OutputEvent::TaskOverdue {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         peer: habilis_network::protocol::Nickname::from("calm-otter"),
@@ -620,10 +619,6 @@ fn task_overdue_event_json_shape() {
         age_secs: 660,
         waiting_on: Some("rope-crypt".to_owned()),
         not_picked_up: true,
-        reader: Some(ReaderBeat {
-            bell: true,
-            last_poll_secs: 120,
-        }),
     };
     let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
     let parsed = parse(&json);
@@ -636,7 +631,7 @@ fn task_overdue_event_json_shape() {
     assert_eq!(
         parsed["display"],
         "💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min \
-         · waiting on rope-crypt · not picked up · bell on, last poll 2 min ago",
+         · waiting on rope-crypt · not picked up",
         "the line carries every part that is set"
     );
     assert!(simple_event::is_visible(&event), "the user must see it");
@@ -656,7 +651,6 @@ fn task_overdue_display_leaves_out_unset_parts() {
         age_secs: 600,
         waiting_on: None,
         not_picked_up: false,
-        reader: None,
     };
     let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
     assert_eq!(
@@ -678,7 +672,6 @@ fn task_overdue_waiting_on_user_does_not_wake() {
         age_secs: 600,
         waiting_on: Some("user".to_owned()),
         not_picked_up: false,
-        reader: None,
     };
     assert!(simple_event::is_visible(&event), "the user must see it");
     assert!(!node::wakes(&event), "nothing is done, so no wake");

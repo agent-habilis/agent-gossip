@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicU64;
 
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
-use super::extensions::{META_BELL, META_CHECKIN_AGE, META_LAST_POLL, META_ORDER_MS, META_WAITING};
+use super::extensions::{META_CHECKIN_AGE, META_ORDER_MS, META_WAITING};
 use super::frame_payload_error::FramePayloadError;
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_LABEL, META_PROGRESS, Message, Part, Role,
@@ -301,42 +301,25 @@ pub fn beat_metadata(progress: Option<Progress>) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-/// Whether the local agent of a worker is reading: the answer a beat carries so
-/// the initiator can tell a wedged agent from a live daemon without asking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ReaderBeat {
-    /// `true` when the agent armed a long poll, so a new message wakes it.
-    pub bell: bool,
-    /// Seconds since the agent last polled.
-    pub last_poll_secs: u64,
-}
-
 /// What a worker adds to a beat beyond the plumbing marker.
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct BeatExtras {
     /// The last progress reported, replayed so a lost check-in costs nothing.
     pub progress: Option<Progress>,
-    /// Whether the worker agent is reading.
-    pub reader: Option<ReaderBeat>,
     /// Seconds since the worker's agent last checked in on this task. Its presence
     /// tells the sender that the worker supports check-ins.
     pub checkin_age_secs: Option<u64>,
 }
 
-/// As [`beat_metadata`], plus the worker's [`ReaderBeat`] and check-in age.
+/// As [`beat_metadata`], plus the worker's check-in age.
 #[must_use]
 pub fn beat_metadata_with_extras(extras: BeatExtras) -> serde_json::Value {
     let mut meta = beat_metadata(extras.progress);
-    if let Some(map) = meta.as_object_mut() {
-        if let Some(reader) = extras.reader {
-            map.insert(META_BELL.to_string(), reader.bell.into());
-            map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
-        }
-        if let Some(age) = extras.checkin_age_secs {
-            map.insert(META_CHECKIN_AGE.to_string(), age.into());
-        }
+    if let Some(map) = meta.as_object_mut()
+        && let Some(age) = extras.checkin_age_secs
+    {
+        map.insert(META_CHECKIN_AGE.to_string(), age.into());
     }
     meta
 }
@@ -425,17 +408,6 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
         .as_ref()
         .and_then(|meta| meta.get(META_BEAT));
     beat.and_then(serde_json::Value::as_bool).unwrap_or(false)
-}
-
-/// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
-/// worker that never polled reads as unknown.
-#[must_use]
-pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
-    let meta = update.metadata.as_ref()?;
-    Some(ReaderBeat {
-        bell: meta.get(META_BELL)?.as_bool()?,
-        last_poll_secs: meta.get(META_LAST_POLL)?.as_u64()?,
-    })
 }
 
 /// Seconds since the worker agent last checked in, as its beat states them.

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageId, Nickname};
 
-use crate::a2a::status_update_params::ReaderBeat;
 use crate::a2a::{TaskId, TaskState};
 
 /// One thing a daemon surfaced to its operator or agent. Each variant maps to
@@ -154,8 +153,6 @@ pub enum OutputEvent {
         waiting_on: Option<String>,
         /// `true` when the worker never accepted the task.
         not_picked_up: bool,
-        /// What the worker's last beat said about its agent.
-        reader: Option<ReaderBeat>,
     },
     /// This worker owes a check-in. Rings its bell only; it is never shown.
     CheckinDue {

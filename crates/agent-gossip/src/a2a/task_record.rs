@@ -27,7 +27,7 @@ use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-use super::status_update_params::{Progress, ReaderBeat};
+use super::status_update_params::Progress;
 use super::{META_REASON, TaskId, TaskState, status_update_params, wire};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::tuning::{
@@ -139,7 +139,6 @@ pub(crate) struct TaskRecord {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PeerBeat {
     pub checkin_age_secs: Option<u64>,
-    pub reader: Option<ReaderBeat>,
     pub at: Instant,
     /// The wire second the beat was sent, so a beat that a relay delivers late cannot replace a
     /// newer one and shrink the stated age.
@@ -293,7 +292,6 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             if status_update_params::is_beat(&payload) {
                 beat = Some(PeerBeat {
                     checkin_age_secs: status_update_params::beat_checkin_age(&payload),
-                    reader: status_update_params::beat_reader(&payload),
                     at: now,
                     sent_at: frame.timestamp,
                 });
@@ -520,7 +518,6 @@ pub(crate) struct Overdue {
     pub age_secs: u64,
     pub waiting_on: Option<String>,
     pub not_picked_up: bool,
-    pub reader: Option<ReaderBeat>,
 }
 
 /// A raised reminder: this worker owes a check-in.
@@ -555,7 +552,6 @@ pub(crate) fn due_checkins(
                 let age = checkin_age(rec, now);
                 if age >= interval * 2 {
                     rec.last_notice = Some(now);
-                    let reader = rec.peer_beat.and_then(|beat| beat.reader);
                     let not_picked_up = rec.state == TaskState::Submitted;
                     let label = rec.label.clone();
                     let waiting_on = rec.waiting_on.clone();
@@ -566,7 +562,6 @@ pub(crate) fn due_checkins(
                         age_secs: age.as_secs(),
                         waiting_on,
                         not_picked_up,
-                        reader,
                     });
                 }
             }
@@ -1163,11 +1158,6 @@ pub(crate) async fn tick_task_keepalive(
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
-    let (bell, last_poll) = super::node::reader_liveness(app, context);
-    let reader = last_poll.map(|last_poll_secs| ReaderBeat {
-        bell,
-        last_poll_secs,
-    });
     let quiet = app
         .tasks
         .iter()
@@ -1193,7 +1183,6 @@ pub(crate) async fn tick_task_keepalive(
             status_update_params::StatusUpdateParams::new(&task_id, task_state).with_metadata(
                 status_update_params::beat_metadata_with_extras(status_update_params::BeatExtras {
                     progress,
-                    reader,
                     checkin_age_secs,
                 }),
             ),
@@ -1676,7 +1665,6 @@ mod tests {
             .expect("the test inserted this task earlier")
             .peer_beat = Some(super::PeerBeat {
             checkin_age_secs: Some(10),
-            reader: None,
             at,
             sent_at: UnixSecs::now(),
         });
@@ -2169,7 +2157,6 @@ mod tests {
             .expect("the test inserted this task earlier")
             .peer_beat = Some(super::PeerBeat {
             checkin_age_secs: Some(u64::MAX),
-            reader: None,
             at: start,
             sent_at: UnixSecs::now(),
         });

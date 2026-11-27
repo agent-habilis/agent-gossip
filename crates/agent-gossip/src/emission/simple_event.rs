@@ -71,10 +71,6 @@ pub(super) enum SimpleEvent<'source> {
         #[serde(skip_serializing_if = "Option::is_none")]
         waiting_on: Option<&'source str>,
         not_picked_up: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        bell: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        last_poll_secs_ago: Option<u64>,
         /// Pre-formatted line (see [`task_overdue_event`]).
         display: String,
     },
@@ -356,7 +352,6 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         age_secs,
         waiting_on,
         not_picked_up,
-        reader,
     } = *fields;
     let short_id: String = task_id.as_str().chars().take(8).collect();
     let name = label.map_or(short_id, str::to_owned);
@@ -370,13 +365,6 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
     if not_picked_up {
         parts.push(" · not picked up".to_owned());
     }
-    if let Some(reader) = reader {
-        let bell = if reader.bell { "on" } else { "off" };
-        parts.push(format!(
-            " · bell {bell}, last poll {} min ago",
-            reader.last_poll_secs / 60
-        ));
-    }
     let display = parts.concat();
     SimpleEvent::TaskOverdue {
         task_id: task_id.as_str(),
@@ -385,8 +373,6 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         age_secs,
         waiting_on,
         not_picked_up,
-        bell: reader.map(|reader| reader.bell),
-        last_poll_secs_ago: reader.map(|reader| reader.last_poll_secs),
         display,
     }
 }
@@ -400,7 +386,6 @@ pub(super) struct TaskOverdueFields<'source> {
     pub(super) age_secs: u64,
     pub(super) waiting_on: Option<&'source str>,
     pub(super) not_picked_up: bool,
-    pub(super) reader: Option<status_update_params::ReaderBeat>,
 }
 
 /// The `checkin_due` event: the worker's reminder. It is never shown, so its
@@ -1034,7 +1019,6 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             age_secs,
             waiting_on,
             not_picked_up,
-            reader,
         } => serde_json::to_string(&task_overdue_event(&TaskOverdueFields {
             task_id,
             peer,
@@ -1042,7 +1026,6 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             age_secs: *age_secs,
             waiting_on: waiting_on.as_deref(),
             not_picked_up: *not_picked_up,
-            reader: *reader,
         }))
         .ok(),
         OutputEvent::CheckinDue {

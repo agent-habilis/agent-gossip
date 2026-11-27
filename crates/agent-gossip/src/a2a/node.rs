@@ -1534,7 +1534,6 @@ mod classify_tests {
             age_secs: 600,
             waiting_on: waiting_on.map(str::to_owned),
             not_picked_up: false,
-            reader: None,
         };
         assert!(wakes(&overdue(None)), "a plain alarm wakes");
         assert!(
