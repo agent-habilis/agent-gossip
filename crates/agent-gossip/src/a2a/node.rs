@@ -583,11 +583,12 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         let applied = task_record::apply_leg(
             &mut app.tasks,
             &app.closed_tasks,
-            task_record::ReceivedLeg {
+            task_record::Leg {
                 task_id: &task_id,
-                from: &message.key(),
-                peer: &message.author,
-                payload: task_record::LegPayload::Frame(message),
+                peer_key: &message.key(),
+                peer: Some(&message.author),
+                source: task_record::LegSource::Frame(message),
+                mine: false,
                 now: Instant::now(),
             },
         );
@@ -1081,15 +1082,15 @@ fn apply_remote_leg(
     let applied = task_record::apply_leg(
         &mut app.tasks,
         &app.closed_tasks,
-        task_record::ReceivedLeg {
+        task_record::Leg {
             task_id: &task_id,
-            from: requester_key,
-            peer: requester,
-            payload: if kind == LegKind::Offer {
-                task_record::LegPayload::Brief(message_id)
-            } else {
-                task_record::LegPayload::FollowUp(message_id)
+            peer_key: requester_key,
+            peer: Some(requester),
+            source: task_record::LegSource::Message {
+                id: message_id,
+                opens_task: kind == LegKind::Offer,
             },
+            mine: false,
             now,
         },
     );

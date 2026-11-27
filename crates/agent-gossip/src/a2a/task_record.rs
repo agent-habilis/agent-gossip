@@ -258,11 +258,12 @@ pub(crate) struct IngestLegParams<'caller> {
     pub(crate) now: Instant,
 }
 
-/// Feed one **validated logical** task frame into the registry from the
-/// broadcast (`mine = true`) or receive (`mine = false`) path. The single
-/// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
-/// peer and the beat progress) and advances the machine. A frame that
-/// belongs to no task is a no-op.
+/// Feed one **validated logical** task frame into the registry, from the broadcast
+/// (`mine = true`) or the receive (`mine = false`) path, with no reaped task listed. A frame that
+/// is not a directed app frame belongs to no task and is a no-op.
+///
+/// On the `mine` path the caller must hand us the plaintext twin of the leg, not the wire frame:
+/// the wire body is sealed to the addressee, and a status leg reads its state out of the body.
 pub(crate) fn ingest(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     params: IngestLegParams<'_>,
@@ -273,158 +274,269 @@ pub(crate) fn ingest(
         mine,
         now,
     } = params;
-    // A task leg is a directed status/artifact app frame. `a2a_msg` (broadcast
-    // chat) and every infra kind are never task legs; task `message/send` legs
-    // are applied directly from the RPC path, not through `ingest`. The caller
-    // already holds the `task_id` (8.0 moved it into the body), so it is threaded
-    // in rather than recovered from the body.
-    //
-    // On the `mine` path the caller must hand us the plaintext twin of the leg,
-    // not the wire frame: the wire body is sealed to the addressee, and a status
-    // leg reads its state out of the body.
-    let MessageKind::App {
-        tag, to: Some(to), ..
-    } = &frame.kind
-    else {
+    let MessageKind::App { to: Some(to), .. } = &frame.kind else {
         return Applied::NONE;
     };
-    let mut checkin = None;
-    let mut order = None;
-    let mut beat = None;
-    let mut beat_progress = None;
-    let kind = match tag.as_str() {
+    let author = frame.key();
+    let leg = Leg {
+        task_id,
+        peer_key: if mine { to } else { &author },
+        peer: None,
+        source: LegSource::Frame(frame),
+        mine,
+        now,
+    };
+    apply_leg(tasks, &ClosedTasks::new(0), leg)
+}
+
+/// A leg of one task, as the state machine takes it in.
+pub(crate) struct Leg<'caller> {
+    pub task_id: &'caller TaskId,
+    /// The other party's key: the author of a leg that arrived, the addressee of one we sent.
+    pub peer_key: &'caller AuthorKey,
+    /// The other party's name, which a brief records.
+    pub peer: Option<&'caller Nickname>,
+    pub source: LegSource<'caller>,
+    /// `true` if we sent the leg (the echo of our own), `false` if it arrived.
+    pub mine: bool,
+    pub now: Instant,
+}
+
+/// Where a leg comes from.
+pub(crate) enum LegSource<'caller> {
+    /// A status or artifact frame.
+    Frame(&'caller Authored),
+    /// A message of the RPC path, by its id: a brief when it opens the task, else a follow-up.
+    Message { id: &'caller str, opens_task: bool },
+}
+
+/// What a received leg turned out to be, for the layer that surfaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Applied {
+    /// Whether the leg is news: its id is new to the record and its task is still open. A leg
+    /// that is not news stays off the surface, and it moves no clock.
+    pub first_seen: bool,
+    /// Whether a check-in put the progress in another quarter.
+    pub quarter_moved: bool,
+}
+
+impl Applied {
+    /// A leg that belongs to no task, or to a task of another peer.
+    const NONE: Self = Self {
+        first_seen: false,
+        quarter_moved: false,
+    };
+}
+
+/// What the state machine reads out of a leg.
+struct Facts<'source> {
+    kind: LegKind,
+    /// The id to remember. A beat has none: at one every 30 s they would evict every real id,
+    /// and neither has an echo of our own leg.
+    id: Option<&'source str>,
+    at: UnixSecs,
+    order: Option<u64>,
+    checkin: Option<CheckinFields>,
+    beat: Option<(PeerBeat, Option<Progress>)>,
+}
+
+/// Read a frame. `None` for a frame that is no task leg, one whose payload does not parse, and
+/// a beat that proves nothing now.
+fn facts_of_frame(frame: &Authored, mine: bool, now: Instant) -> Option<Facts<'_>> {
+    let MessageKind::App { tag, .. } = &frame.kind else {
+        return None;
+    };
+    let mut facts = Facts {
+        kind: LegKind::Artifact,
+        id: (!mine).then(|| frame.id.as_str()),
+        at: frame.timestamp,
+        order: None,
+        checkin: None,
+        beat: None,
+    };
+    match tag.as_str() {
         wire::STATUS => {
-            let Ok(payload) = status_update_params::status_payload(frame) else {
-                return Applied::NONE;
-            };
+            let payload = status_update_params::status_payload(frame).ok()?;
             if status_update_params::is_beat(&payload) {
-                beat = Some(PeerBeat {
-                    checkin_age_secs: status_update_params::beat_checkin_age(&payload),
-                    at: now,
-                    sent_at: frame.timestamp,
-                });
-                beat_progress = status_update_params::leg_progress(&payload);
-                LegKind::Beat
+                // A beat older than one idle timeout proves nothing about the peer now.
+                if !mine && is_stale(frame) {
+                    return None;
+                }
+                facts.kind = LegKind::Beat;
+                facts.id = None;
+                facts.beat = Some((
+                    PeerBeat {
+                        checkin_age_secs: status_update_params::beat_checkin_age(&payload),
+                        at: now,
+                        sent_at: frame.timestamp,
+                    },
+                    status_update_params::leg_progress(&payload),
+                ));
             } else {
                 if payload.status.state == TaskState::Working {
-                    checkin = Some(CheckinFields {
+                    facts.checkin = Some(CheckinFields {
                         waiting_user: status_update_params::status_waiting_user(&payload),
                         text: status_update_params::status_text(&payload),
                         progress: status_update_params::leg_progress(&payload),
                     });
                 }
-                order = status_update_params::status_order(&payload);
-                LegKind::Status(payload.status.state)
+                facts.order = status_update_params::status_order(&payload);
+                facts.kind = LegKind::Status(payload.status.state);
             }
         }
         wire::ARTIFACT => {
-            order = status_update_params::artifact_payload(frame)
+            facts.order = status_update_params::artifact_payload(frame)
                 .ok()
                 .and_then(|payload| status_update_params::artifact_order(&payload));
-            LegKind::Artifact
         }
-        _ => return Applied::NONE,
+        _ => return None,
+    }
+    Some(facts)
+}
+
+fn facts_of_message(id: &str, opens_task: bool) -> Facts<'_> {
+    Facts {
+        kind: if opens_task {
+            LegKind::Offer
+        } else {
+            LegKind::Text
+        },
+        id: Some(id),
+        at: UnixSecs::now(),
+        order: None,
+        checkin: None,
+        beat: None,
+    }
+}
+
+/// Apply one leg to the registry: the one place that decides whether a leg is news, for a frame
+/// and for a message of the RPC path alike, whoever sent it. A leg is news when its id is new to
+/// the record and it is not older than the leg that last decided the waiting flag, and a task
+/// that closed (or that the sweep reaped) has no news. An unknown task still counts as open: the
+/// initiator's record comes from the RPC response, and the worker's first leg can arrive ahead
+/// of it. A leg that is not news moves no state and no clock.
+pub(crate) fn apply_leg(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    closed: &ClosedTasks,
+    leg: Leg<'_>,
+) -> Applied {
+    let Leg {
+        task_id,
+        peer_key,
+        peer,
+        source,
+        mine,
+        now,
+    } = leg;
+    let facts = match source {
+        LegSource::Frame(frame) => match facts_of_frame(frame, mine, now) {
+            Some(facts) => facts,
+            None => return Applied::NONE,
+        },
+        LegSource::Message { id, opens_task } => facts_of_message(id, opens_task),
     };
-    if kind == LegKind::Beat && !mine && is_stale(frame) {
-        return Applied::NONE;
-    }
-    let author_key = frame.key();
-    let peer_key = if mine { to } else { &author_key };
-    // The record's own counterparty is the only authority over it: a bystander's frame must not
-    // even be remembered, or it could push a real leg id out of the bounded set.
-    if tasks
-        .get(task_id)
-        .is_some_and(|rec| rec.peer_key != *peer_key)
-    {
-        return Applied::NONE;
-    }
-    // Remembered on the first ingest of every inbound leg, surfaced or not, so a
-    // replay of a silent one cannot move the clock either.
-    let first_seen = mine || kind == LegKind::Beat || mark_seen(tasks, task_id, frame.id.as_str());
-    // A leg that a slow relay delivers after a newer one is a first sight of its id, but not
-    // news: it moves no clock and no state.
-    let moves_clock = first_seen
-        && (mine
-            || kind == LegKind::Beat
-            || tasks
-                .get(task_id)
-                .is_none_or(|rec| is_newer_than_waiting(rec, frame.timestamp, order)));
-    apply(
+    let ordered = matches!(facts.kind, LegKind::Status(_) | LegKind::Artifact);
+    let held = tasks.get(task_id);
+    let seen = facts
+        .id
+        .is_some_and(|id| held.is_some_and(|rec| rec.legs_seen.contains(id)));
+    let newer = mine
+        || !ordered
+        || held.is_none_or(|rec| is_newer_than_waiting(rec, facts.at, facts.order));
+    let reach = apply(
         tasks,
         &LegInfo {
             task_id,
             peer_key,
-            peer: None,
-            kind,
+            peer,
+            kind: facts.kind,
             mine,
-            news: moves_clock,
+            news: !seen && newer,
         },
         now,
     );
-    let mut quarter_moved = false;
+    if reach == Reach::Foreign {
+        return Applied::NONE;
+    }
+    // The record of a counterparty remembers the id, so a replay cannot move it either.
+    if reach == Reach::Live
+        && !seen
+        && let (Some(id), Some(record)) = (facts.id, tasks.get_mut(task_id))
+    {
+        record.legs_seen.insert(id.to_owned());
+    }
+    let quarter_moved = record_frame_facts(tasks, task_id, &facts, (mine, seen));
+    let finished = reach == Reach::Finished || closed.get(task_id).is_some();
+    Applied {
+        first_seen: !seen && !finished,
+        quarter_moved: quarter_moved && !finished,
+    }
+}
+
+/// Keep what a frame says beyond the state: the age of a beat and the progress it replays, and
+/// the flag, the text and the progress of a check-in. Says whether a check-in moved the quarter.
+fn record_frame_facts(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    task_id: &TaskId,
+    facts: &Facts<'_>,
+    (mine, seen): (bool, bool),
+) -> bool {
     let Some(rec) = tasks.get_mut(task_id) else {
-        return Applied {
-            first_seen,
-            quarter_moved,
-        };
+        return false;
     };
     // Only a beat from the other party says anything about its age, and a beat that a relay
     // delivers behind a newer one says nothing. The sender's record takes the progress the beat
     // replays, which repairs a check-in that never arrived; the worker's own record is the
     // authority on its progress.
     if !mine
-        && let Some(beat) = beat
+        && let Some((beat, progress)) = facts.beat
         && rec
             .peer_beat
             .is_none_or(|held| held.sent_at <= beat.sent_at)
     {
         rec.peer_beat = Some(beat);
-        if rec.role == TaskRole::Initiator && beat_progress.is_some() {
-            rec.shown_progress = beat_progress;
+        if rec.role == TaskRole::Initiator && progress.is_some() {
+            rec.shown_progress = progress;
         }
     }
-    // Every working leg restates whom the worker waits on, so a plain one clears
-    // it. A relay can replay an old leg, so two checks gate the update:
-    // `is_newer_than_waiting` drops a leg older than the last answer, and
-    // `first_seen` drops a leg already ingested, which covers a replay in the
-    // same second as the answer. `apply` above still runs for every leg and
-    // `advance` is idempotent. A finished task waits for nothing.
-    if matches!(kind, LegKind::Status(_)) {
-        if rec.state.is_terminal() {
-            rec.waiting_user = false;
-        } else if first_seen && is_newer_than_waiting(rec, frame.timestamp, order) {
-            quarter_moved = checkin
+    // Every working leg restates whom the worker waits on, so a plain one clears it. A relay can
+    // replay an old leg, so two checks gate the update: `is_newer_than_waiting` drops a leg older
+    // than the last answer, and `seen` drops a leg already taken in, which covers a replay in the
+    // same second as the answer. A finished task waits for nothing.
+    let current = !seen && is_newer_than_waiting(rec, facts.at, facts.order);
+    let mut quarter_moved = false;
+    match facts.kind {
+        LegKind::Status(_) if rec.state.is_terminal() => rec.waiting_user = false,
+        LegKind::Status(_) if current => {
+            quarter_moved = facts
+                .checkin
                 .as_ref()
                 .is_some_and(|checkin| quarter_changed(rec.last_progress, checkin.progress));
-            record_checkin(rec, checkin);
-            rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
+            record_checkin(rec, facts.checkin.as_ref());
+            rec.waiting_mark = Some(WaitingMark::new(facts.at, facts.order));
+        }
+        // A delivered result answers whatever the worker waited on, and no check-in needs to
+        // say so.
+        LegKind::Artifact if current && !rec.state.is_terminal() => {
+            rec.waiting_user = false;
+            rec.waiting_mark = Some(WaitingMark::new(facts.at, facts.order));
+        }
+        LegKind::Offer | LegKind::Text | LegKind::Beat | LegKind::Status(_) | LegKind::Artifact => {
         }
     }
-    // A delivered result answers whatever the worker waited on, and no check-in needs to say so.
-    if kind == LegKind::Artifact
-        && first_seen
-        && !rec.state.is_terminal()
-        && is_newer_than_waiting(rec, frame.timestamp, order)
-    {
-        rec.waiting_user = false;
-        rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
-    }
-    Applied {
-        first_seen,
-        quarter_moved,
-    }
+    quarter_moved
 }
 
 /// Keep what a status leg says about the work. A check-in sets the flag, the
 /// text and the progress it carries; any other status leg clears the flag.
-fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
+fn record_checkin(rec: &mut TaskRecord, checkin: Option<&CheckinFields>) {
     let Some(checkin) = checkin else {
         rec.waiting_user = false;
         return;
     };
     rec.waiting_user = checkin.waiting_user;
     if checkin.text.is_some() {
-        rec.status_text = checkin.text;
+        rec.status_text.clone_from(&checkin.text);
     }
     if checkin.progress.is_some() {
         rec.last_progress = checkin.progress;
@@ -446,136 +558,6 @@ fn quarter_changed(held: Option<Progress>, new: Option<Progress>) -> bool {
         (held.map(Progress::quarter), new.map(Progress::quarter)),
         (Some(held), Some(new)) if held != new
     )
-}
-
-/// A leg that arrived from the peer, as the receive path hands it over.
-pub(crate) struct ReceivedLeg<'caller> {
-    pub task_id: &'caller TaskId,
-    /// The key that authored the leg.
-    pub from: &'caller AuthorKey,
-    /// The name of that author, which a brief records.
-    pub peer: &'caller Nickname,
-    pub payload: LegPayload<'caller>,
-    pub now: Instant,
-}
-
-/// What a received leg is.
-pub(crate) enum LegPayload<'caller> {
-    /// A status or artifact frame the peer pushed.
-    Frame(&'caller Authored),
-    /// The brief that opens a task, by the id of its message.
-    Brief(&'caller str),
-    /// A follow-up into a task we serve, by the id of its message.
-    FollowUp(&'caller str),
-}
-
-/// What a received leg turned out to be, for the layer that surfaces it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Applied {
-    /// Whether the leg is news: its id is new to the record and its task is still open. A leg
-    /// that is not news stays off the surface, and it moves no clock.
-    pub first_seen: bool,
-    /// Whether a check-in put the progress in another quarter.
-    pub quarter_moved: bool,
-}
-
-impl Applied {
-    /// A frame that belongs to no task.
-    const NONE: Self = Self {
-        first_seen: false,
-        quarter_moved: false,
-    };
-}
-
-/// Apply one received leg to the registry. The one place that decides whether a leg is news,
-/// for a frame the peer pushed and for a message it sent over RPC alike. An unknown task still
-/// counts as open: the initiator's record comes from the RPC response, and the worker's first
-/// leg can arrive ahead of it.
-pub(crate) fn apply_leg(
-    tasks: &mut HashMap<TaskId, TaskRecord>,
-    closed: &ClosedTasks,
-    leg: ReceivedLeg<'_>,
-) -> Applied {
-    let ReceivedLeg {
-        task_id,
-        from,
-        peer,
-        payload,
-        now,
-    } = leg;
-    let reaped = closed.get(task_id).is_some();
-    let terminal = tasks
-        .get(task_id)
-        .is_some_and(|rec| rec.state.is_terminal());
-    let finished = reaped || terminal;
-    let ingested = match payload {
-        LegPayload::Frame(frame) => ingest(
-            tasks,
-            IngestLegParams {
-                frame,
-                task_id,
-                mine: false,
-                now,
-            },
-        ),
-        LegPayload::Brief(id) => {
-            apply_message(tasks, (task_id, from, peer), (LegKind::Offer, id), now)
-        }
-        LegPayload::FollowUp(id) => {
-            apply_message(tasks, (task_id, from, peer), (LegKind::Text, id), now)
-        }
-    };
-    Applied {
-        first_seen: ingested.first_seen && !finished,
-        quarter_moved: ingested.quarter_moved && !finished,
-    }
-}
-
-/// Apply a message of the RPC path: a brief opens the record, a follow-up restarts the
-/// check-in clock. A relay can replay a follow-up, and only its first copy moves the clock.
-fn apply_message(
-    tasks: &mut HashMap<TaskId, TaskRecord>,
-    (task_id, from, peer): (&TaskId, &AuthorKey, &Nickname),
-    (kind, id): (LegKind, &str),
-    now: Instant,
-) -> Applied {
-    let first_seen = kind == LegKind::Offer || mark_seen(tasks, task_id, id);
-    apply(
-        tasks,
-        &LegInfo {
-            task_id,
-            peer_key: from,
-            peer: Some(peer),
-            kind,
-            mine: false,
-            news: first_seen,
-        },
-        now,
-    );
-    if kind == LegKind::Offer {
-        mark_seen(tasks, task_id, id);
-    }
-    Applied {
-        first_seen,
-        quarter_moved: false,
-    }
-}
-
-/// Remember `leg_id` for the task and say whether it is new. A task with no
-/// record yet has nothing to protect, so its first leg counts as new.
-pub(crate) fn mark_seen(
-    tasks: &mut HashMap<TaskId, TaskRecord>,
-    task_id: &TaskId,
-    leg_id: &str,
-) -> bool {
-    let Some(rec) = tasks.get_mut(task_id) else {
-        return true;
-    };
-    if rec.legs_seen.contains(leg_id) {
-        return false;
-    }
-    rec.legs_seen.insert(leg_id.to_owned());
-    true
 }
 
 /// Whether a status leg is not older than the one that last set `waiting`. When
@@ -932,13 +914,17 @@ pub(crate) fn set_label(
 
 /// Apply one task leg to the registry, advancing the coarse machine.
 /// Monotonic + idempotent + terminal-frozen.
-pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, now: Instant) {
+pub(crate) fn apply(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    leg: &LegInfo<'_>,
+    now: Instant,
+) -> Reach {
     // A terminal record is immutable — late/duplicate legs are ignored.
     if tasks
         .get(leg.task_id)
         .is_some_and(|rec| rec.state.is_terminal())
     {
-        return;
+        return Reach::Finished;
     }
 
     if matches!(leg.kind, LegKind::Offer)
@@ -958,25 +944,23 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     let Some(rec) = tasks.get_mut(leg.task_id) else {
         // A non-offer leg for a task we never saw open — drop it (out of
         // order, or a task that began before our join horizon).
-        return;
+        return Reach::Unknown;
     };
 
     // Only the task's own counterparty may drive it. The frame is
     // signature-verified upstream, but a signature is not a party: `advance`
     // *derives* the sender from our own role, so without this an unchecked leg
     // is attributed to the counterparty by construction and any mesh member
-    // could close, park, or beat a task they are not in. The RPC leg path makes
-    // the same check by hand (`node.rs`'s `apply_remote_leg`); this is the
-    // push plane's, where nearly every transition happens.
+    // could close, park, or beat a task they are not in.
     if rec.peer_key != *leg.peer_key {
-        return;
+        return Reach::Foreign;
     }
 
     // A leg that is not news must not move the state either: a question replayed after its
     // answer, a follow-up replayed behind a newer question, or a check-in delayed behind its
     // own artifact would otherwise undo what a later leg decided. A beat is liveness only.
     if !leg.mine && !leg.news && leg.kind != LegKind::Beat {
-        return;
+        return Reach::Live;
     }
     advance(rec, leg.kind, leg.mine);
     rec.last_activity = now;
@@ -992,6 +976,20 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
             rec.unanswered = None;
         }
     }
+    Reach::Live
+}
+
+/// Where a leg landed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reach {
+    /// The task is open, and the leg came from its counterparty.
+    Live,
+    /// The task is over, so its record is frozen.
+    Finished,
+    /// The leg came from a peer that is not the task's counterparty.
+    Foreign,
+    /// We hold no record of the task.
+    Unknown,
 }
 
 /// The per-leg coarse transition (state + review + ball). Illegal /
@@ -1908,10 +1906,7 @@ mod tests {
         let mut moved = Vec::new();
         for after in [10, 100] {
             let now = later(start, Duration::from_secs(after));
-            let first_seen = super::mark_seen(&mut tasks, &tid(), message_id);
-            let mut info = leg(LegKind::Text, false);
-            info.news = first_seen;
-            apply(&mut tasks, &info, now);
+            receive_follow_up(&mut tasks, message_id, now);
             moved.push(tasks[&tid()].last_skill_activity);
         }
         assert_eq!(
@@ -2033,17 +2028,7 @@ mod tests {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
         let message = |registry: &mut HashMap<TaskId, TaskRecord>, id: &str| {
-            super::apply_leg(
-                registry,
-                &closed(),
-                super::ReceivedLeg {
-                    task_id: &tid(),
-                    from: &peer_key("calm-otter"),
-                    peer: &Nickname::from("calm-otter"),
-                    payload: super::LegPayload::FollowUp(id),
-                    now: later(start, Duration::from_secs(10)),
-                },
-            )
+            receive_follow_up(registry, id, later(start, Duration::from_secs(10)))
         };
         assert!(
             message(&mut tasks, "m-a").first_seen,
@@ -2113,17 +2098,7 @@ mod tests {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
         let message = |registry: &mut HashMap<TaskId, TaskRecord>, id: &str| {
-            super::apply_leg(
-                registry,
-                &closed(),
-                super::ReceivedLeg {
-                    task_id: &tid(),
-                    from: &peer_key("calm-otter"),
-                    peer: &Nickname::from("calm-otter"),
-                    payload: super::LegPayload::FollowUp(id),
-                    now: later(start, Duration::from_secs(10)),
-                },
-            )
+            receive_follow_up(registry, id, later(start, Duration::from_secs(10)))
         };
         assert!(
             message(&mut tasks, "m-1").first_seen,
@@ -2155,14 +2130,14 @@ mod tests {
         let mut tasks = task_we_serve(start);
         let cap = TASK_LEGS_SEEN_CAP;
         for index in 0..cap * 10 {
-            super::mark_seen(&mut tasks, &tid(), &format!("leg-{index}"));
+            receive_follow_up(&mut tasks, &format!("leg-{index}"), start);
         }
         assert!(
-            !super::mark_seen(&mut tasks, &tid(), &format!("leg-{}", cap * 10 - 1)),
+            !receive_follow_up(&mut tasks, &format!("leg-{}", cap * 10 - 1), start).first_seen,
             "the newest id is remembered"
         );
         assert!(
-            super::mark_seen(&mut tasks, &tid(), "leg-0"),
+            receive_follow_up(&mut tasks, "leg-0", start).first_seen,
             "the oldest id was forgotten, so the set did not grow"
         );
     }
@@ -2674,7 +2649,7 @@ mod tests {
     }
 
     /// `ingest` guards the same-second replay itself: a caller that does not
-    /// reaches `mark_seen` too.
+    /// reaches the record of seen legs too.
     #[test]
     fn ingest_alone_ignores_a_same_second_waiting_replay() {
         let at = UnixSecs::now();
@@ -3094,12 +3069,36 @@ mod tests {
         super::apply_leg(
             tasks,
             closed,
-            super::ReceivedLeg {
+            super::Leg {
                 task_id,
-                from: &peer_key("calm-otter"),
-                peer: &Nickname::from("calm-otter"),
-                payload: super::LegPayload::Frame(&authored_by("calm-otter", frame)),
+                peer_key: &peer_key("calm-otter"),
+                peer: Some(&Nickname::from("calm-otter")),
+                source: super::LegSource::Frame(&authored_by("calm-otter", frame)),
+                mine: false,
                 now: Instant::now(),
+            },
+        )
+    }
+
+    /// Receive the follow-up message `id` from the worker's peer at `now`.
+    fn receive_follow_up(
+        tasks: &mut HashMap<TaskId, TaskRecord>,
+        id: &str,
+        now: Instant,
+    ) -> super::Applied {
+        super::apply_leg(
+            tasks,
+            &closed(),
+            super::Leg {
+                task_id: &tid(),
+                peer_key: &peer_key("calm-otter"),
+                peer: Some(&Nickname::from("calm-otter")),
+                source: super::LegSource::Message {
+                    id,
+                    opens_task: false,
+                },
+                mine: false,
+                now,
             },
         )
     }
