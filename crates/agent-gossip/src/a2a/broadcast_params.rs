@@ -1715,7 +1715,7 @@ fn stamp_send_message(
             crate::a2a::TaskState::Submitted,
             Instant::now(),
         );
-        rec.seq = 1;
+        rec.take_seq_applied(1);
         rec.label = message["metadata"][META_LABEL]
             .as_str()
             .and_then(status_update_params::clean_label);

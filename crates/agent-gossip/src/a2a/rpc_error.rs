@@ -244,7 +244,7 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
         "mesh:role": role(rec.role),
         "mesh:ball": role(rec.ball()),
         "mesh:review": rec.review,
-        META_SEQ: rec.seq,
+        META_SEQ: rec.applied_seq,
     });
     if rec.waiting_user {
         metadata[META_WAITING_USER] = Value::from(true);

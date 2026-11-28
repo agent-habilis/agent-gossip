@@ -121,6 +121,11 @@ pub(crate) struct TaskRecord {
     /// 1 and each follow-up one more; the worker numbers its status and artifact legs from 1. The
     /// peer's counter is separate: it is [`peer_seq`](Self::peer_seq).
     pub seq: u64,
+    /// The highest `mesh:seq` among the own legs that the record has taken. A leg takes its seq
+    /// when it is built and its state when it has been delivered, so the two differ while a leg
+    /// is in flight. A beat, `GetTask` and an end state this one: the state they carry is the
+    /// state of the record, so the seq must be too.
+    pub applied_seq: u64,
     /// The highest `mesh:seq` that this node took in from the peer. A leg of the peer is news only
     /// above it: a replay and a leg that arrives behind a newer one are dropped whole.
     pub peer_seq: u64,
@@ -174,6 +179,7 @@ impl TaskRecord {
             last_notice: None,
             peer_beat: None,
             seq: 0,
+            applied_seq: 0,
             peer_seq: 0,
             peer_seq_at: UnixSecs::from(0),
             asked_seq: 0,
@@ -195,7 +201,13 @@ impl TaskRecord {
     /// that an end sent again later is no repeat of a seq that the peer may already hold.
     pub(crate) fn cancel_without_leg(&mut self, now: Instant) {
         self.close(TaskState::Canceled, now);
-        self.seq = self.seq.saturating_add(1);
+        self.take_seq_applied(self.seq.saturating_add(1));
+    }
+
+    /// Count `seq` as sent and applied at once: a leg that the record takes as it is built.
+    pub(crate) fn take_seq_applied(&mut self, seq: u64) {
+        self.seq = self.seq.max(seq);
+        self.applied_seq = self.applied_seq.max(seq);
     }
 
     /// Whoever owes the next move: the worker on a live task, the initiator once the task
@@ -516,6 +528,12 @@ pub(crate) fn apply_leg(
     {
         record.peer_seq = seq;
         record.peer_seq_at = facts.at;
+    }
+    if reach == Reach::Live
+        && mine
+        && let (Some(seq), Some(record)) = (facts.seq, tasks.get_mut(task_id))
+    {
+        record.applied_seq = record.applied_seq.max(seq);
     }
     let from_peer_beat = facts.kind == LegKind::Beat && !mine;
     let lost = from_peer_beat
@@ -1106,7 +1124,7 @@ pub(crate) fn note_follow_up_sent(
     }) else {
         return;
     };
-    rec.seq = rec.seq.max(seq);
+    rec.take_seq_applied(seq);
     apply(
         tasks,
         &LegInfo {
@@ -1405,7 +1423,7 @@ fn owed_end_legs(
             let from_record = tasks
                 .get(task_id)
                 .filter(|rec| owes_end(rec))
-                .map(|rec| (rec.state, rec.seq));
+                .map(|rec| (rec.state, rec.applied_seq));
             let from_reaped = closed
                 .get(task_id)
                 .filter(|reaped| reaped.owes_end)
@@ -1467,8 +1485,8 @@ pub(crate) async fn tick_task_sweep(
     let mut ends: Vec<End<'_>> = Vec::new();
     for (task_id, peer_key) in &expired {
         let seq = app.tasks.get_mut(task_id).map(|rec| {
-            rec.seq = rec.seq.saturating_add(1);
-            rec.seq
+            rec.take_seq_applied(rec.seq.saturating_add(1));
+            rec.applied_seq
         });
         ends.push(End {
             task_id,
@@ -1555,7 +1573,7 @@ fn sweep_registry(
                     peer_key: rec.peer_key,
                     peer: rec.peer,
                     state: rec.state,
-                    seq: rec.seq,
+                    seq: rec.applied_seq,
                     owes_end: owes,
                 },
             );
@@ -1617,7 +1635,7 @@ pub(crate) async fn tick_task_keepalive(
                 },
                 checkin_age_secs: from_worker
                     .then(|| now.duration_since(rec.last_skill_activity).as_secs()),
-                seq: from_worker.then_some(rec.seq),
+                seq: from_worker.then_some(rec.applied_seq),
             };
             (task_id.clone(), rec.peer_key, rec.state, extras)
         })
@@ -2550,6 +2568,65 @@ mod tests {
         );
         assert_eq!(sender[&tid()].peer_seq, 1, "the sender took the leg in");
         assert_eq!(sender[&tid()].seq, 5, "and its own count is unchanged");
+    }
+
+    /// A leg takes its seq when it is built and its state when it was delivered. What the worker
+    /// shows meanwhile, in a beat, a `GetTask` or an end, is the seq that goes with the state it
+    /// holds: a peer that was told the seq of a leg in flight would count the leg as taken in,
+    /// and drop it when it arrives.
+    #[test]
+    fn the_seq_that_is_shown_is_the_seq_of_the_state_that_is_held() {
+        let start = Instant::now();
+        let mut tasks = task_we_serve(start);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), true),
+            start,
+        );
+        super::take_seq(&mut tasks, &tid(), 1);
+        assert_eq!(tasks[&tid()].seq, 1, "the leg in flight took its seq");
+        assert_eq!(
+            tasks[&tid()].applied_seq,
+            0,
+            "but the record does not hold its state yet, so it shows no seq for it"
+        );
+
+        let mesh = habilis_network::protocol::MeshId::from("test");
+        let payload = status_update_params::status_update(
+            &mesh,
+            status_update_params::StatusUpdateParams {
+                task_id: &tid(),
+                state: TaskState::Working,
+                note: None,
+                metadata: Some(serde_json::json!({ "mesh:seq": 1 })),
+            },
+        );
+        let body = serde_json::to_string(&payload).expect("a test value serializes to JSON");
+        let own_leg = Message::new_app(
+            &mesh,
+            &Nickname::from("worker-bot"),
+            habilis_network::protocol::AppFrameParams::new(
+                wire::app_tag(wire::STATUS),
+                Some(peer_key("calm-otter")),
+                None,
+                habilis_network::protocol::MessageBody::try_new(&body)
+                    .expect("a test value serializes to JSON"),
+            ),
+        );
+        super::ingest(
+            &mut tasks,
+            IngestLegParams {
+                frame: &authored_by("worker-bot", &own_leg),
+                task_id: &tid(),
+                mine: true,
+                now: start,
+            },
+        );
+        assert_eq!(
+            tasks[&tid()].applied_seq,
+            1,
+            "the leg was delivered: the record holds its state and shows its seq"
+        );
     }
 
     /// A leg takes its seq when it is about to leave, and gives it back when it fails before it
