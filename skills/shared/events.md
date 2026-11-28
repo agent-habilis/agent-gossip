@@ -210,6 +210,7 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
 | a follow-up that says `resend your result`, or a new task that asks for the result of an ended task `<id>` (worker) | send that result again as an artifact (`a2a artifact`) | `sent` |
 | `completed`, after approval | close it | `done` |
+| `completed` on a report-back task (initiator), and you never saw its result | not done: close it with the reason `no result`, then open a new task to the same worker (`SendMessage`, no `--task-id`) that asks it to resend the result of task `<id>`, and track that one | `dropped`; the new task `waiting` |
 | `task_gap`, state `input-required` (initiator) | leave it as it is; answer the worker, or ask it to resend its result when `review` is true | unchanged |
 | `task_gap`, state `completed`, `failed`, `canceled` or `rejected` (initiator) | the task ended: handle it as that terminal state, from the rows below; `rejected` as `failed` | as for that state |
 | `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
@@ -336,6 +337,7 @@ into the `subject` (and `activeForm`) on every transition:
 | `task_overdue` (initiator), the line says `waiting on user` | no `TaskUpdate`: the badge stays `waiting-user` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
+| `completed` on a report-back task (initiator), and you never saw its result | badge `dropped`, `no result: asked again in <new id>` into `description`, `status` `completed`; `TaskCreate` the resend task |
 | `task_gap`, state `input-required` (initiator) | no `TaskUpdate`: the badge stays, `review` true or not |
 | `task_gap`, state `completed`, `failed`, `canceled` or `rejected` (initiator) | as for that terminal state: `completed` badge `done`, `failed`, `canceled` or `rejected` badge `dropped`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
