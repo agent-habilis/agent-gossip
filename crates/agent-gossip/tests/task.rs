@@ -345,6 +345,37 @@ async fn two_tasks_get_distinct_ids() {
     bob.leave().await;
 }
 
+/// An opening answers with a `submitted` task whose id is the one that the initiator minted and
+/// stamped on the brief, so the id that the worker surfaces is the id of the reply.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opening_returns_submitted_task_with_initiator_minted_id() {
+    let alice = InProcNode::create("t-open").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-open-bob").await;
+    common::warm_up(&alice, &mut [&mut bob]).await;
+
+    let reply = alice.create_task("t-open-bob", "the brief").await;
+    let returned = task_id_of(&reply);
+    assert_eq!(
+        reply["result"]["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
+        "a task that nobody accepted yet is submitted"
+    );
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
+    let surfaced = bob
+        .task_message_task_id()
+        .expect("the brief surfaced with its task id");
+    assert_eq!(
+        surfaced,
+        returned.as_str(),
+        "the worker holds the id that the initiator stamped, not one of its own"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
 /// A task is private to its two parties: a third peer relays the traffic but
 /// never surfaces a task event for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -707,7 +707,7 @@ async fn broadcast_directed_frame(
     } = frame;
     if task_id.is_some() {
         // An own task leg holds its plaintext body in the queue while its send waits.
-        app.admit_own_leg(echo_body.as_str().len())?;
+        app.admit_own_leg(own_leg_bytes(echo_body.as_str()))?;
     }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —

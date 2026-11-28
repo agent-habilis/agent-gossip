@@ -72,27 +72,7 @@ pub(crate) fn classify(
         // push plane IS the stream), so the caller keeps receiving the pushed
         // frames after the snapshot — connectionless, no held socket.
         "GetTask" | "SubscribeToTask" => match task_id_param(params) {
-            Ok(task_id) => {
-                // Only a task's own peer may read it. A read is not harmless here: the
-                // response carries the id, counterparty, role and state of a task the
-                // caller may have no part in, and that id set is the handle every other
-                // task-plane attack needs. `CancelTask` has always made this check; the
-                // reads did not, which left the reconnaissance step open.
-                let live = app.tasks.get(&task_id).map(|rec| &rec.peer_key);
-                let closed = || {
-                    app.closed_tasks
-                        .get(&task_id)
-                        .map(|closed| &closed.peer_key)
-                };
-                let owner: Option<&AuthorKey> = live.or_else(closed);
-                if owner.is_some_and(|peer| peer == requester) {
-                    Served::Op(A2aOp::GetTask { task_id })
-                } else {
-                    // Same shape whether the task is absent or someone else's, so the
-                    // response cannot be used to probe which ids exist.
-                    Served::Reject(RpcError::task_not_found(&task_id))
-                }
-            }
+            Ok(task_id) => party_only(task_id.clone(), A2aOp::GetTask { task_id }),
             Err(error) => Served::Reject(error),
         },
         // Scoped to the caller's own tasks — the local binding, whose caller

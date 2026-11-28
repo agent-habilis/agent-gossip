@@ -725,6 +725,18 @@ impl InProcNode {
         .await
     }
 
+    /// The task id of the first `message`-kind task event surfaced to us.
+    pub fn task_message_task_id(&mut self) -> Option<String> {
+        self.pump();
+        self.drained.iter().find_map(|event| {
+            if let OutputEvent::TaskMessage { task_id, .. } = event {
+                Some(task_id.clone())
+            } else {
+                None
+            }
+        })
+    }
+
     /// The `mesh:label` on the first `message`-kind task event surfaced to us —
     /// `Some(None)` when that leg carried no label, `None` when no such leg has
     /// been surfaced at all.
