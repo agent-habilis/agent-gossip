@@ -1,0 +1,13 @@
+# Maintainer: Caio Gondim <https://github.com/caiogondim>
+
+# A meta package, so that `yay -S agent-gossip` installs the prebuilt
+# `agent-gossip-bin` with no selection prompt. It has no version pin, because
+# `agent-gossip-bin` carries the version.
+pkgname=agent-gossip
+pkgver=1
+pkgrel=1
+pkgdesc='Mesh network for agents'
+arch=('any')
+url='https://github.com/agent-habilis/agent-gossip'
+license=('MIT')
+depends=('agent-gossip-bin')

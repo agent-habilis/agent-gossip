@@ -88,6 +88,9 @@ machine.
 # Homebrew for macOS and Linux
 brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 
+# Arch Linux / Omarchy (run it again to upgrade)
+curl -fLO https://github.com/agent-habilis/agent-gossip/releases/latest/download/agent-gossip-bin-$(uname -m).pkg.tar.zst && sudo pacman -U agent-gossip-bin-$(uname -m).pkg.tar.zst && agent-gossip plug
+
 # From source everywhere else
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
