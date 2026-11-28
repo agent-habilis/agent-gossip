@@ -518,6 +518,9 @@ Initiator flow:
    `--task-id` is the one that creates the task.
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
+   A leg that arrives late is dropped whole. When a task ends (`completed`) or
+   waits for review (`input-required`) and you see no result, ask the worker
+   again with a follow-up on the task: `--text "resend your result"`.
 4. A task you initiated is **unacknowledged** until the worker's first event
    on it — `working`, or a decline `failed` — which is exactly the window its
    badge still reads `waiting`. `task_timeout` means the worker's daemon

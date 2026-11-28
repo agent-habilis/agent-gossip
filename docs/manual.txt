@@ -421,8 +421,15 @@ COMMANDS
                     Part.url ticket the peer fetches with `a2a fetch`, as for
                     a2a artifact --file. The file lives as long as its task.
                     The message carries the task id and a mesh:seq: 1 on the
-                    opening, the next integer on each follow-up. Your daemon
-                    stamps both; a caller may not set mesh:seq. A raw --params
+                    opening, the next integer on each follow-up (and on the
+                    cancel) of the initiator. Your daemon stamps both; a
+                    caller may not set mesh:seq. Each party counts its own
+                    legs: the worker numbers its status and artifact legs
+                    from 1, its beat carries the number of its last leg and
+                    takes none, and the beat of the initiator has none. A
+                    leg that arrives with no mesh:seq, a replayed leg, and a
+                    leg that is behind a newer one are dropped whole, not
+                    applied in part. A raw --params
                     SendMessage that names an id this node holds no task for
                     is refused locally (-32602 "SendMessage names a taskId
                     with no task on this node"). The worker refuses, all
@@ -432,6 +439,9 @@ COMMANDS
                     above 1 on an unknown id); "the opening is older than the
                     task timeout (or the clocks differ)". A duplicate opening (same id, same peer)
                     answers with the task snapshot and is not shown again.
+                    A task that ends, or waits for review, with no result
+                    that you can see may have lost a late leg: ask the
+                    worker again with a follow-up on the task.
                     A peer caps how many live tasks any one
                     caller may hold with it, and refuses opens past that
                     (-32004); closing finished tasks frees the allowance.
@@ -446,12 +456,15 @@ COMMANDS
                     and mesh:label (the initiator's name for the task); a task
                     that waits on its user carries mesh:waiting_user. The
                     metadata also carries mesh:seq, the number of the last
-                    message of the task.
+                    leg that this node sent.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
                     whole registry; each task carries the same metadata
                 CancelTask
-                    cancel a task you're a party to (--task-id)
+                    cancel a task you're a party to (--task-id). A task that
+                    is finished or reaped is refused with -32002 "task <id>
+                    is already <state> and cannot be canceled"; an id that
+                    the peer does not hold answers -32001, task not found.
                 SubscribeToTask
                     snapshot a task you're a party to (--task-id); the
                     worker's status/artifact frames then stream to you (the
@@ -486,9 +499,12 @@ COMMANDS
               and --progress PERCENT (a whole number from 0 to 100); a bare
               working is refused, and a working leg that arrives without
               a non-blank text or a valid mesh:progress is dropped by the
-              receiver. Accept with --text "accepted: <plan>"
+              receiver. A text of nothing but control characters counts as
+              no text. Accept with --text "accepted: <plan>"
               --progress 0. --progress is refused with any other state.
-              The worker sends a check-in at least every 5 minutes. A
+              A completed that arrives before the first working closes the
+              task, and the accept after it is dropped. The worker sends
+              a check-in at least every 5 minutes. A
               question, an artifact or a terminal state also counts; the
               daemon beat never does.
 
@@ -1527,11 +1543,14 @@ JSON EVENTS
 
                  {"event":"task_overdue","task_id":"<uuid>","peer":"calm-otter",
                   "label":"review the diff","age_secs":660,
-                  "waiting_user":true,"not_picked_up":false,
+                  "waiting_user":true,
                   "display":"💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min · waiting on user"}
 
               The key waiting_user is true only while the worker waits on
-              its user, and is absent otherwise.
+              its user, and is absent otherwise. The key not_picked_up is
+              true only for a task that the worker never accepted, and is
+              absent otherwise. Under a minute the display line says the age
+              in seconds, such as "no check-in for 30 s".
 
        checkin_due
               The worker's daemon saw that the task owes a check-in: X after

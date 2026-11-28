@@ -85,6 +85,10 @@ On `input-required` kind `artifact-update` — a worker's result — **verify
 before approving**: check the artifact against the subtask's completion
 criteria, not against a general sense of done.
 
+A late leg is dropped whole. When a subtask's task ends (`completed`) or waits for
+review (`input-required`) and no artifact reached you, send one follow-up with
+`--task-id` and `--text "resend your result"` before you count the subtask as failed.
+
 - Every criterion met → approve with a `--task-id` follow-up so the worker
   closes, then print one line:
 
