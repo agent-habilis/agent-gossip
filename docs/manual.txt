@@ -711,9 +711,11 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              stream (see "JSON EVENTS"). A repeated `working` with no text
-              on a task already `working` is not surfaced: it counts as the
-              peer's activity only. A leg for a closed task, or one already
+              stream (see "JSON EVENTS"). A `working` leg that is not a complete
+              check-in (no non-blank text, or no valid progress) is dropped,
+              and it does not count as activity; only the beat of the worker
+              (a `working` status marked mesh:beat) is not a check-in and
+              still counts as a sign of life, shown as task_progress. A leg for a closed task, or one already
               surfaced, is not surfaced again; `poll --after` still re-reads
               the ring. The same holds for chat: a `msg` or broadcast already
               surfaced is not surfaced again. Both daemons send a

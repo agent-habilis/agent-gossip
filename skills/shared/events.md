@@ -212,7 +212,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | `completed`, after approval | close it | `done` |
 | `completed` on a report-back task (initiator), and you never saw its result | not done: close it with the reason `no result`, then open a new task to the same worker (`SendMessage`, no `--task-id`) that asks it to resend the result of task `<id>`, and track that one | `dropped`; the new task `waiting` |
 | `task_gap`, state `input-required` (initiator) | leave it as it is; answer the worker, or ask it to resend its result when `review` is true | unchanged |
-| `task_gap`, state `completed`, `failed`, `canceled` or `rejected` (initiator) | the task ended: handle it as that terminal state, from the rows below; `rejected` as `failed` | as for that state |
+| `task_gap`, state `failed`, `canceled` or `rejected` (initiator) | the task ended: handle it as `failed`, from the row below | `dropped` |
+| `task_gap`, state `completed` (initiator) | the task ended: handle it as `completed`, from the rows above: on a report-back task whose result you never saw, the no-result row (close it as `no result`, open the resend task); otherwise `completed` after approval | `dropped` with the new task `waiting`, or `done` |
 | `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
 | leaving the gossip | close whatever is still open | `dropped` |
 
@@ -339,7 +340,8 @@ into the `subject` (and `activeForm`) on every transition:
 | `completed`, after approval | badge `done`, `status` `completed` |
 | `completed` on a report-back task (initiator), and you never saw its result | badge `dropped`, `no result: asked again in <new id>` into `description`, `status` `completed`; `TaskCreate` the resend task |
 | `task_gap`, state `input-required` (initiator) | no `TaskUpdate`: the badge stays, `review` true or not |
-| `task_gap`, state `completed`, `failed`, `canceled` or `rejected` (initiator) | as for that terminal state: `completed` badge `done`, `failed`, `canceled` or `rejected` badge `dropped`, `status` `completed` |
+| `task_gap`, state `failed`, `canceled` or `rejected` (initiator) | as for `failed`: badge `dropped`, `status` `completed` |
+| `task_gap`, state `completed` (initiator) | as for `completed`, from the rows above: on a report-back task whose result you never saw, the no-result row (badge `dropped`, `no result: asked again in <new id>` into `description`, `TaskCreate` the resend task); otherwise badge `done`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
@@ -560,10 +562,11 @@ Initiator flow:
    true the task waits for review with no result and there is no `text`: send a
    follow-up on the task that asks the worker to resend its result. With
    `completed`, `failed`, `canceled` or `rejected` the task already ended: handle
-   it exactly as that terminal state, `rejected` as `failed` from the lifecycle tables, print the line the skill
-   prints for that end and close the badge. A `completed` with no result in sight
-   takes no follow-up: open a new task to the worker that asks it to resend the
-   result of task `$TASK_ID`. `text` keeps its newlines and is cut at 2000
+   it exactly as that terminal state from the lifecycle tables, `rejected` as
+   `failed`: print the line the skill prints for that end and close the badge. A
+   `completed` on a report-back task whose result you never saw follows the
+   no-result row: it takes no follow-up, so open a new task to the worker that
+   asks it to resend the result of task `$TASK_ID`. `text` keeps its newlines and is cut at 2000
    characters, and `truncated` says so; `label` is the name you gave the task.
    Your daemon takes the snapshot in when it repairs a gap, and a leg of the
    worker still on its way with a seq at or below the snapshot is then dropped
