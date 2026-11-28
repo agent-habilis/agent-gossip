@@ -430,7 +430,7 @@ COMMANDS
                     1"; "SendMessage names a taskId with no task on this
                     peer" (an unknown id, another caller's id, or a mesh:seq
                     above 1 on an unknown id); "the opening is older than the
-                    task timeout". A duplicate opening (same id, same peer)
+                    task timeout (or the clocks differ)". A duplicate opening (same id, same peer)
                     answers with the task snapshot and is not shown again.
                     A peer caps how many live tasks any one
                     caller may hold with it, and refuses opens past that
