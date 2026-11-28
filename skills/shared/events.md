@@ -546,7 +546,11 @@ Initiator flow:
    A `task_gap` event on a task you initiated is never shown. A question of the
    worker was lost and the task waits on you: read its `text` and answer it with
    a follow-up on the task (`--task-id`). With no `text`, probe the task with
-   `GetTask` or ask the worker what it needs.
+   `GetTask` or ask the worker what it needs. Your daemon takes a snapshot in
+   when it repairs a gap, and a leg of the worker still on its way with a seq at
+   or below the snapshot is then dropped whole. This is a known limit: when the
+   task ends or waits for review with no result, ask the worker again with
+   `--text "resend your result"`.
 5. To check a task's current state on demand — before re-briefing, or when a
    worker seems quiet — probe it:
    ```bash
