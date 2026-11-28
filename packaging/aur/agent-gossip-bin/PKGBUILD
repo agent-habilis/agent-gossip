@@ -1,7 +1,7 @@
 # Maintainer: Caio Gondim <https://github.com/caiogondim>
 
 pkgname=agent-gossip-bin
-pkgver=0.16.0
+pkgver=0.17.0
 pkgrel=1
 pkgdesc='Mesh network for agents (prebuilt binary)'
 arch=('x86_64' 'aarch64')
@@ -15,8 +15,8 @@ source=("LICENSE-${pkgver}::https://raw.githubusercontent.com/agent-habilis/agen
 source_x86_64=("${url}/releases/download/v${pkgver}/agent-gossip-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
 source_aarch64=("${url}/releases/download/v${pkgver}/agent-gossip-v${pkgver}-aarch64-unknown-linux-gnu.tar.gz")
 sha256sums=('ae32188d5d37adc7e5f2ee97c506b4d342c7b4b567c75aed2022bfa92e5fcf60')
-sha256sums_x86_64=('1631e5db7fe5f28ee14690e9e11233235f482af239574fb7ae95e3e9a9636999')
-sha256sums_aarch64=('6adc7d4698bc4904aad012dead4d9ce95a3972e1004041f2dd8ef056494d568c')
+sha256sums_x86_64=('e7c1e38595f420209a4ee911d189ba27d9dcde6f12153110e5332b7d0bd1a7de')
+sha256sums_aarch64=('8083b8b22b273548220b1c388e50b528ee7670b77d2290d2d8ca12e790fc109a')
 
 package() {
   install -Dm755 agent-gossip "${pkgdir}/usr/bin/agent-gossip"
