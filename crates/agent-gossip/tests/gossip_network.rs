@@ -370,6 +370,15 @@ async fn test_bidirectional_messaging() {
     );
 }
 
+/// A folder that the test made in the temp dir, removed when the test ends, also on a panic.
+struct RemoveDirOnDrop(PathBuf);
+
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A cap under the minimum of the engine ends the start with the engine text and a non-zero exit.
 /// The process is the daemon in the foreground, so a process that ended leaves no daemon.
 #[test]
@@ -413,6 +422,7 @@ fn ready_reports_a_refused_detached_start_at_once() {
     let dir = std::env::temp_dir().join(format!("ready-refused-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("the temp dir is writable");
+    let _folder = RemoveDirOnDrop(dir.clone());
     let state_file = dir.join("session.json");
     let owner = process::parent_of(std::process::id()).expect("the test process has a parent");
     let mut launch = common::test_cmd();
@@ -455,6 +465,7 @@ fn ready_is_not_misled_by_the_error_of_an_earlier_start_on_the_same_path() {
     let dir = std::env::temp_dir().join(format!("ready-retry-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("the temp dir is writable");
+    let _folder = RemoveDirOnDrop(dir.clone());
     let state_file = dir.join("session.json");
     let mut refused = common::test_cmd();
     refused.args([
@@ -3543,6 +3554,18 @@ fn spawn_decoy(name: &str) -> (Child, String, String, String, PathBuf) {
     (decoy, decoy_pid, mesh, nickname, log)
 }
 
+/// Read `pipe` to its end on a thread of its own, so a child that writes more than the buffer of the pipe
+/// is not stopped by the wait of the test.
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
+}
+
 /// Run `command` to its end, or kill it and fail the test after `limit`. A hang in the code under
 /// test then fails the test, and a `StoppedDaemon` guard still resumes its daemon.
 fn output_within(command: &mut Command, limit: Duration) -> std::process::Output {
@@ -3550,15 +3573,19 @@ fn output_within(command: &mut Command, limit: Duration) -> std::process::Output
     let mut child = command
         .spawn()
         .expect("the test binary is built before the suite runs, so its path always spawns");
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
     let deadline = Instant::now() + limit;
     loop {
         let exited = child
             .try_wait()
             .expect("a child of this test can be polled");
-        if exited.is_some() {
-            return child
-                .wait_with_output()
-                .expect("an exited child hands over its output");
+        if let Some(status) = exited {
+            return std::process::Output {
+                status,
+                stdout: stdout.join().expect("the stdout reader does not panic"),
+                stderr: stderr.join().expect("the stderr reader does not panic"),
+            };
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
