@@ -543,10 +543,8 @@ Initiator flow:
    💬 `<$WORKER>` · $TASK_LABEL · dropped · $REASON
    ```
 
-   — with `$REASON` `no pickup` (no `working` yet), `worker went silent`, or,
-   when the event's `reason` is `worker-lost`, `worker restarted` (it lost the
-   task: send it again if it is still needed). The todo closes on the
-   bare badge `dropped`, with `$REASON` in its `description`: this line is where
+   — with `$REASON` `no pickup` (no `working` yet) or `worker went silent`.
+   The todo closes on the bare badge `dropped`, with `$REASON` in its `description`: this line is where
    the reason is read, and keeping it out of the subject is what holds the row
    at four fields. Then put the
    recovery to the user per the **Decisions** section: retry the same peer,

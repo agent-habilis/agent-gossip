@@ -425,8 +425,8 @@ COMMANDS
                     cancel) of the initiator. Your daemon stamps both; a
                     caller may not set mesh:seq. Each party counts its own
                     legs: the worker numbers its status and artifact legs
-                    from 1, its beat carries the number of its last leg and
-                    takes none, and the beat of the initiator has none. A
+                    from 1, its beat carries the number of its last leg
+                    whose state it holds and takes none, and the beat of the initiator has none. A
                     leg that arrives with no mesh:seq, a replayed leg, and a
                     leg that is behind a newer one are dropped whole, not
                     applied in part. A raw --params
@@ -460,7 +460,10 @@ COMMANDS
                     and mesh:label (the initiator's name for the task); a task
                     that waits on its user carries mesh:waiting_user. The
                     metadata also carries mesh:seq, the number of the last
-                    leg that this node sent, also for a task that was reaped.
+                    own leg whose state this node holds (applied), also for a
+                    task that was reaped. The beats, GetTask and the end that
+                    is sent again carry it; the next leg still takes the next
+                    number.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
                     whole registry; each task carries the same metadata
@@ -1527,14 +1530,12 @@ JSON EVENTS
               its 2-minute idle-debounce timeout and was evicted by the
               daemon (reason "timeout"), or its counterparty left the gossip
               gracefully and the task was canceled on the spot (reason
-              "peer-left"), or the beat of the worker numbered its legs
-              backwards, which means that the worker restarted and lost the
-              task, and the sender ended it (reason "worker-lost": send the
-              task again if it is still needed). Marks the tasks widget
-              entry as timed out.
+              "peer-left"). A worker that restarted has no record of the
+              task and sends no beat for it, so the sender hears it as a
+              timeout. Marks the tasks widget entry as timed out.
 
                  {"event":"task_timeout","task_id":"<uuid>",
-                  "reason":"timeout"|"peer-left"|"worker-lost"}
+                  "reason":"timeout"|"peer-left"}
 
        task_overdue
               The initiator's daemon saw that the worker sent no check-in for
@@ -1612,7 +1613,9 @@ JSON EVENTS
 
               When the beat of a worker shows a leg that the sender never
               got, the daemon of the sender asks the worker for the task
-              once for each such mesh:seq and takes the snapshot in. A lost
+              and takes the snapshot in. There is one ask in flight for each
+              task, and it is asked again after a reply or after 45
+              seconds. A lost
               result is not repaired by the daemon. The snapshot moves the
               mesh:seq of the worker, as the sender sees it, up to the seq
               of the snapshot, so a leg of the worker still on its way with
