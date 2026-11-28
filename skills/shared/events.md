@@ -96,8 +96,8 @@ send and echoes it at once.
 `peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
 `bell` is false and `last_poll_secs_ago` is large or null, no agent reads that
 peer.
-The key is absent for your own row and for a peer that did not answer in time. `last_poll_secs_ago` is null before the
-first poll of that peer.
+The key is absent for your own row and for a peer that did not answer in time.
+`last_poll_secs_ago` is null before the first poll of that peer.
 
 ### Answering
 
