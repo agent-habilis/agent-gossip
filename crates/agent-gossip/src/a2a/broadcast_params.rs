@@ -1070,15 +1070,15 @@ pub(crate) struct BroadcastTaskStatusParams<'caller> {
     pub(crate) app: &'caller mut A2aApp,
 }
 
-/// The status leg a worker emits: its state and note, the order value that
-/// tells it apart from the other legs of its second, and the check-in fields.
+/// The status leg a worker emits: its state and note, its `mesh:seq`, and the check-in fields.
 fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
-    let StatusLegParams { mesh, task_id, leg } = leg;
-    let metadata = status_update_params::status_metadata(
-        leg.waiting_user(),
-        leg.progress(),
-        status_update_params::leg_order_ms(),
-    );
+    let StatusLegParams {
+        mesh,
+        task_id,
+        leg,
+        seq,
+    } = leg;
+    let metadata = status_update_params::status_metadata(leg.waiting_user(), leg.progress(), seq);
     let update =
         status_update_params::StatusUpdateParams::new(task_id, leg.state()).with_metadata(metadata);
     let update = match leg.note() {
@@ -1095,6 +1095,7 @@ struct StatusLegParams<'caller> {
     mesh: &'caller MeshId,
     task_id: &'caller crate::a2a::TaskId,
     leg: &'caller WorkerLeg,
+    seq: u64,
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
@@ -1116,10 +1117,13 @@ pub(crate) async fn broadcast_task_status(
         leg,
         app,
     } = params;
+    let seq = task_record::next_seq(&app.tasks, task_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown task '{task_id}'"))?;
     let update = worker_status_leg(StatusLegParams {
         mesh,
         task_id,
         leg: &leg,
+        seq,
     });
     let plain = status_update_params::payload_body(&update)?;
     let to = *peer_key;
@@ -1129,7 +1133,8 @@ pub(crate) async fn broadcast_task_status(
         to: Some(to),
         corr: None,
     };
-    broadcast_directed_frame(
+    task_record::take_seq(&mut app.tasks, task_id, seq);
+    let sent = broadcast_directed_frame(
         DirectedFrameParams {
             mesh,
             author,
@@ -1140,13 +1145,17 @@ pub(crate) async fn broadcast_task_status(
             content: true,
             echo_as: EchoAs::Task,
             id: None,
-            app,
+            app: &mut *app,
         },
         state,
         sender,
         out,
     )
-    .await
+    .await;
+    if sent.is_err() {
+        task_record::give_back_seq(&mut app.tasks, task_id, seq);
+    }
+    sent
 }
 
 /// The identity, addressee and text of one outbound msg — grouped
@@ -1294,7 +1303,9 @@ pub(crate) async fn broadcast_task_artifact(
         app,
     )
     .await?;
-    let update = status_update_params::artifact_update_parts(mesh, task_id, parts);
+    let seq = task_record::next_seq(&app.tasks, task_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown task '{task_id}'"))?;
+    let update = status_update_params::artifact_update_parts(mesh, task_id, parts, seq);
     let plain = status_update_params::payload_body(&update)?;
     let to = *peer_key;
     let sealed = seal_directed(state, &to, &plain)?;
@@ -1303,7 +1314,8 @@ pub(crate) async fn broadcast_task_artifact(
         to: Some(to),
         corr: None,
     };
-    broadcast_directed_frame(
+    task_record::take_seq(&mut app.tasks, task_id, seq);
+    let sent = broadcast_directed_frame(
         DirectedFrameParams {
             mesh,
             author,
@@ -1314,13 +1326,17 @@ pub(crate) async fn broadcast_task_artifact(
             content: true,
             echo_as: EchoAs::Task,
             id: None,
-            app,
+            app: &mut *app,
         },
         state,
         sender,
         out,
     )
-    .await
+    .await;
+    if sent.is_err() {
+        task_record::give_back_seq(&mut app.tasks, task_id, seq);
+    }
+    sent
 }
 
 /// The identity + task-target of a `--file`-bearing leg — grouped so

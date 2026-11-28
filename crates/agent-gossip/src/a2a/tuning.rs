@@ -171,10 +171,6 @@ pub(crate) const TASK_STATUS_TEXT_MAX_CHARS: usize = 280;
 /// such text is held per task, and tasks are capped, so the memory it takes has a bound.
 pub(crate) const TASK_UNANSWERED_TEXT_MAX_CHARS: usize = 2000;
 
-/// Leg ids remembered per task to tell a replayed leg from a new one. A task
-/// carries tens of real legs; beats are not counted.
-pub(crate) const TASK_LEGS_SEEN_CAP: usize = 64;
-
 /// Chat keys remembered to tell a replayed chat line from a new one. A replay
 /// reaches the app only after the engine's dedup FIFO has seen `SEEN_IDS_CAP`
 /// newer frames, so this must hold more than that; twice the FIFO, tied to the

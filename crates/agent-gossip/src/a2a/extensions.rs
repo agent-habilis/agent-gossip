@@ -27,15 +27,14 @@ pub const META_LABEL: &str = "mesh:label";
 /// Set to `true` on a check-in while the worker waits on its own user. The next status leg
 /// clears it, and a leg that leaves it out says the worker does not wait.
 pub(super) const META_WAITING_USER: &str = "mesh:waiting_user";
-/// When the worker sent a status leg, in milliseconds on its clock. Tells two
-/// legs of one wire second apart. Absent on a leg from a peer that does not
-/// send it, which then orders by the second alone.
-pub(super) const META_ORDER_MS: &str = "mesh:order_ms";
 /// Set to `true` on the `Task` that answers an opening whose reply did not come before the
 /// deadline: the task exists on this node, and nothing says that the worker got it yet.
 pub(super) const META_UNCONFIRMED: &str = "mesh:unconfirmed";
-/// The place of a message in its task, in `Message.metadata`: 1 on the opening, then one more on
-/// each follow-up. The initiator's daemon stamps it, and a worker serves no message without it.
+/// The place of a leg in the sequence of its sender, per task: the initiator's opening is 1 and
+/// each follow-up one more, and the worker numbers its status and artifact legs the same way. The
+/// daemon stamps it. A beat of the worker carries the seq of its last leg and does not count; a
+/// beat of the initiator has none. A leg whose seq is not above the highest that the receiver took
+/// in is dropped whole.
 pub(super) const META_SEQ: &str = "mesh:seq";
 /// Seconds since the worker agent last checked in on a task, on a worker beat.
 /// The sender takes the smaller of it and the silence it measured itself.

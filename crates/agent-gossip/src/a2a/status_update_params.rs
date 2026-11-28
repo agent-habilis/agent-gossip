@@ -1,8 +1,6 @@
-use std::sync::atomic::AtomicU64;
-
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
-use super::extensions::{META_CHECKIN_AGE, META_ORDER_MS, META_WAITING_USER};
+use super::extensions::{META_CHECKIN_AGE, META_SEQ, META_WAITING_USER};
 use super::frame_payload_error::FramePayloadError;
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_LABEL, META_PROGRESS, Message, Part, Role,
@@ -310,16 +308,22 @@ pub struct BeatExtras {
     /// Seconds since the worker's agent last checked in on this task. The sender takes the
     /// smaller of it and the silence it measured itself.
     pub checkin_age_secs: Option<u64>,
+    /// The seq of the worker's last leg, so that the sender can tell a leg it never got. A beat
+    /// does not take a seq of its own.
+    pub seq: Option<u64>,
 }
 
-/// As [`beat_metadata`], plus the worker's check-in age.
+/// As [`beat_metadata`], plus the worker's check-in age and seq.
 #[must_use]
 pub fn beat_metadata_with_extras(extras: BeatExtras) -> serde_json::Value {
     let mut meta = beat_metadata(extras.progress);
-    if let Some(map) = meta.as_object_mut()
-        && let Some(age) = extras.checkin_age_secs
-    {
-        map.insert(META_CHECKIN_AGE.to_string(), age.into());
+    if let Some(map) = meta.as_object_mut() {
+        if let Some(age) = extras.checkin_age_secs {
+            map.insert(META_CHECKIN_AGE.to_string(), age.into());
+        }
+        if let Some(seq) = extras.seq {
+            map.insert(META_SEQ.to_string(), seq.into());
+        }
     }
     meta
 }
@@ -327,8 +331,13 @@ pub fn beat_metadata_with_extras(extras: BeatExtras) -> serde_json::Value {
 /// Compose a task artifact update (the worker's result): one artifact whose
 /// parts carry the result text.
 #[must_use]
-pub fn artifact_update(mesh: &MeshId, task_id: &TaskId, text: &str) -> TaskArtifactUpdate {
-    artifact_update_parts(mesh, task_id, vec![Part::text(text)])
+pub fn artifact_update(
+    mesh: &MeshId,
+    task_id: &TaskId,
+    text: &str,
+    seq: u64,
+) -> TaskArtifactUpdate {
+    artifact_update_parts(mesh, task_id, vec![Part::text(text)], seq)
 }
 
 /// As [`artifact_update`] but carrying arbitrary parts — used when the result
@@ -338,6 +347,7 @@ pub fn artifact_update_parts(
     mesh: &MeshId,
     task_id: &TaskId,
     parts: impl IntoIterator<Item = Part>,
+    seq: u64,
 ) -> TaskArtifactUpdate {
     TaskArtifactUpdate {
         task_id: task_id.clone(),
@@ -352,16 +362,14 @@ pub fn artifact_update_parts(
         },
         append: None,
         last_chunk: Some(true),
-        // The order value tells the result apart from the check-ins of its own second, so a
-        // check-in that a slow relay delivers after it cannot undo the review.
-        metadata: Some(serde_json::json!({ META_ORDER_MS: leg_order_ms() })),
+        metadata: Some(serde_json::json!({ META_SEQ: seq })),
     }
 }
 
-/// The order value an artifact leg carries, when the peer sends one.
+/// The `mesh:seq` an artifact leg carries, when the peer sends one.
 #[must_use]
-pub fn artifact_order(update: &TaskArtifactUpdate) -> Option<u64> {
-    update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
+pub fn artifact_seq(update: &TaskArtifactUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_SEQ)?.as_u64()
 }
 
 /// Parse + validate the status payload of a logical `A2aStatus` frame:
@@ -465,17 +473,17 @@ pub(crate) fn waiting_metadata(
 
 /// The metadata of a status leg.
 ///
-/// It holds the order value, `mesh:waiting_user` while the worker waits on its user, and the
-/// progress of a check-in as a percentage. The counterpart of
-/// [`status_order`], [`status_waiting_user`] and [`leg_progress`].
+/// It holds the `mesh:seq` of the leg, `mesh:waiting_user` while the worker waits on its user, and
+/// the progress of a check-in as a percentage. The counterpart of [`status_seq`],
+/// [`status_waiting_user`] and [`leg_progress`].
 #[must_use]
 pub fn status_metadata(
     // `true` while the worker waits on its own user.
     waiting_user: bool,
     progress: Option<Progress>,
-    order_ms: u64,
+    seq: u64,
 ) -> serde_json::Value {
-    let mut meta = serde_json::json!({ META_ORDER_MS: order_ms });
+    let mut meta = serde_json::json!({ META_SEQ: seq });
     if waiting_user {
         meta[META_WAITING_USER] = true.into();
     }
@@ -485,42 +493,10 @@ pub fn status_metadata(
     meta
 }
 
-/// The order value a status leg carries, when the peer sends one.
+/// The `mesh:seq` a status leg carries, when the peer sends one.
 #[must_use]
-pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
-    update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
-}
-
-/// The worker's clock now, in milliseconds: the order value of a status leg.
-#[must_use]
-pub fn leg_order_ms() -> u64 {
-    next_order_ms(wall_clock_ms(), &LAST_ORDER_MS)
-}
-
-/// The last order value this process handed out. The wall clock can step back,
-/// so the next value is kept above it; a restart resets it, and the clock then
-/// carries the order on.
-static LAST_ORDER_MS: AtomicU64 = AtomicU64::new(0);
-
-/// The order value for a leg sent at `now_ms`: the clock, unless that is not
-/// above the last value handed out, then one more than the last.
-fn next_order_ms(now_ms: u64, last: &AtomicU64) -> u64 {
-    use std::sync::atomic::Ordering::Relaxed;
-    let mut previous = last.load(Relaxed);
-    loop {
-        let next = now_ms.max(previous.saturating_add(1));
-        match last.compare_exchange_weak(previous, next, Relaxed, Relaxed) {
-            Ok(_) => return next,
-            Err(actual) => previous = actual,
-        }
-    }
-}
-
-fn wall_clock_ms() -> u64 {
-    let since_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
+pub fn status_seq(update: &TaskStatusUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_SEQ)?.as_u64()
 }
 
 /// Whether the status leg says the worker waits on its own user (`mesh:waiting_user`).
@@ -715,14 +691,13 @@ pub(crate) fn test_status_frame(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU64;
-
     use habilis_network::protocol::{MeshId, MessageId, MessageKind};
 
     use super::{
-        Frame, Progress, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg,
-        display_text, leg_progress, msg_payload, next_order_ms, payload_body, status_metadata,
-        status_order, status_update, status_waiting_user, waiting_metadata,
+        BeatExtras, Frame, Progress, StatusUpdateParams, artifact_seq, artifact_update,
+        beat_metadata_with_extras, broadcast_payload, compose_broadcast, compose_msg, display_text,
+        leg_progress, msg_payload, payload_body, status_metadata, status_seq, status_update,
+        status_waiting_user, waiting_metadata,
     };
     use crate::a2a::{META_PROGRESS, wire};
 
@@ -894,17 +869,13 @@ mod tests {
             )
         };
         let leg = update(status_metadata(true, None, 7));
-        assert_eq!(
-            status_order(&leg),
-            Some(7),
-            "the status order is the sequence number"
-        );
+        assert_eq!(status_seq(&leg), Some(7), "the status seq is the one given");
         assert!(
             status_waiting_user(&leg),
             "the waiting flag is the one given"
         );
         assert_eq!(
-            status_order(&update(
+            status_seq(&update(
                 waiting_metadata(true).expect("the test metadata is valid")
             )),
             None,
@@ -994,17 +965,34 @@ mod tests {
             );
         }
     }
-
-    /// The wall clock can step back, so two legs of one worker must still get
-    /// rising order values: the later leg keeps the higher one.
+    /// A beat of the worker repeats the seq of its last leg and takes none of its own; a beat of
+    /// the sender has none.
     #[test]
-    fn a_clock_step_back_keeps_the_order_value_rising() {
-        let last = AtomicU64::new(0);
-        let first = next_order_ms(2_000, &last);
-        let stepped_back = next_order_ms(1_500, &last);
+    fn a_beat_carries_the_seq_of_the_last_leg_only_when_given() {
+        let with = beat_metadata_with_extras(BeatExtras {
+            seq: Some(4),
+            ..BeatExtras::default()
+        });
+        assert_eq!(
+            with["mesh:seq"], 4,
+            "the worker's beat repeats its last seq"
+        );
+        let without = beat_metadata_with_extras(BeatExtras::default());
         assert!(
-            stepped_back > first,
-            "a clock step back must not lower the order value: {stepped_back} <= {first}"
+            without.get("mesh:seq").is_none(),
+            "the sender's beat has no seq"
+        );
+    }
+
+    /// An artifact leg carries the seq it was built with.
+    #[test]
+    fn an_artifact_leg_carries_its_seq() {
+        let task_id = crate::a2a::TaskId::random();
+        let leg = artifact_update(&mesh(), &task_id, "the result", 6);
+        assert_eq!(
+            artifact_seq(&leg),
+            Some(6),
+            "the artifact reads back its seq"
         );
     }
 }

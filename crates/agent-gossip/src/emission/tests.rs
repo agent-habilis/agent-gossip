@@ -503,7 +503,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             metadata: Some(status_update_params::status_metadata(
                 true,
                 Some("40".parse().expect("40 is a percentage")),
-                status_update_params::leg_order_ms(),
+                1,
             )),
         },
     );
@@ -950,6 +950,7 @@ mod snapshots {
             &habilis_network::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
+            1,
         );
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
         update.metadata = None;

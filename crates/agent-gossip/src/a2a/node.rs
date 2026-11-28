@@ -288,6 +288,8 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
     }
     match event {
         OutputEvent::TaskOverdue { notice } => !notice.waiting_user,
+        // A beat is plumbing: it never wakes, whatever else the filter of the poll does.
+        OutputEvent::Task { message, .. } if is_beat_frame(message) => false,
         OutputEvent::Task {
             message,
             quarter_moved,
@@ -311,6 +313,12 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => emission::simple_event::is_visible(event),
     }
+}
+
+/// Whether `message` is a status beat.
+fn is_beat_frame(message: &Authored) -> bool {
+    status_update_params::status_payload(message)
+        .is_ok_and(|payload| status_update_params::is_beat(&payload))
 }
 
 /// A `working` status that is not a beat: a check-in, or the accept leg.
@@ -1128,7 +1136,6 @@ fn apply_remote_leg(
         }
     };
     let label = status_update_params::task_label(payload);
-    let message_id = payload.message_id.as_str();
     let applied = task_record::apply_leg(
         &mut app.tasks,
         &app.closed_tasks,
@@ -1137,18 +1144,17 @@ fn apply_remote_leg(
             peer_key: requester_key,
             peer: Some(requester),
             source: task_record::LegSource::Message {
-                id: message_id,
+                seq,
                 opens_task: kind == LegKind::Offer,
             },
             mine: false,
             now,
         },
     );
-    if let Some(rec) = app.tasks.get_mut(&task_id) {
-        if kind == LegKind::Offer {
-            rec.label.clone_from(&label);
-        }
-        rec.seq = rec.seq.max(seq);
+    if kind == LegKind::Offer
+        && let Some(rec) = app.tasks.get_mut(&task_id)
+    {
+        rec.label.clone_from(&label);
     }
     let news = applied.news;
     Ok(RemoteLeg {
@@ -1583,6 +1589,21 @@ mod classify_tests {
         assert!(!wakes(&own), "an own echo never wakes");
     }
 
+    // A beat is plumbing: it does not wake, whether or not the filter of the poll lets it by.
+    #[test]
+    fn a_beat_never_wakes_the_bell() {
+        let beat = OutputEvent::Task {
+            message: Box::new(working_with(
+                None,
+                Some(status_update_params::beat_metadata(None)),
+            )),
+            is_self: false,
+            to_name: None,
+            quarter_moved: true,
+        };
+        assert!(!wakes(&beat), "a beat is liveness, so it rings nothing");
+    }
+
     // An alarm that says the worker waits on its user is shown, nothing else.
     #[test]
     fn an_overdue_alarm_wakes_unless_the_worker_waits_on_its_user() {
@@ -1695,7 +1716,7 @@ mod classify_tests {
             TaskState::Submitted,
             "the opening leaves it submitted"
         );
-        assert_eq!(rec.seq, 1, "the record keeps the seq of the opening");
+        assert_eq!(rec.peer_seq, 1, "the record took the seq of the opening in");
     }
 
     /// A second opening for a held id from the same peer is a replay: it changes nothing.
@@ -1784,8 +1805,9 @@ mod classify_tests {
         }
         assert_eq!(
             app.tasks[&opened].seq, 0,
-            "the refused message took no seq in"
+            "the refused message moved no counter"
         );
+        assert_eq!(app.tasks[&opened].peer_seq, 0, "and took no seq in");
     }
 
     /// Only an opening can create a task: a follow-up for an id that nobody holds is refused.
