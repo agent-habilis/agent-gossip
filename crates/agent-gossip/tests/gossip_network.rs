@@ -5288,13 +5288,26 @@ fn meta_get_names_the_member_of_each_slot_beside_the_document() {
         "member-slot",
     ]);
     report.args(["--merge", "{\"status\":\"busy\"}"]);
-    let _ = output_within(&mut report, QUERY_LIMIT);
-    let mut get = common::test_cmd();
-    get.args(["meta", "get", "--gossip", &mesh, "--nickname", &anchor_nick]);
-    let reply = json_of(&mut get);
+    let merged: std::process::Output = output_within(&mut report, QUERY_LIMIT);
+    assert!(
+        merged.status.success(),
+        "the merge of the status must end 0 before the anchor is asked: {merged:?}"
+    );
     let slot = own["pubkey"]
         .as_str()
         .expect("ready shows the key of the run");
+    // The reply of the merge says that the node took it, not that the anchor applied it, so the anchor is
+    // asked until it shows the slot.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let reply = loop {
+        let mut get = common::test_cmd();
+        get.args(["meta", "get", "--gossip", &mesh, "--nickname", &anchor_nick]);
+        let reply = json_of(&mut get);
+        if !reply["members"][slot].is_null() || Instant::now() >= deadline {
+            break reply;
+        }
+        std::thread::sleep(POLL);
+    };
     assert_eq!(
         reply["members"][slot], row["member"],
         "the slot of the key of a run names the member that the roster proved: {reply}"
