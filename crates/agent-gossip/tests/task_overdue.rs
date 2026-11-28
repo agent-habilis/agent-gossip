@@ -94,7 +94,7 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
         std::thread::sleep(Duration::from_millis(700));
     }
     assert!(
-        rang.try_recv().is_err(),
+        matches!(rang.try_recv(), Err(mpsc::TryRecvError::Empty)),
         "a routine check-in must not wake the sender's bell"
     );
     seen.push_str(&common::cli_poll(&mesh, &alice.nickname, None));
@@ -141,7 +141,13 @@ fn a_worker_that_goes_silent_after_an_answer_is_reported_overdue() {
         "input-required",
         Some("which port?"),
     );
-    let question = common::cli_poll(&mesh, &alice.nickname, None);
+    // The question is fire-and-forget over gossip, so the poll can run before it lands.
+    let question_deadline = Instant::now() + Duration::from_secs(15);
+    let mut question = common::cli_poll(&mesh, &alice.nickname, None);
+    while Instant::now() < question_deadline && !question.contains("which port?") {
+        std::thread::sleep(Duration::from_millis(200));
+        question.push_str(&common::cli_poll(&mesh, &alice.nickname, None));
+    }
     assert!(
         question.contains("which port?"),
         "the question must reach the sender before it answers, got:\n{question}"
@@ -308,8 +314,15 @@ fn an_alarm_about_a_worker_waiting_on_its_user_does_not_ring_the_bell() {
         "the alarm must say that the worker waits on its user, got:\n{seen}"
     );
     assert!(
-        rang.try_recv().is_err(),
+        matches!(rang.try_recv(), Err(mpsc::TryRecvError::Empty)),
         "an alarm about a worker that waits on its user must not ring the bell"
+    );
+    // The poll was parked all along, and a waking event rings it: the silence above is not a
+    // poll that had already ended.
+    common::CliWorker::new(&mesh, &bob.nickname).state(&task_id, "input-required", Some("ping"));
+    assert!(
+        rang.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "a question wakes the poll that the alarm left parked"
     );
 }
 
@@ -357,6 +370,114 @@ fn the_reminder_says_when_it_cut_a_long_brief() {
         !reminder.contains(&brief) && reminder.contains(&brief[..1_000]),
         "the reminder must repeat the start of the brief and cut the rest, got {} bytes",
         reminder.len()
+    );
+}
+
+/// The `checkin_due` event of a poll that names `text`, if the poll holds one.
+fn reminder_with(poll: &str, text: &str) -> Option<serde_json::Value> {
+    let events: Vec<serde_json::Value> = serde_json::from_str(poll.trim()).unwrap_or_default();
+    events
+        .into_iter()
+        .find(|event| event["event"] == "checkin_due" && event["text"] == text)
+}
+
+/// Poll the worker until its reminder repeats `text`, for at most 30 s.
+fn await_reminder(mesh: &str, worker: &str, text: &str) -> Option<serde_json::Value> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if let Some(reminder) = reminder_with(&common::cli_poll(mesh, worker, None), text) {
+            return Some(reminder);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    None
+}
+
+/// A follow-up that the worker leaves unanswered is repeated by the reminder, and the reminder
+/// does not call it the opening brief.
+#[test]
+fn the_reminder_repeats_a_follow_up_and_does_not_call_it_a_brief() {
+    let _serial = common::serial_guard();
+    let (alice, mesh) = Node::create_flags("itest-followup-due", &FAST_CHECKIN);
+    let bob = Node::join_flags(&mesh, "followup-due-bob", &FAST_CHECKIN);
+    assert!(
+        alice.wait_ready(&mesh),
+        "the follow-up needs a ready initiator to send it"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the reminder needs a ready worker to raise it"
+    );
+    let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
+    // Read the ring past everything so far: the reminder read below follows the follow-up.
+    let _older = common::cli_poll(&mesh, &bob.nickname, None);
+
+    let answer = common::cli_task_followup(
+        &common::FollowupParams::new(&mesh, &alice.nickname, &bob.nickname, &task_id)
+            .with_text("port 8080"),
+    );
+    assert_eq!(
+        answer["result"]["task"]["id"], task_id,
+        "the follow-up lands on the same task, got: {answer}"
+    );
+
+    let reminder = await_reminder(&mesh, &bob.nickname, "port 8080")
+        .expect("the silent worker is reminded of the follow-up");
+    assert!(
+        reminder.get("brief").is_none(),
+        "a follow-up is not the opening brief, got: {reminder}"
+    );
+    assert!(
+        reminder.get("has_file").is_none(),
+        "a follow-up with no file says nothing of one, got: {reminder}"
+    );
+}
+
+/// A follow-up that carries a file is repeated by its text, and the reminder says that a file
+/// came with it without repeating the file.
+#[test]
+fn the_reminder_says_when_a_follow_up_carries_a_file() {
+    let _serial = common::serial_guard();
+    let (alice, mesh) = Node::create_flags("itest-file-due", &FAST_CHECKIN);
+    let bob = Node::join_flags(&mesh, "file-due-bob", &FAST_CHECKIN);
+    assert!(
+        alice.wait_ready(&mesh),
+        "the follow-up needs a ready initiator to send it"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the reminder needs a ready worker to raise it"
+    );
+    let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
+    common::CliWorker::new(&mesh, &bob.nickname).checkin(&task_id, "accepted: build it", "0");
+    let _older = common::cli_poll(&mesh, &bob.nickname, None);
+    let file = std::env::temp_dir().join(format!("agent-gossip-reminder-{}", std::process::id()));
+    std::fs::write(&file, b"the contents of the attached file")
+        .expect("the follow-up needs a file to attach");
+
+    let answer = common::cli_task_followup(
+        &common::FollowupParams::new(&mesh, &alice.nickname, &bob.nickname, &task_id)
+            .with_text("see the file")
+            .with_file(&file),
+    );
+    std::fs::remove_file(&file).ok();
+    assert_eq!(
+        answer["result"]["task"]["id"], task_id,
+        "the follow-up lands on the same task, got: {answer}"
+    );
+
+    let reminder = await_reminder(&mesh, &bob.nickname, "see the file")
+        .expect("the silent worker is reminded of the follow-up");
+    assert_eq!(
+        reminder["has_file"], true,
+        "the reminder says that a file came with the message, got: {reminder}"
+    );
+    assert!(
+        !reminder
+            .to_string()
+            .contains("the contents of the attached file"),
+        "the reminder names the file and does not repeat it, got: {reminder}"
     );
 }
 

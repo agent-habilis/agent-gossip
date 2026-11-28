@@ -665,6 +665,46 @@ fn task_overdue_display_leaves_out_unset_parts() {
     );
 }
 
+/// The flag of a worker that never picked the task up is left out when it is not set, as are the
+/// other flags, and the silence reads in seconds under a minute.
+#[test]
+fn task_overdue_leaves_out_an_unset_flag_and_shows_short_silence_in_seconds() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let overdue = |age_secs: u64, not_picked_up: bool| OutputEvent::TaskOverdue {
+        notice: crate::output_event::OverdueNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
+            age_secs,
+            waiting_user: false,
+            not_picked_up,
+        },
+    };
+    let quiet = simple_event::event_json(&overdue(30, false)).expect("an event line");
+    assert!(
+        parse(&quiet).get("not_picked_up").is_none(),
+        "an unset flag is not on the line"
+    );
+    assert_eq!(
+        parse(&quiet)["display"],
+        "💬️ task overdue · `<calm-otter>` · 550e8400 · no check-in for 30 s",
+        "under a minute the silence is in seconds"
+    );
+    let set = simple_event::event_json(&overdue(120, true)).expect("an event line");
+    assert_eq!(
+        parse(&set)["not_picked_up"],
+        true,
+        "a set flag is on the line"
+    );
+    assert!(
+        parse(&set)["display"]
+            .as_str()
+            .is_some_and(|display| display.contains("no check-in for 2 min")),
+        "from a minute on the silence is in minutes"
+    );
+}
+
 /// An alarm that says the worker waits on its user is shown, but does not wake.
 #[test]
 fn task_overdue_waiting_on_user_does_not_wake() {

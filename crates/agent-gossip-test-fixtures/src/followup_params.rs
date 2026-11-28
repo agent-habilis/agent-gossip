@@ -13,6 +13,8 @@ pub struct FollowupParams<'caller> {
     pub task_id: &'caller str,
     /// The body of the follow-up.
     pub text: &'caller str,
+    /// A file that the follow-up carries, offloaded over the blob channel.
+    pub file: Option<&'caller std::path::Path>,
 }
 
 impl<'caller> FollowupParams<'caller> {
@@ -30,6 +32,7 @@ impl<'caller> FollowupParams<'caller> {
             to,
             task_id,
             text: "",
+            file: None,
         }
     }
 
@@ -37,6 +40,13 @@ impl<'caller> FollowupParams<'caller> {
     #[must_use]
     pub fn with_text(mut self, text: &'caller str) -> Self {
         self.text = text;
+        self
+    }
+
+    /// Attach `file` to the follow-up; the constructor attaches none.
+    #[must_use]
+    pub fn with_file(mut self, file: &'caller std::path::Path) -> Self {
+        self.file = Some(file);
         self
     }
 }

@@ -2607,11 +2607,7 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     .output()
     .expect("a2a call command failed to spawn");
     worker.cont();
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("mesh:unconfirmed"),
-        "the call must time out before the reply and hand back its task unconfirmed: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    let handed_back = unconfirmed_task_id(&out);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     let task_id: String = loop {
@@ -2626,6 +2622,10 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
         assert!(Instant::now() < deadline, "the worker never got the brief");
         std::thread::sleep(POLL);
     };
+    assert_eq!(
+        handed_back, task_id,
+        "the unconfirmed task that the call handed back is the one that the worker took"
+    );
 
     let cancelled = || {
         worker.json_events().into_iter().any(|value| {
@@ -2685,11 +2685,7 @@ async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
     .output()
     .expect("a2a call command failed to spawn");
     worker.cont();
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("mesh:unconfirmed"),
-        "the call must time out before the reply and hand back its task unconfirmed: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    let handed_back = unconfirmed_task_id(&out);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     let task_id: String = loop {
@@ -2704,6 +2700,10 @@ async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
         assert!(Instant::now() < deadline, "the worker never got the brief");
         std::thread::sleep(POLL);
     };
+    assert_eq!(
+        handed_back, task_id,
+        "the unconfirmed task that the call handed back is the one that the worker took"
+    );
 
     let cancelled = || {
         worker.json_events().into_iter().any(|value| {
@@ -2720,6 +2720,95 @@ async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
         );
         std::thread::sleep(POLL);
     }
+}
+
+/// A call that timed out hands its task back unconfirmed. When the worker was only slow, the
+/// task is the one that it takes up: the worker accepts it and completes it, and the sender,
+/// which holds the task from the start, follows it to the end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_an_unconfirmed_task_is_accepted_and_completed() {
+    let (creator, mesh) = JsonNode::create();
+    let worker = JsonNode::join_with_flags(&mesh, "tu-slow", &[]);
+    assert!(
+        creator.wait_ready(&mesh),
+        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
+    );
+    assert!(
+        worker.wait_ready(&mesh),
+        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
+    );
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tu-slow");
+
+    // The frozen worker cannot answer before the deadline, whatever the timing.
+    worker.stop();
+    let out: std::process::Output = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tu-slow",
+        &[
+            OsStr::new("--text"),
+            OsStr::new("a slow brief"),
+            OsStr::new("--timeout-secs"),
+            OsStr::new("0"),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    worker.cont();
+    let handed_back = unconfirmed_task_id(&out);
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let task_id: String = loop {
+        let found: Option<String> = worker.json_events().into_iter().find_map(|value| {
+            (value["event"] == "task" && value["kind"] == "message")
+                .then(|| value["task_id"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        if let Some(task_id) = found {
+            break task_id;
+        }
+        assert!(Instant::now() < deadline, "the worker never got the brief");
+        std::thread::sleep(POLL);
+    };
+    assert_eq!(
+        handed_back, task_id,
+        "the worker took up the task that the call handed back"
+    );
+
+    let agent = common::CliWorker::new(&mesh, "tu-slow");
+    agent.checkin(&task_id, "accepted: a slow brief", "0");
+    agent.state(&task_id, "completed", Some("done"));
+    let completed = || {
+        creator
+            .json_events()
+            .into_iter()
+            .any(|value| value["task_id"] == task_id.as_str() && value["state"] == "completed")
+    };
+    let finish_deadline = Instant::now() + MSG_TIMEOUT;
+    while !completed() {
+        assert!(
+            Instant::now() < finish_deadline,
+            "the sender never saw the task complete: {:#?}",
+            creator.json_events()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The id of the task that a timed-out `a2a call` handed back, which must say that the worker has
+/// not confirmed it.
+fn unconfirmed_task_id(out: &std::process::Output) -> String {
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|error| panic!("the call prints a JSON-RPC response ({error}): {out:?}"));
+    let task = &reply["result"]["task"];
+    assert_eq!(
+        task["metadata"]["mesh:unconfirmed"], true,
+        "the call must time out before the reply and hand back its task unconfirmed: {reply}"
+    );
+    task["id"]
+        .as_str()
+        .expect("a task that is handed back has an id")
+        .to_owned()
 }
 
 /// The reach a roster gives the creator, or `None` when the roster does not list it.

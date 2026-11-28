@@ -19,6 +19,8 @@ pub(crate) use self::in_process_session::InProcessSession;
 pub use self::join_config::{CreateConfig, JoinConfig, TopicConfig};
 pub use self::mesh_session::MeshSession;
 pub use self::session_error::SessionError;
+pub use crate::a2a::WorkerLeg;
+pub use crate::a2a::status_update_params::Progress;
 
 mod a2a_call_params;
 mod advertiser;

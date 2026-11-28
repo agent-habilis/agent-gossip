@@ -454,9 +454,17 @@ pub fn task_label(message: &Message) -> Option<String> {
 /// when nothing is left.
 #[must_use]
 pub(crate) fn clean_label(raw: &str) -> Option<String> {
-    let visible = raw.chars().filter(|ch| !ch.is_control());
-    let capped: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
-    let trimmed = capped.trim();
+    clean_text(raw, super::tuning::TASK_LABEL_MAX_CHARS)
+}
+
+/// `raw` without its control characters, trimmed and then capped at `max` characters, and `None`
+/// when nothing is left. The trim comes first, so a run of spaces in front cannot use up the cap
+/// and leave nothing.
+#[must_use]
+pub(crate) fn clean_text(raw: &str, max: usize) -> Option<String> {
+    let visible: String = raw.chars().filter(|ch| !ch.is_control()).collect();
+    let capped: String = visible.trim().chars().take(max).collect();
+    let trimmed = capped.trim_end();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
@@ -516,13 +524,10 @@ pub fn status_waiting_user(update: &TaskStatusUpdate) -> bool {
 #[must_use]
 pub fn status_text(update: &TaskStatusUpdate) -> Option<String> {
     let message = update.status.message.as_ref()?;
-    let text = parts_text(&message.parts);
-    let visible = text.chars().filter(|ch| !ch.is_control());
-    let raw: String = visible
-        .take(super::tuning::TASK_STATUS_TEXT_MAX_CHARS)
-        .collect();
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    clean_text(
+        &parts_text(&message.parts),
+        super::tuning::TASK_STATUS_TEXT_MAX_CHARS,
+    )
 }
 
 /// Whether `frame` is a `working` leg that breaks the check-in rule.
@@ -829,8 +834,8 @@ mod tests {
         );
     }
 
-    /// The producer (`waiting_metadata`, used by `a2a status --waiting-on-user`) and the
-    /// reader (`status_waiting_user`) agree, and a leg that does not wait carries none.
+    /// The writer of a leg (`status_metadata`, which the emit path puts on every status leg) and
+    /// the reader (`status_waiting_user`) agree, and a leg that does not wait carries no flag.
     #[test]
     fn waiting_flag_round_trips_through_a_status_update() {
         let task_id = crate::a2a::TaskId::random();
@@ -846,18 +851,17 @@ mod tests {
             )
         };
         assert!(
-            status_waiting_user(&update(waiting_metadata(true))),
+            status_waiting_user(&update(Some(status_metadata(true, None, 1)))),
             "the status payload is the one sent"
         );
         assert!(
-            !status_waiting_user(&update(waiting_metadata(false))),
+            !status_waiting_user(&update(Some(status_metadata(false, None, 2)))),
             "a status that does not wait carries no flag"
         );
     }
 
-    /// A status leg carries its order value next to the flag, and the reader
-    /// still finds the flag. A leg from a peer without the order value reads
-    /// as none.
+    /// A status leg carries its seq next to the flag, and the reader still finds the flag. A leg
+    /// from a peer without the seq reads as none.
     #[test]
     fn a_status_leg_carries_its_order_value_and_its_reason() {
         let task_id = crate::a2a::TaskId::random();
@@ -993,6 +997,28 @@ mod tests {
             artifact_seq(&leg),
             Some(6),
             "the artifact reads back its seq"
+        );
+    }
+
+    /// A note is trimmed before it is capped, so a run of spaces in front cannot use up the cap
+    /// and leave nothing; control characters go, and a note of nothing else is none.
+    #[test]
+    fn a_note_is_trimmed_before_it_is_capped() {
+        let padded = format!("{}text", " ".repeat(10));
+        assert_eq!(
+            super::clean_text(&padded, 4).as_deref(),
+            Some("text"),
+            "the cap counts the text, not the spaces in front of it"
+        );
+        assert_eq!(
+            super::clean_text("ab\u{7}cd", 3).as_deref(),
+            Some("abc"),
+            "a control character is not a character of the note"
+        );
+        assert_eq!(
+            super::clean_text("\u{7} \u{1b}", 9),
+            None,
+            "nothing is left"
         );
     }
 }

@@ -1844,26 +1844,24 @@ fn stamp_send_message(
         app.tasks.insert(task_id.clone(), rec);
         (task_id.clone(), 1, Some(task_id))
     } else {
+        let unheld =
+            || RpcError::invalid_params("SendMessage names a taskId with no task on this node");
         let named = message["taskId"]
             .as_str()
-            .and_then(crate::a2a::TaskId::from_uuid_str);
-        let held = named.as_ref().and_then(|task_id| {
-            app.tasks.get(task_id).filter(|rec| {
-                rec.role == task_record::TaskRole::Initiator && rec.peer_key == peer.key
-            })
-        });
-        let Some(rec) = held else {
-            return Err(RpcError::invalid_params(
-                "SendMessage names a taskId with no task on this node",
-            ));
-        };
+            .and_then(crate::a2a::TaskId::from_uuid_str)
+            .ok_or_else(unheld)?;
+        let rec = app
+            .tasks
+            .get(&named)
+            .filter(|rec| rec.role == task_record::TaskRole::Initiator && rec.peer_key == peer.key)
+            .ok_or_else(unheld)?;
         // The record takes the seq when the follow-up was sent, not before: a failed send
         // consumes none.
         let seq = rec
             .seq
             .checked_add(1)
             .ok_or_else(|| RpcError::invalid_params("the task has used every seq"))?;
-        (named.unwrap_or_else(crate::a2a::TaskId::random), seq, None)
+        (named, seq, None)
     };
     message["taskId"] = serde_json::Value::from(task_id.as_str());
     if !message["metadata"].is_object() {
@@ -2120,8 +2118,14 @@ fn settle_dispatch(
                 );
             }
         }
-        Err(error) if opening.is_some() => {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a opening send failed");
+        Err(error) => {
+            // A call whose request never left is answered now, with the task of an opening taken
+            // back: parked, it would wait out its deadline for a reply that cannot come.
+            if method == served::READER_GET {
+                tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
+            } else {
+                tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+            }
             if let Some(waiter) = app.take_a2a_waiter(corr) {
                 let refusal = serde_json::json!({
                     "error": { "code": -32603, "message": error.to_string() }
@@ -2129,12 +2133,6 @@ fn settle_dispatch(
                 waiter.responder.send_response(&refusal.to_string());
             }
             app.drop_opening(opening);
-        }
-        Err(error) if method == served::READER_GET => {
-            tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
-        }
-        Err(error) => {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
         }
     }
 }
@@ -2716,13 +2714,14 @@ mod open_task_gate_tests {
 mod stamp_tests {
     use std::time::Instant;
 
-    use habilis_network::protocol::{AuthorKey, Nickname};
+    use habilis_network::protocol::{AuthorKey, MeshId, Nickname};
+    use tokio::sync::oneshot;
 
-    use super::{CallPeer, stamp_send_message};
-    use crate::a2a::a2a_app::A2aApp;
+    use super::{CallPeer, DispatchedCall, settle_dispatch, stamp_send_message};
+    use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter};
     use crate::a2a::task_record::{self, TaskRole};
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
-    use crate::a2a::{META_LABEL, TaskId, TaskState};
+    use crate::a2a::{META_LABEL, TaskId, TaskState, wire};
 
     fn bob() -> CallPeer {
         CallPeer {
@@ -2862,6 +2861,44 @@ mod stamp_tests {
             follow_up["message"]["metadata"].is_null(),
             "the refused message is not stamped"
         );
+    }
+
+    /// A call whose request never left is answered at once, not at its deadline.
+    #[test]
+    fn a_call_whose_request_never_left_is_answered_at_once() {
+        let mut app = A2aApp::new();
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        let corr = wire::corr_id("corr-failed");
+        let parked = A2aWaiter {
+            corr: corr.clone(),
+            peer_key: bob().key,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
+            responder: A2aResponder::Typed(reply_tx),
+            opening: None,
+            mesh: MeshId::from("test"),
+        };
+        assert!(
+            app.register_a2a_waiter(parked).is_none(),
+            "the registry has room for the call"
+        );
+        let call = DispatchedCall {
+            method: "GetTask",
+            peer_key: bob().key,
+            corr: &corr,
+            opening: None,
+            seq: None,
+        };
+
+        settle_dispatch(
+            Err(anyhow::anyhow!("no route")),
+            &call,
+            &serde_json::json!({}),
+            &mut app,
+        );
+
+        let reply = reply_rx.try_recv().expect("the caller hears of it now");
+        assert_eq!(reply["error"]["code"], -32603, "the send failed inside");
+        assert!(app.a2a_waiters.is_empty(), "nothing waits for a reply");
     }
 
     /// A raw call that names an id this node holds no record for is refused here.

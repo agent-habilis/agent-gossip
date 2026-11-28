@@ -490,10 +490,16 @@ impl A2aApp {
             return;
         };
         let waiter = self.a2a_waiters.swap_remove(index);
-        if is_error_reply(body) {
-            self.drop_opening(waiter.opening.as_ref());
-        } else {
+        // An opening is kept only by a reply that names its task: an error, a reply that does
+        // not parse and a reply about another task leave nothing that this node can follow.
+        let answered = waiter.opening.as_ref().is_none_or(|opening| {
+            !is_error_reply(body)
+                && returned_task(body).is_some_and(|task| task.id == opening.task_id)
+        });
+        if answered {
             self.reconcile_returned_task(from_key, body);
+        } else {
+            self.drop_opening(waiter.opening.as_ref());
         }
         waiter.responder.send_response(body);
     }
@@ -542,41 +548,20 @@ impl A2aApp {
     /// returns no task, or a task we hold no record of, changes nothing: only dispatch opens a
     /// record on this side.
     fn reconcile_returned_task(&mut self, peer_key: &AuthorKey, body: &str) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-            return;
-        };
-        let result = &value["result"];
-        // Unwrap the SendMessageResponse oneof if present, else treat the result
-        // as a bare Task (GetTask). A v1.0 Task has no inline `kind`, so a Task
-        // is recognized by its required `id` + `status.state`.
-        let task = if result.get("task").is_some() {
-            &result["task"]
-        } else {
-            result
-        };
-        let Some(task_id) = task["id"].as_str().and_then(TaskId::from_uuid_str) else {
-            return;
-        };
-        let Some(task_state) = task["status"]["state"]
-            .as_str()
-            .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())
-        else {
+        let Some(returned) = returned_task(body) else {
             return;
         };
         task_record::reconcile_initiator(
             &mut self.tasks,
             task_record::ReconcileParams {
-                task_id: &task_id,
+                task_id: &returned.id,
                 peer_key,
-                task_state,
+                task_state: returned.state,
                 now: Instant::now(),
             },
         );
         // The worker echoes the label of the brief, so the alarm can name the task.
-        let label = task["metadata"][META_LABEL]
-            .as_str()
-            .and_then(super::status_update_params::clean_label);
-        task_record::set_label(&mut self.tasks, &task_id, peer_key, label);
+        task_record::set_label(&mut self.tasks, &returned.id, peer_key, returned.label);
     }
 
     /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
@@ -709,6 +694,34 @@ impl A2aResponder {
             }
         }
     }
+}
+
+/// The `Task` that a reply returned: its id, its state and the label that the worker echoes.
+struct ReturnedTask {
+    id: TaskId,
+    state: crate::a2a::TaskState,
+    label: Option<String>,
+}
+
+/// The `Task` of a JSON-RPC response `body`. A `SendMessage` result is `{"task":…}`, and a
+/// `GetTask` result is the bare `Task`; a v1.0 Task has no inline `kind`, so it is recognized by
+/// its required `id` and `status.state`. `None` for a body that is no response or holds no task.
+fn returned_task(body: &str) -> Option<ReturnedTask> {
+    let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    let result = &value["result"];
+    let task = if result.get("task").is_some() {
+        &result["task"]
+    } else {
+        result
+    };
+    let id = task["id"].as_str().and_then(TaskId::from_uuid_str)?;
+    let state = task["status"]["state"]
+        .as_str()
+        .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())?;
+    let label = task["metadata"][META_LABEL]
+        .as_str()
+        .and_then(super::status_update_params::clean_label);
+    Some(ReturnedTask { id, state, label })
 }
 
 /// Whether a peer's JSON-RPC response `body` is an error.
@@ -1372,6 +1385,26 @@ mod tests {
             app.take_orphan_blobs().is_empty(),
             "no file went with the call, so no group waits for the sweep"
         );
+    }
+
+    /// A reply that does not name the task of the opening leaves nothing to follow: one that does
+    /// not parse and one about another task take the record back.
+    #[test]
+    fn a_reply_that_does_not_name_the_task_takes_back_the_record_of_an_opening() {
+        for body in [
+            "not json".to_owned(),
+            task_reply(&TaskId::random(), "TASK_STATE_SUBMITTED"),
+        ] {
+            let mut app = super::A2aApp::new();
+            let task_id = dispatch_opening(&mut app, "corr-odd");
+
+            fulfill(&mut app, "corr-odd", &bob_key(), &body);
+
+            assert!(
+                !app.tasks.contains_key(&task_id),
+                "{body} leaves nothing that the caller can follow"
+            );
+        }
     }
 
     /// A worker that accepts the opening keeps the record, whatever state it reports.

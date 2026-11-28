@@ -582,6 +582,12 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         // A check-in with no text or no progress breaks the rule that binds the sender too, so it
         // is neither ingested nor surfaced and moves no clock.
         if status_update_params::is_incomplete_checkin(message) {
+            tracing::debug!(
+                target: "agent_gossip::a2a",
+                %task_id,
+                author = %message.author,
+                "a working leg with no text or no progress was dropped"
+            );
             return Routed::default();
         }
         let known = app.tasks.contains_key(&task_id);

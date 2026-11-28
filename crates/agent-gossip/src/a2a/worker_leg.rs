@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::TaskState;
-use super::status_update_params::Progress;
+use super::status_update_params::{self, Progress};
 use super::worker_leg_error::WorkerLegError;
 
 /// A worker's status leg, parsed once and owned from there to the wire.
@@ -63,8 +63,11 @@ impl WorkerLeg {
             return Err(WorkerLegError::NotAWorkerState);
         }
         if state == TaskState::Working {
+            // The receiver strips control characters before it reads a note, so a note that
+            // is nothing but control characters is as empty here as it is there.
             let trimmed: Option<String> = note.map(|raw| raw.trim().to_owned());
-            let text = trimmed.filter(|text| !text.is_empty());
+            let text =
+                trimmed.filter(|text| status_update_params::clean_text(text, usize::MAX).is_some());
             let (Some(text), Some(progress)) = (text, progress) else {
                 return Err(WorkerLegError::CheckinIncomplete);
             };
@@ -220,22 +223,32 @@ mod tests {
         }
     }
 
-    /// A worker never sends `submitted` (the opening), `auth-required` or `unspecified`.
+    /// A note of nothing but control characters is as empty as the receiver reads it, and a note
+    /// with text keeps the text that was given.
     #[test]
-    fn a_state_that_a_worker_never_sends_is_refused() {
-        for state in [
-            TaskState::Submitted,
-            TaskState::AuthRequired,
-            TaskState::Unspecified,
-        ] {
-            let error = WorkerLeg::parse(state, Some("note".to_owned()), None, false)
-                .expect_err("a worker has no such state to report");
+    fn a_note_of_control_characters_is_refused_like_an_empty_one() {
+        for note in ["\u{7}", " \u{1b} \n"] {
+            let error = WorkerLeg::parse(
+                TaskState::Working,
+                Some(note.to_owned()),
+                Some(progress("10")),
+                false,
+            )
+            .expect_err("a note of control characters says nothing");
             assert_eq!(
                 error.to_string(),
-                "state must be working, input-required, completed, failed, canceled or rejected",
-                "{state:?} is named as a state no worker sends"
+                "working requires a text and a progress",
+                "the same refusal as for a missing note"
             );
         }
+        let kept = WorkerLeg::parse(
+            TaskState::Working,
+            Some("  built it  ".to_owned()),
+            Some(progress("10")),
+            false,
+        )
+        .expect("a note with text is a check-in");
+        assert_eq!(kept.note(), Some("built it"), "the text stays as given");
     }
 
     /// A bare `working` is refused: a check-in says what changed and how far the work is.

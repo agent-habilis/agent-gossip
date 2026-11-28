@@ -4,11 +4,11 @@ use habilis_network::protocol::{AuthorKey, Channel, MeshId, MessageBody, Nicknam
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use super::TaskId;
 use super::extensions::{
     META_LABEL, META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_UNCONFIRMED, META_WAITING_USER,
 };
 use super::task_record::{TaskRecord, TaskRole};
+use super::{TaskId, TaskState};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
     BroadcastParams, emit_task_status, log_pending, send_broadcast,
@@ -39,6 +39,14 @@ impl RpcError {
         RpcError {
             code: -32001,
             message: format!("task not found: {task_id}"),
+        }
+    }
+
+    /// A2A's `TaskNotCancelableError`: the task is over, so there is nothing left to cancel.
+    pub(crate) fn task_not_cancelable(task_id: &TaskId, state: TaskState) -> Self {
+        RpcError {
+            code: -32002,
+            message: format!("task {task_id} is already {state} and cannot be canceled"),
         }
     }
 
@@ -270,6 +278,20 @@ pub(crate) fn unconfirmed_task(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId
     task
 }
 
+/// Why `task_id` cannot be canceled, or `None` when it can: a task that this node does not hold
+/// is not found, and a task that is over, in the registry or already reaped, says that it is
+/// over.
+pub(crate) fn cancel_refusal(app: &A2aApp, task_id: &TaskId) -> Option<RpcError> {
+    match (app.tasks.get(task_id), app.closed_tasks.get(task_id)) {
+        (Some(rec), _) if rec.state.is_terminal() => {
+            Some(RpcError::task_not_cancelable(task_id, rec.state))
+        }
+        (Some(_), _) => None,
+        (None, Some(closed)) => Some(RpcError::task_not_cancelable(task_id, closed.state)),
+        (None, None) => Some(RpcError::task_not_found(task_id)),
+    }
+}
+
 /// A reaped task answers with its last state and peer only: the record is gone,
 /// and keeping the role and review flag would grow the closed set.
 pub(crate) fn get_task(app: &A2aApp, task_id: &TaskId, mesh: &MeshId) -> Result<Value, RpcError> {
@@ -345,8 +367,8 @@ pub(crate) async fn handle_op(
         A2aOp::GetTask { task_id } => get_task(app, &task_id, mesh),
         A2aOp::ListTasks { peer } => Ok(list_tasks(app, peer.as_ref(), mesh)),
         A2aOp::CancelTask { task_id } => {
-            if !app.tasks.contains_key(&task_id) {
-                return Err(RpcError::task_not_found(&task_id));
+            if let Some(refusal) = cancel_refusal(app, &task_id) {
+                return Err(refusal);
             }
             let (_echo, pending) = emit_task_status(
                 crate::a2a::broadcast_params::TaskStatusParams {
@@ -482,4 +504,66 @@ async fn send_message(
         .map_err(|error| RpcError::internal(&error.to_string()))?;
     serde_json::to_value(super::SendMessageResponse::Message(echo))
         .map_err(|error| RpcError::internal(&error.to_string()))
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use std::time::Instant;
+
+    use habilis_network::protocol::{AuthorKey, Nickname};
+
+    use crate::a2a::a2a_app::A2aApp;
+    use crate::a2a::task_record::{ClosedTask, TaskRecord, TaskRole};
+    use crate::a2a::{TaskId, TaskState};
+
+    fn key() -> AuthorKey {
+        AuthorKey::from([0xb0; 32])
+    }
+
+    fn record(state: TaskState) -> TaskRecord {
+        TaskRecord::open(
+            (key(), Nickname::from("bob")),
+            TaskRole::Receiver,
+            state,
+            Instant::now(),
+        )
+    }
+
+    /// A task that is over, or already reaped, says that it is over. Only a task that this node
+    /// does not hold is not found.
+    #[test]
+    fn a_task_that_is_over_answers_that_it_is_over() {
+        let mut app = A2aApp::new();
+        let live = TaskId::random();
+        let done = TaskId::random();
+        let reaped = TaskId::random();
+        app.tasks.insert(live.clone(), record(TaskState::Working));
+        app.tasks.insert(done.clone(), record(TaskState::Completed));
+        app.closed_tasks.insert(
+            reaped.clone(),
+            ClosedTask {
+                peer_key: key(),
+                peer: Nickname::from("bob"),
+                state: TaskState::Failed,
+            },
+        );
+
+        assert!(
+            super::cancel_refusal(&app, &live).is_none(),
+            "a live task can be canceled"
+        );
+        for over in [&done, &reaped] {
+            let refusal =
+                super::cancel_refusal(&app, over).expect("a task that is over is refused");
+            assert_eq!(refusal.code, -32002, "the refusal is not-cancelable");
+            assert!(
+                refusal.message.contains("already"),
+                "the answer says that the task is over, got {}",
+                refusal.message
+            );
+        }
+        let unknown =
+            super::cancel_refusal(&app, &TaskId::random()).expect("an unknown task is refused");
+        assert_eq!(unknown.code, -32001, "an unknown task is not found");
+    }
 }

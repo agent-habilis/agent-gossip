@@ -346,9 +346,13 @@ pub(super) fn task_overdue_event(notice: &OverdueNotice) -> SimpleEvent<'_> {
     } = notice;
     let short_id: String = task_id.as_str().chars().take(8).collect();
     let name = label.clone().unwrap_or(short_id);
+    let silence = if *age_secs < 60 {
+        format!("{age_secs} s")
+    } else {
+        format!("{} min", age_secs / 60)
+    };
     let mut parts = vec![format!(
-        "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {} min",
-        age_secs / 60
+        "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {silence}"
     )];
     if *waiting_user {
         parts.push(" · waiting on user".to_owned());

@@ -170,6 +170,7 @@ impl TaskRecord {
     pub(crate) fn close(&mut self, state: TaskState, now: Instant) {
         self.state = state;
         self.review = false;
+        self.waiting_user = false;
         self.last_activity = now;
     }
 
@@ -582,6 +583,11 @@ fn checkin_age(rec: &TaskRecord, now: Instant) -> Duration {
     stated.map_or(local, |stated| stated.min(local))
 }
 
+/// Whether `text` holds nothing but whitespace.
+fn is_blank(text: &str) -> bool {
+    text.trim().is_empty()
+}
+
 /// The brief or follow-up that the worker has not answered, as a reminder repeats it.
 ///
 /// The text is peer-controlled and bound for the worker's agent, so it loses its control
@@ -666,9 +672,9 @@ pub(crate) fn due_checkins(
                 if now.duration_since(rec.last_skill_activity) >= interval {
                     rec.last_notice = Some(now);
                     let unanswered = rec.unanswered.as_ref();
-                    let text = unanswered
+                    let text: Option<String> = unanswered
                         .map(|unanswered| unanswered.text.clone())
-                        .filter(|text| !text.is_empty());
+                        .filter(|text| !is_blank(text));
                     let truncated = unanswered.is_some_and(|unanswered| unanswered.truncated);
                     let has_file = unanswered.is_some_and(|unanswered| unanswered.has_file);
                     let brief = unanswered.is_some_and(|unanswered| unanswered.brief);
@@ -949,6 +955,11 @@ pub(crate) fn apply(
         return Reach::Live;
     }
     let accepted = advance(rec, leg.kind, leg.mine);
+    // A task that this leg ended waits for no review and on no one.
+    if rec.state.is_terminal() {
+        rec.review = false;
+        rec.waiting_user = false;
+    }
     // Any leg of the peer shows that the peer is alive, accepted or not.
     rec.last_activity = now;
     if leg.mine {
@@ -4063,6 +4074,72 @@ mod tests {
             tasks[&tid()].peer_seq,
             6,
             "a beat never advances the sequence of legs"
+        );
+    }
+
+    /// A task that ends waits on no one and asks for no review, whichever leg or snapshot
+    /// ended it.
+    #[test]
+    fn a_task_that_ends_clears_the_wait_and_the_review() {
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        {
+            let rec = tasks
+                .get_mut(&tid())
+                .expect("the test inserted this task earlier");
+            rec.waiting_user = true;
+            rec.state = TaskState::InputRequired;
+            rec.review = true;
+        }
+        receive(&mut tasks, &status_frame(TaskState::Completed, None));
+        let rec = &tasks[&tid()];
+        assert_eq!(
+            rec.state,
+            TaskState::Completed,
+            "the worker closed the task"
+        );
+        assert!(!rec.review, "the review flag goes with the end");
+        assert!(!rec.waiting_user, "the wait on the user goes with the end");
+
+        let mut snapshot = working_task_we_opened(start);
+        snapshot
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .waiting_user = true;
+        super::reconcile_initiator(
+            &mut snapshot,
+            super::ReconcileParams {
+                task_id: &tid(),
+                peer_key: &peer_key("calm-otter"),
+                task_state: TaskState::Failed,
+                now: start,
+            },
+        );
+        assert!(
+            !snapshot[&tid()].waiting_user,
+            "a terminal snapshot clears the wait as well"
+        );
+    }
+
+    /// A message of nothing but whitespace is no text: the reminder repeats none.
+    #[test]
+    fn a_blank_unanswered_text_is_not_repeated() {
+        let start = Instant::now();
+        let mut tasks = task_we_serve(start);
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .unanswered = Some(Unanswered {
+            text: "  \n \t ".to_owned(),
+            truncated: false,
+            has_file: false,
+            brief: true,
+        });
+        let reminders = super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN)).1;
+        assert_eq!(
+            reminders.first().map(|due| due.text.clone()),
+            Some(None),
+            "a blank text would be an empty body"
         );
     }
 

@@ -483,6 +483,49 @@ async fn status_task_id_mismatch_is_dropped() {
     attacker.leave().await;
 }
 
+/// A `working` leg is a check-in, and a check-in with no text and no progress breaks the rule that
+/// binds the sender too. A crafted client can still put one on the wire: the receiver drops it
+/// before it reaches the task machine or the surface.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_working_leg_with_no_text_or_progress_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("incomplete-checkin").await;
+    attacker.await_peer_card(&victim.nickname).await;
+    let seal_key = seal_key_of_peer(&attacker, &victim.nickname).await;
+    let key = test_key::new_key();
+    let evil = CraftedMsg::sealed_task_status(
+        attacker.session.mesh_id(),
+        test_key::SealedTaskStatusParams::new(
+            "wire-thistle",
+            key_of_peer(&attacker, &victim.nickname).await,
+            "550e8400-e29b-41d4-a716-446655440000",
+            seal_key,
+        )
+        .with_state(TaskState::Working),
+    )
+    .sign(&key)
+    .bytes();
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    attacker.broadcast("barrier-incomplete").await;
+    assert!(
+        victim.wait_body("barrier-incomplete", T).await,
+        "barrier lost"
+    );
+    let surfaced_leg = victim
+        .events()
+        .iter()
+        .any(|event| matches!(event, OutputEvent::Task { .. }));
+    assert!(
+        !surfaced_leg,
+        "a working leg with no text and no progress must not reach the surface"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
 // ── Chat addressing: the privacy boundary between the two chat tags ────
 //
 // Each chat tag is pinned to one addressing, and the pinning is what keeps a

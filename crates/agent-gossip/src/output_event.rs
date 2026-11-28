@@ -216,6 +216,7 @@ pub struct OverdueNotice {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub waiting_user: bool,
     /// `true` when the worker never accepted the task.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub not_picked_up: bool,
 }
 
