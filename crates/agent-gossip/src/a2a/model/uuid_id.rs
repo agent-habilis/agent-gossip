@@ -26,7 +26,7 @@ pub struct UuidId<const KIND: u8>(String);
 
 /// The id the sender mints for one message.
 pub type MessageId = UuidId<MESSAGE_KIND>;
-/// The id the server mints for one task.
+/// The id the initiator mints for one task.
 pub type TaskId = UuidId<TASK_KIND>;
 /// The correlation id of one gossip RPC call.
 pub type A2aRpcId = UuidId<RPC_KIND>;

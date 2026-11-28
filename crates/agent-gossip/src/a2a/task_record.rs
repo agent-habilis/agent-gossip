@@ -2747,6 +2747,16 @@ mod tests {
             "the newline stays, a tab is a space and the bell goes"
         );
         assert!(!cleaned.truncated, "a short text is not cut");
+        let padded = Unanswered::of(&message(vec![part("  \n go on \t\n ")]), false);
+        assert_eq!(
+            padded.text, "go on",
+            "the whitespace around the text is trimmed, so it cannot use up the cap"
+        );
+        let blank = Unanswered::of(&message(vec![part("  \n\t ")]), false);
+        assert!(
+            blank.text.is_empty() && !blank.truncated,
+            "a message of spaces says nothing"
+        );
         assert!(!cleaned.has_file, "no file part");
         assert!(
             Unanswered::of(&message(vec![part("go")]), true).brief,
