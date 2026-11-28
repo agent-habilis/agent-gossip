@@ -7,5 +7,8 @@ pub(crate) fn worker_leg_message(error: WorkerLegError) -> &'static str {
         WorkerLegError::CheckinIncomplete => "a working status needs a note and a progress",
         WorkerLegError::ProgressNotWorking => "progress needs the state working",
         WorkerLegError::WaitingNotWorking => "waiting_on_user needs the state working",
+        WorkerLegError::NotAWorkerState => {
+            "state must be working, input-required, completed, failed, canceled or rejected"
+        }
     }
 }
