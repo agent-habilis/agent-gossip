@@ -450,7 +450,9 @@ COMMANDS
                     between the peer and someone else answers the same
                     "task not found" as an id that does not exist. The task
                     metadata carries the last check-in as mesh:status_text
-                    (its text), mesh:progress (the progress shown for the
+                    (its text, up to 2000 characters with its newlines kept,
+                    and mesh:status_truncated true when it was cut),
+                    mesh:progress (the progress shown for the
                     task, an integer from 0 to 100, which the beats of the
                     worker refresh; the beats of the initiator carry none)
                     and mesh:label (the initiator's name for the task); a task
@@ -1577,30 +1579,48 @@ JSON EVENTS
                   "display":"💬️ check-in due · `<word-word>`"}
 
        task_gap
-              A question of the worker was lost on the way, and the task now
-              waits on the sender. It rings the bell, a poll serves it, and
-              it is never shown. text is the question of the worker, and is
-              absent when the worker said nothing. Answer it with a
-              follow-up on the task; without a text, read the task with
-              GetTask or ask the worker what it needs.
+              A leg of the worker was lost on the way, and the task now
+              waits on the sender. It rings the bell and a poll serves it.
+              task_id and peer name the task and the worker. state is what
+              the worker reported: input-required, completed, failed or
+              canceled. text is what the worker said last, with its newlines
+              kept and cut at 2000 characters, and is absent when the worker
+              said nothing. truncated is true when the cut happened, and is
+              absent otherwise. review is true when the task waits on a
+              result to review, and then there is no text, because the last
+              words would be an older check-in; it is absent otherwise.
+
+              With state input-required the event is never shown. Answer it
+              with a follow-up on the task; without a text, read the task
+              with GetTask or ask the worker what it needs.
 
                  {"event":"task_gap","task_id":"<uuid>","peer":"word-word",
-                  "text":"which port?",
+                  "state":"input-required","text":"which port?",
                   "display":"💬️ task gap · `<word-word>`"}
 
+              With a state that ends the task, the catch-up found the task
+              already ended, and this is how the sender hears the end: the
+              event is shown, and its display reads as the status leg that
+              was lost.
+
+                 {"event":"task_gap","task_id":"<uuid>","peer":"word-word",
+                  "state":"completed","text":"done",
+                  "display":"💬️ task status-update completed `<word-word>`: done"}
+
               When the beat of a worker shows a leg that the sender never
-              got, the daemon of the sender asks the worker for the task once
-              for each such mesh:seq and takes the snapshot in. A lost
+              got, the daemon of the sender asks the worker for the task
+              once for each such mesh:seq and takes the snapshot in. A lost
               result is not repaired: the sender asks again with a
               follow-up. The snapshot moves the mesh:seq of the worker, as
               the sender sees it, up to the seq of the snapshot, so a leg of
               the worker still on its way with a seq at or below that is
               dropped whole when it arrives. This is a known limit: when the
               task ends or waits for review with no result, ask the worker
-              again to resend its result. A peer that keeps beating on a task that this node
-              ended gets the end again. A beat that is ahead of the clock of
-              the receiver by more than the task timeout, or 120 seconds if
-              that is more, is ignored with a warning.
+              again to resend its result. A peer that keeps beating on a
+              task that this node ended gets the end again. A beat that is
+              ahead of the clock of the receiver by more than the task
+              timeout, or 120 seconds if that is more, is ignored with a
+              warning.
 
        state  The gossip's shared state changed (see the state command). Carries
               the view of the state AFTER the change: one slice for each member,

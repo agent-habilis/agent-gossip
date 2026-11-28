@@ -132,8 +132,10 @@ from the queue; all of them appear on the report's `dropped:` line.
 
 A `task_timeout` with the reason `worker-lost` means the worker restarted and
 lost the task: re-dispatch the subtask like a stalled pickup. A `task_gap` event
-is never shown: read its `text` and answer it with a follow-up per the initiator
-flow, as for any question of a worker.
+with the state `input-required` is never shown: read its `text` and answer it with a
+follow-up per the initiator flow, as for any question of a worker. One with a state
+that ends the task is the end of that task: handle it as that status-update, and ask
+the worker again to resend its result when a `completed` comes with no result.
 
 A `task_timeout` on a task still unacknowledged (no `working` yet — see the
 initiator flow in the Event handling section) is a stalled pickup: the worker's

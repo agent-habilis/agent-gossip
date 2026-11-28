@@ -19,9 +19,11 @@ Every leg of a task now carries `mesh:seq`, each party on its own counter. A leg
 `mesh:seq`, a replayed leg, and a leg behind a newer one are dropped whole: if a task ends or
 waits for review with no result in sight, ask the worker again with a follow-up on the task.
 
-A new event `task_gap` tells the sender that a question of the worker was lost and the task
-waits on it. `task_timeout` has a new reason, `worker-lost`: the worker restarted and lost the
-task.
+A new event `task_gap` tells the sender that a leg of the worker was lost and the task waits on
+it. It names the `state` the worker reported; a question is never shown, and the end of a task
+is shown. `task_timeout` has a new reason, `worker-lost`: the worker restarted and lost the
+task. The text of a check-in and of `mesh:status_text` is cut at 2000 characters, with its
+newlines kept.
 
 Breaking for callers:
 
