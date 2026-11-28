@@ -22,6 +22,12 @@ command that goes on the wire:
 - **Decline** — `a2a status --state failed --text "$REASON"`; the initiator is
   told the task was not picked up.
 
+Ask accept or decline as a question of its own. Never put a question about the
+work itself (which file, which option) in the same widget: while the widget is
+open you send nothing, and the initiator sees `not picked up` when the truth is
+that you wait on your user. Accept first and send the accepted status. Then, if
+the work needs your user, send the `--waiting-on-user` check-in and ask.
+
 ### Question widget — Claude Code
 
 Pick this adapter on Claude Code; on any other harness use the section below.

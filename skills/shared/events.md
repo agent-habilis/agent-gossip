@@ -424,7 +424,7 @@ Worker flow:
    (the text was cut, or a file came with it) do you send `--state
    input-required --text "resend: your message was cut"` on the task.
 1. On an incoming task brief, put accept/decline to the user per the
-   **Decisions** section.
+   **Decisions** section, as a question of its own.
 2. Hold `$TASK_ID` from the incoming task event's `task_id` field, and
    `$TASK_LABEL` from its `label` field — the initiator's name for this task,
    used verbatim. Only if the event carries no `label` do you condense the
@@ -445,8 +445,9 @@ Worker flow:
    more than 2 minutes in the background, and never wait in a shell loop: a
    command that blocks the turn is a check-in you cannot send.
 
-   Before you ask your own user a question, tell the initiator. Send a check-in
-   with `--waiting-on-user`:
+   Before you ask your own user a question about the work, tell the initiator,
+   even when the brief itself says to ask (then right after the accepted
+   status). Send a check-in with `--waiting-on-user`:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$QUESTION_SUMMARY" --progress "$PERCENT" --waiting-on-user
    ```
