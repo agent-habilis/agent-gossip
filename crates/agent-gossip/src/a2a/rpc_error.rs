@@ -5,7 +5,9 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use super::TaskId;
-use super::extensions::{META_LABEL, META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_WAITING_USER};
+use super::extensions::{
+    META_LABEL, META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_UNCONFIRMED, META_WAITING_USER,
+};
 use super::task_record::{TaskRecord, TaskRole};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
@@ -257,6 +259,15 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
         "status": { "state": rec.state },
         "metadata": metadata,
     })
+}
+
+/// The task that answers an opening call whose reply did not come before the deadline. The
+/// record exists from dispatch, and the worker may hold the task already, so the caller gets the
+/// task with `mesh:unconfirmed` and follows it like any other.
+pub(crate) fn unconfirmed_task(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> Value {
+    let mut task = task_object(task_id, rec, mesh);
+    task["metadata"][META_UNCONFIRMED] = Value::from(true);
+    task
 }
 
 /// A reaped task answers with its last state and peer only: the record is gone,

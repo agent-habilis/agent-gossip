@@ -1273,7 +1273,11 @@ fn task_creation_surfaces_to_worker_via_fetch() {
                 "timeout_secs": 10,
             }),
         );
-        let timed_out = tool_error(&raw).is_some_and(|error| error.contains("timed out"));
+        let unconfirmed = tool_result_json(&raw).is_some_and(|response| {
+            response["result"]["task"]["metadata"]["mesh:unconfirmed"] == true
+        });
+        let timed_out =
+            unconfirmed || tool_error(&raw).is_some_and(|error| error.contains("timed out"));
         if !timed_out || Instant::now() >= call_deadline {
             break raw;
         }
@@ -1281,12 +1285,12 @@ fn task_creation_surfaces_to_worker_via_fetch() {
     };
     let response = tool_result_json(&raw)
         .unwrap_or_else(|| panic!("a2a_call should succeed; raw response: {raw}"));
-    // The worker mints the task id and returns a submitted Task (v1.0
+    // The initiator minted the task id, and the worker returns a submitted Task (v1.0
     // SendMessageResponse oneof: `{"task": <Task>}`).
     assert!(response["result"]["task"].is_object(), "got: {response}");
     let task_id = response["result"]["task"]["id"]
         .as_str()
-        .expect("server-minted task id")
+        .expect("the task of the reply has an id")
         .to_string();
 
     // The creator (worker) fetches and sees the incoming message as a task leg.

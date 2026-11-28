@@ -2008,6 +2008,7 @@ pub(crate) async fn broadcast_a2a_call(
         deadline,
         responder,
         opening: opening.clone(),
+        mesh: mesh.clone(),
     }) {
         app.drop_opening(opening.as_ref());
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));

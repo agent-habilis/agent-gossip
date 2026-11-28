@@ -2551,9 +2551,8 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
     }
 }
 
-/// A `--file` call that timed out, but that the worker still took, is
-/// cancelled at the worker: the caller was told the call failed, so no task
-/// may live on for it.
+/// A `--file` call that timed out, but that the worker still took, hands its task back
+/// unconfirmed, and the task is cancelled at the worker once nobody touches it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     // Both daemons stop beating a task that no agent touches for 3 s, so the initiator's sweep
@@ -2591,8 +2590,8 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     .output()
     .expect("a2a call command failed to spawn");
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("timed out"),
-        "the call must time out before the reply: {}",
+        String::from_utf8_lossy(&out.stdout).contains("mesh:unconfirmed"),
+        "the call must time out before the reply and hand back its task unconfirmed: {}",
         String::from_utf8_lossy(&out.stdout)
     );
 
@@ -2627,9 +2626,8 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     }
 }
 
-/// A plain call (no file) that timed out, but that the worker still took, is
-/// cancelled at the worker too: the caller was told the call failed, so no
-/// task may live on for it.
+/// A plain call (no file) that timed out, but that the worker still took, hands its task back
+/// unconfirmed, and the task is cancelled at the worker once nobody touches it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
     // Both daemons stop beating a task that no agent touches for 3 s, so the initiator's sweep
@@ -2666,8 +2664,8 @@ async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
     .output()
     .expect("a2a call command failed to spawn");
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("timed out"),
-        "the call must time out before the reply: {}",
+        String::from_utf8_lossy(&out.stdout).contains("mesh:unconfirmed"),
+        "the call must time out before the reply and hand back its task unconfirmed: {}",
         String::from_utf8_lossy(&out.stdout)
     );
 

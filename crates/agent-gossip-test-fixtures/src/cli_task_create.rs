@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::{MSG_TIMEOUT, await_peer_card_cli, cli_task_create_attempt, is_rpc_timeout};
 
-/// Create a task on a **known** peer and return the worker-minted task id
+/// Create a task on a **known** peer and return its task id
 /// (parsed from the JSON-RPC response the call prints on stdout). Panics on
 /// failure.
 ///
@@ -28,12 +28,9 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
     let deadline = Instant::now() + MSG_TIMEOUT;
     let out = loop {
         let attempt = cli_task_create_attempt(mesh, nickname, to, text);
-        if attempt.status.success() || Instant::now() >= deadline {
-            break attempt;
-        }
         let body: serde_json::Value =
             serde_json::from_slice(&attempt.stdout).unwrap_or(serde_json::Value::Null);
-        if !is_rpc_timeout(&body) {
+        if !is_rpc_timeout(&body) || Instant::now() >= deadline {
             break attempt;
         }
     };
@@ -52,6 +49,6 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
         serde_json::from_str(stdout.trim()).expect("a2a call prints a JSON-RPC response");
     parsed["result"]["task"]["id"]
         .as_str()
-        .expect("the worker returned a Task id")
+        .expect("the call returned a Task id")
         .to_string()
 }

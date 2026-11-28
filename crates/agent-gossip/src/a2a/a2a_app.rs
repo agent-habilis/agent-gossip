@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use habilis_network::ops::blob::{BlobServer, ContentId};
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
-use habilis_network::protocol::{AuthorKey, DedupKey, Nickname, ShardGroup};
+use habilis_network::protocol::{AuthorKey, DedupKey, MeshId, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -19,7 +19,7 @@ use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_binding::A2aBinding;
 use crate::a2a::repair_budget::RepairBudget;
-use crate::a2a::rpc_error::{A2aRequest, RpcError};
+use crate::a2a::rpc_error::{self, A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
 use crate::a2a::{META_LABEL, TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
@@ -582,8 +582,10 @@ impl A2aApp {
         self.a2a_waiters.iter().map(|waiter| waiter.deadline).min()
     }
 
-    /// Time out every A2A call past its deadline. The record of an opening stays: the worker may
-    /// hold the task, and the sweep cancels it if no leg of the worker arrives.
+    /// Time out every A2A call past its deadline. An opening answers with its task, marked
+    /// unconfirmed, because the record exists from dispatch and the worker may hold the task: the
+    /// record stays, and the sweep cancels it if no leg of the worker arrives. Any other call
+    /// answers with the timeout error.
     pub(crate) fn expire_a2a_waiters(&mut self, now: TokioInstant) {
         let (expired, survivors): (Vec<A2aWaiter>, Vec<A2aWaiter>) =
             std::mem::take(&mut self.a2a_waiters)
@@ -591,8 +593,19 @@ impl A2aApp {
                 .partition(|waiter| waiter.deadline <= now);
         self.a2a_waiters = survivors;
         for waiter in expired {
-            waiter.responder.send_timeout();
+            match self.unconfirmed_reply(&waiter) {
+                Some(body) => waiter.responder.send_response(&body),
+                None => waiter.responder.send_timeout(),
+            }
         }
+    }
+
+    /// The reply of an opening that timed out, when its record still exists.
+    fn unconfirmed_reply(&self, waiter: &A2aWaiter) -> Option<String> {
+        let task_id = waiter.opening.as_ref()?;
+        let rec = self.tasks.get(task_id)?;
+        let task = rpc_error::unconfirmed_task(task_id, rec, &waiter.mesh);
+        Some(serde_json::json!({ "result": { "task": task } }).to_string())
     }
 
     /// Time out every outstanding A2A call on shutdown.
@@ -725,6 +738,8 @@ pub(crate) struct A2aWaiter {
     /// The task this call opened, whose record exists from dispatch: an error reply takes it
     /// back. A follow-up opens none.
     pub(crate) opening: Option<TaskId>,
+    /// The mesh of the call, for the task that a timed-out opening answers with.
+    pub(crate) mesh: MeshId,
 }
 
 #[cfg(test)]
@@ -1141,6 +1156,7 @@ mod tests {
             deadline: far,
             responder: A2aResponder::Typed(bob_tx),
             opening: None,
+            mesh: MeshId::from("test"),
         });
         app.a2a_waiters.push(super::A2aWaiter {
             corr: wire::corr_id("corr-carol"),
@@ -1148,6 +1164,7 @@ mod tests {
             deadline: far,
             responder: A2aResponder::Typed(carol_tx),
             opening: None,
+            mesh: MeshId::from("test"),
         });
 
         app.fail_a2a_waiters_for_peer((&bob_key(), &Nickname::from("bob")));
@@ -1191,6 +1208,7 @@ mod tests {
                 deadline: far,
                 responder: A2aResponder::Typed(tx),
                 opening: None,
+                mesh: MeshId::from("test"),
             });
         }
 
@@ -1228,6 +1246,7 @@ mod tests {
             deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
             responder: A2aResponder::Typed(tx),
             opening: None,
+            mesh: MeshId::from("test"),
         });
 
         app.fulfill_a2a_waiter(&wire::corr_id("corr-key"), &other_bob_key(), "{}");
@@ -1260,6 +1279,7 @@ mod tests {
             deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
             responder: A2aResponder::Typed(tx),
             opening: None,
+            mesh: MeshId::from("test"),
         }
     }
 
@@ -1358,6 +1378,78 @@ mod tests {
         assert!(
             !app.has_a2a_waiter(&wire::corr_id("corr-slow"), &bob_key()),
             "the call is over: nothing awaits its reply"
+        );
+    }
+
+    /// A call that opened a task gets the task back when its reply is late: the record exists
+    /// from dispatch and the worker may hold the task, so the caller can follow it.
+    #[test]
+    fn a_timed_out_opening_answers_with_its_unconfirmed_task() {
+        let mut app = super::A2aApp::new();
+        let task_id = dispatch_opening(&mut app, "corr-slow");
+        let (tx, mut rx) = oneshot::channel();
+        app.a2a_waiters[0].responder = A2aResponder::Typed(tx);
+
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_hours(1));
+
+        let reply = rx.try_recv().expect("an expired call is answered at once");
+        let task = &reply["result"]["task"];
+        assert_eq!(
+            task["id"],
+            task_id.as_str(),
+            "the reply names the task of the call"
+        );
+        assert_eq!(
+            task["status"]["state"], "TASK_STATE_SUBMITTED",
+            "nothing says that the worker accepted it"
+        );
+        assert_eq!(
+            task["metadata"]["mesh:unconfirmed"], true,
+            "the reply says that the worker has not confirmed the task"
+        );
+        assert!(
+            reply["error"].is_null(),
+            "the caller reads a task, not a failure"
+        );
+    }
+
+    /// A call that opened no task has nothing to hand back: it times out as an error.
+    #[test]
+    fn a_timed_out_call_that_opened_no_task_answers_with_the_timeout_error() {
+        let mut app = super::A2aApp::new();
+        let (tx, mut rx) = oneshot::channel();
+        let mut parked = waiter("corr-follow-up");
+        parked.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(parked);
+
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_hours(1));
+
+        let reply = rx.try_recv().expect("an expired call is answered at once");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("timed out")),
+            "a follow-up that gets no reply is a timeout, got {reply}"
+        );
+    }
+
+    /// An opening whose record the sweep already took has no task to hand back.
+    #[test]
+    fn a_timed_out_opening_without_its_record_answers_with_the_timeout_error() {
+        let mut app = super::A2aApp::new();
+        let task_id = dispatch_opening(&mut app, "corr-gone");
+        let (tx, mut rx) = oneshot::channel();
+        app.a2a_waiters[0].responder = A2aResponder::Typed(tx);
+        app.tasks.remove(&task_id);
+
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_hours(1));
+
+        let reply = rx.try_recv().expect("an expired call is answered at once");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("timed out")),
+            "a task that is gone cannot be handed back, got {reply}"
         );
     }
 
