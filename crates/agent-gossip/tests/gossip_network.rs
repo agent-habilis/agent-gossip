@@ -9,6 +9,7 @@
 //! runs at near-release connect speeds.
 use std::collections::HashSet;
 use std::fs::{self, File};
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -4520,6 +4521,44 @@ fn a_record_whose_pid_was_reused_is_a_dead_member() {
     assert_files_removed(
         &member,
         "when the pid of the record runs with another start",
+    );
+}
+
+/// The mesh folder of a dead member can be a link that someone made, and the sweep must not follow it:
+/// the socket and the chunk folder that sit behind the link are not the files of this member.
+#[test]
+fn a_mesh_folder_that_is_a_link_is_not_swept_through() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("linked-mesh-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    kill_member(&member);
+    let mesh_folder = member
+        .socket
+        .parent()
+        .expect("a socket sits in the folder of its mesh")
+        .to_path_buf();
+    let behind = std::env::temp_dir().join(format!("behind-the-link-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&behind);
+    fs::rename(&mesh_folder, &behind).expect("the folder moves inside one temp dir");
+    symlink(&behind, &mesh_folder).expect("the test makes the link in the runtime base");
+
+    leave_by_owner(&owner_pid);
+    let socket_behind = behind.join(member.socket.file_name().expect("a socket has a name"));
+    let chunks_behind = behind.join(
+        member
+            .chunks
+            .file_name()
+            .expect("a chunk folder has a name"),
+    );
+    let kept = socket_behind.exists() && chunks_behind.exists();
+
+    let _ = fs::remove_file(&mesh_folder);
+    let _ = fs::remove_dir_all(&behind);
+    assert!(
+        kept,
+        "the sweep followed the link of the mesh folder and removed what sits behind it"
     );
 }
 

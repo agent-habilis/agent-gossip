@@ -56,6 +56,11 @@ fn sweep_dead_member(base: &Path, lock: &Path) {
         return;
     }
     let dir = mesh_runtime_dir(base, record.mesh.as_str());
+    // A link in the place of the mesh folder points at files that are not of this member, and the
+    // paths below would follow it. The scan of old logs skips such a folder in the same way.
+    if !std::fs::symlink_metadata(&dir).is_ok_and(|meta| meta.file_type().is_dir()) {
+        return;
+    }
     remove_socket(&dir.join(format!("{}.ipc.sock", record.nickname.as_str())));
     remove_folder(&dir.join(format!("{}.chunks", record.nickname.as_str())));
 }
