@@ -4943,7 +4943,13 @@ fn a_state_file_that_the_user_chose_keeps_its_member_under_another_parent() {
 #[test]
 fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
     let _serial = serial_guard();
-    let daemon = launch_detached_daemon("key-keeper");
+    // A folder of its own, because the sessions folder of the runtime base is shared by every agent on the
+    // host, and the `bell-check` of an installed older binary (0.16.0, run by the Stop hook of a session)
+    // deletes the state file of a dead pid there. That deleted the file of this test in 1 run of 8 to 12.
+    let dir = std::env::temp_dir().join(format!("key-keeper-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let _folder = RemoveDirOnDrop(dir.clone());
+    let daemon = launch_detached_daemon_in("key-keeper", &dir);
     wait_ready(&daemon.state_file);
     let owner_pid = daemon.owner.id().to_string();
     let member = member_files(&owner_pid);
