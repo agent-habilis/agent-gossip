@@ -35,7 +35,7 @@ fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     let scratch = PathBuf::from(name);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true).mode(0o600);
-    // A scratch file of this pid that an earlier crash left is not ours to append to.
+    // A scratch file of this pid that an earlier crash left would make `create_new` fail.
     let _ = std::fs::remove_file(&scratch);
     let mut file = options.open(&scratch)?;
     let written = file
