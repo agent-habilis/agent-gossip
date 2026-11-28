@@ -85,6 +85,25 @@ fn the_old_waiting_on_tag_is_an_unknown_argument() {
     );
 }
 
+/// The `--waiting` flag of the first design is gone too: the flag that is left
+/// is `--waiting-on-user`, and `--waiting` must not match it as a prefix.
+#[test]
+fn the_removed_waiting_flag_is_an_unknown_argument() {
+    let out = status(
+        "working",
+        &["--text", "on it", "--progress", "50", "--waiting", "peer"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a flag that was removed must not be accepted again"
+    );
+    assert!(
+        stderr.contains("unexpected argument"),
+        "the parser must name the removed flag, got: {stderr}"
+    );
+}
+
 /// A `working` status is a check-in, so it needs a text and a progress. There
 /// is no daemon here, so a complete one still fails, but on the missing session.
 #[test]

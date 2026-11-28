@@ -62,10 +62,14 @@ call the `ping` tool.
 
 TASKS arrive as `event:\"task\"` records addressed to you, carrying the \
 `task_id` every later leg reuses. As the WORKER you drive your own task: \
-`task_status` \"working\" to accept (re-emit it about once a minute while you \
-work, or the daemon evicts the task as dead), `task_status\" \"failed\" with a \
-note to decline, `task_artifact` to return the result — which parks the task in \
-input-required for the initiator's approval — and `task_status` \"completed\" \
+`task_status` \"working\" to accept and then to check in: every \"working\" \
+status needs a `note` (what changed) and a `progress` (0 to 100). Send one at \
+least every 5 minutes and answer each `checkin_due` event with one; a worker \
+that goes silent raises a `task_overdue` event for the initiator, and the \
+daemon cancels nothing. Set `waiting_on_user` to true on the check-in you send \
+before you ask your own user something; the next check-in clears it. \
+`task_status` \"failed\" with a note to decline, `task_artifact` to return \
+the result — which parks the task in input-required for the initiator's approval — and `task_status` \"completed\" \
 once that approval arrives as a message leg on the same task. Only you can \
 close it. To INITIATE a task, call `a2a_call` with method \"SendMessage\" and \
 no taskId; the response carries the task (an unanswered opening comes back as a submitted task marked `mesh:unconfirmed`: follow it, never resend). Every later leg of \

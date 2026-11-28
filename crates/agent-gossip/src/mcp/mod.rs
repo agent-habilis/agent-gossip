@@ -81,6 +81,7 @@ mod tests;
 mod to_mcp_error;
 mod topic_mesh_args;
 mod version_result;
+mod worker_leg_message;
 
 pub(crate) use self::a2a_call_args::A2aCallArgs;
 pub(crate) use self::agent_gossip_server::AgentGossipServer;
@@ -118,3 +119,4 @@ pub(crate) use self::task_status_args::TaskStatusArgs;
 pub(crate) use self::to_mcp_error::to_mcp_error;
 pub(crate) use self::topic_mesh_args::TopicMeshArgs;
 pub(crate) use self::version_result::VersionResult;
+pub(crate) use self::worker_leg_message::worker_leg_message;

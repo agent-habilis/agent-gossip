@@ -490,6 +490,100 @@ fn tools_require_session_and_error_when_absent() {
     }
 }
 
+/// A `task_status` that the worker leg refuses fails on the MCP side with the
+/// names of the tool's own arguments, before any task is looked up.
+#[test]
+fn task_status_refuses_an_incomplete_check_in_by_the_names_of_its_arguments() {
+    let mut client = McpClient::spawn();
+    let (_mesh, _nick) = client.create_and_get_mesh(1500);
+    let task_id = "550e8400-e29b-41d4-a716-446655440000";
+    let cases = [
+        (
+            serde_json::json!({ "state": "working", "note": "on it" }),
+            "a working status needs a note and a progress",
+        ),
+        (
+            serde_json::json!({ "state": "working", "progress": 50 }),
+            "a working status needs a note and a progress",
+        ),
+        (
+            serde_json::json!({ "state": "working", "note": "  ", "progress": 50 }),
+            "a working status needs a note and a progress",
+        ),
+        (
+            serde_json::json!({ "state": "input-required", "note": "which?", "progress": 50 }),
+            "progress needs the state working",
+        ),
+        (
+            serde_json::json!({ "state": "completed", "waiting_on_user": true }),
+            "waiting_on_user needs the state working",
+        ),
+        (
+            serde_json::json!({ "state": "working", "note": "on it", "progress": 101 }),
+            "progress",
+        ),
+    ];
+    for (offset, (mut args, expected)) in cases.into_iter().enumerate() {
+        args["task_id"] = serde_json::json!(task_id);
+        let response = client.tool_call(1501 + offset as u64, "task_status", &args);
+        let err = tool_error(&response)
+            .unwrap_or_else(|| panic!("{args} is not a legal status, so it must be refused"));
+        assert!(
+            err.contains(expected),
+            "{args}: the refusal must say {expected:?}, got: {err}"
+        );
+    }
+}
+
+/// A complete check-in, with its progress and the waiting flag, passes the
+/// argument checks. The task is unknown on this node, so the call still
+/// fails, but not on its arguments.
+#[test]
+fn task_status_accepts_a_complete_check_in_past_the_argument_checks() {
+    let mut client = McpClient::spawn();
+    let (_mesh, _nick) = client.create_and_get_mesh(1510);
+    let response = client.tool_call(
+        1511,
+        "task_status",
+        &serde_json::json!({
+            "task_id": "550e8400-e29b-41d4-a716-446655440000",
+            "state": "working",
+            "note": "asked my user about the port",
+            "progress": 40,
+            "waiting_on_user": true,
+        }),
+    );
+    let err = tool_error(&response).unwrap_or_default();
+    assert!(
+        !err.contains("needs"),
+        "a complete check-in must pass the argument checks, got: {err}"
+    );
+}
+
+/// An artifact with no text and no file is refused by the MCP server.
+#[test]
+fn task_artifact_without_a_text_or_a_file_is_refused() {
+    let mut client = McpClient::spawn();
+    let (_mesh, _nick) = client.create_and_get_mesh(1520);
+    for (offset, text) in ["", "   "].into_iter().enumerate() {
+        let response = client.tool_call(
+            1521 + offset as u64,
+            "task_artifact",
+            &serde_json::json!({
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "text": text,
+            }),
+        );
+        let err = tool_error(&response).unwrap_or_else(|| {
+            panic!("an artifact of {text:?} carries nothing, so it must be refused")
+        });
+        assert!(
+            err.contains("an artifact needs a text or a file"),
+            "the refusal must say what is missing, got: {err}"
+        );
+    }
+}
+
 #[test]
 fn mesh_version_works_without_a_session() {
     let mut client = McpClient::spawn();

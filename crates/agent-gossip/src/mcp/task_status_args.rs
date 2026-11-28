@@ -16,6 +16,7 @@ pub(crate) struct TaskStatusArgs {
     /// Percent done, a whole number from 0 to 100. Required with state
     /// "working", rejected with any other state.
     #[serde(default)]
+    #[schemars(range(min = 0, max = 100))]
     pub(crate) progress: Option<u8>,
     /// Set to true when the task waits on your own user. Only valid with state "working";
     /// the next check-in clears it.

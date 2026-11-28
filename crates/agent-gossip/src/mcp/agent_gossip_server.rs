@@ -23,7 +23,7 @@ use super::{
     LeaveResult, MCP_INSTRUCTIONS, MeshInfoResult, MeshRef, NoArgs, PingResult, SendBroadcastArgs,
     SendMsgArgs, SendResult, TaskArtifactArgs, TaskStatusArgs, TopicMeshArgs, VersionResult,
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
-    parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
+    parse_task_state, rejoin_existing, state_merge_error, to_mcp_error, worker_leg_message,
 };
 use crate::a2a::ipc_command::MetaView;
 use crate::a2a::status_update_params::Progress;
@@ -403,7 +403,7 @@ impl AgentGossipServer {
             .transpose()
             .map_err(|error| McpError::invalid_params(error, None))?;
         let leg = WorkerLeg::parse(state, args.note, progress, args.waiting_on_user)
-            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+            .map_err(|error| McpError::invalid_params(worker_leg_message(error), None))?;
         let params = TaskStatusParams::new(task_id, leg);
         match session.task_status(params).await {
             Ok((id, message)) => ok_json(SendResult { id, message }),
