@@ -724,6 +724,7 @@ fn task_gap_event_json_shape() {
         notice: crate::output_event::GapNotice {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
             state: TaskState::InputRequired,
             text: Some("which port?".to_owned()),
             truncated: false,
@@ -753,6 +754,7 @@ fn task_gap_event_json_shape() {
         notice: crate::output_event::GapNotice {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
             state: TaskState::InputRequired,
             text: None,
             truncated: false,
@@ -766,16 +768,17 @@ fn task_gap_event_json_shape() {
     );
 }
 
-/// A `task_gap` that carries the end of the task is shown, as the status leg that was lost would
-/// have been.
+/// A `task_gap` that carries the end of the task is as invisible as the one that carries a
+/// question: the agent reads its `state`, and the line names the task by its label.
 #[test]
-fn a_task_gap_that_ends_the_task_is_shown() {
+fn a_task_gap_that_ends_the_task_is_not_shown_either() {
     use super::OutputEvent;
     use crate::a2a::{TaskId, TaskState};
     let event = OutputEvent::TaskGap {
         notice: crate::output_event::GapNotice {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: Some("port it".to_owned()),
             state: TaskState::Completed,
             text: Some("all done".to_owned()),
             truncated: false,
@@ -785,12 +788,9 @@ fn a_task_gap_that_ends_the_task_is_shown() {
     let json = simple_event::event_json(&event).expect("task_gap event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(parsed["state"], "completed", "the line names the end");
-    assert!(simple_event::is_visible(&event), "the end is shown");
-    let display = parsed["display"].as_str().expect("the line has a display");
-    assert!(
-        display.contains("completed") && display.contains("all done"),
-        "the display carries the end and its text: {display}"
-    );
+    assert_eq!(parsed["label"], "port it", "and the task by its label");
+    assert!(!simple_event::is_visible(&event), "no end is shown");
+    assert!(node::wakes(&event), "the agent is woken to read it");
 }
 
 /// The worker's reminder rings the bell and is never shown.

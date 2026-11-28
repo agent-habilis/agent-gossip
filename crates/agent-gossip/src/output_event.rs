@@ -248,6 +248,9 @@ pub struct GapNotice {
     pub task_id: TaskId,
     /// The worker.
     pub peer: Nickname,
+    /// The initiator's `mesh:label` for the task, so the agent can tie the notice to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// The state that the worker reported: `input-required`, or an end.
     #[serde(serialize_with = "friendly_state")]
     pub state: TaskState,

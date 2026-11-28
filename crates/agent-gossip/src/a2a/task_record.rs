@@ -811,20 +811,19 @@ impl Unanswered {
             .iter()
             .filter_map(|part| part.text.as_deref())
             .collect();
-        let joined = lines.join("\n");
-        let spaced = joined.chars().map(|ch| if ch == '\t' { ' ' } else { ch });
-        let mut visible = spaced.filter(|ch| !ch.is_control() || *ch == '\n');
-        let text: String = visible
-            .by_ref()
-            .take(tuning::TASK_UNANSWERED_TEXT_MAX_CHARS)
-            .collect();
+        let capped = status_update_params::capped_text(
+            &lines.join("\n"),
+            tuning::TASK_UNANSWERED_TEXT_MAX_CHARS,
+        );
+        let (text, truncated) =
+            capped.map_or_else(Default::default, |capped| (capped.text, capped.truncated));
         let has_file = message
             .parts
             .iter()
             .any(|part| part.raw.is_some() || part.url.is_some());
         Self {
             text,
-            truncated: visible.next().is_some(),
+            truncated,
             has_file,
             brief,
         }
@@ -1084,6 +1083,7 @@ fn gap_notice(task_id: &TaskId, rec: &TaskRecord, snapshot: &Snapshot) -> GapNot
     GapNotice {
         task_id: task_id.clone(),
         peer: rec.peer.clone(),
+        label: rec.label.clone(),
         state: snapshot.state,
         text,
         truncated: capped.is_some_and(|capped| capped.truncated),
