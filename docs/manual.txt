@@ -1582,15 +1582,15 @@ JSON EVENTS
 
        task_gap
               A leg of the worker was lost on the way, and the task now
-              waits on the sender. It is never shown, whatever its state: it
-              rings the bell, a poll serves it, and is_visible is false.
-              task_id and peer name the task and the worker. label is the
-              name that the initiator gave the task, absent when it gave
-              none. state is what the worker reported: input-required,
-              completed, failed or canceled, and it tells the reader what to
-              do. text is what the worker said last, with its newlines kept
-              and cut at 2000 characters, and is absent when the worker said
-              nothing. truncated is true when the cut happened, and is
+              waits on the sender, or is over. It is never shown, whatever
+              its state: it rings the bell, a poll serves it, and
+              is_visible is false. task_id and peer name the task and the
+              worker. label is the name that the initiator gave the task,
+              absent when it gave none. state is what the worker reported:
+              input-required, completed, failed, canceled or rejected, and
+              it tells the reader what to do. text is what the worker said
+              last, with its newlines kept and cut at 2000 characters, and
+              is absent when the worker said nothing. truncated is true when the cut happened, and is
               absent otherwise. review is true when the task waits on a
               result to review, and then there is no text, because the last
               words would be an older check-in; it is absent otherwise.

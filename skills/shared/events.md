@@ -208,9 +208,10 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | `task_overdue` (initiator), the line says `waiting on user` | leave it in progress; the badge stays | `waiting-user` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
+| a follow-up that says `resend your result`, or a new task that asks for the result of an ended task `<id>` (worker) | send that result again as an artifact (`a2a artifact`) | `sent` |
 | `completed`, after approval | close it | `done` |
 | `task_gap`, state `input-required` (initiator) | leave it as it is; answer the worker, or ask it to resend its result when `review` is true | unchanged |
-| `task_gap`, state `completed`, `failed` or `canceled` (initiator) | the task ended: handle it as that terminal state, from the rows below | as for that state |
+| `task_gap`, state `completed`, `failed`, `canceled` or `rejected` (initiator) | the task ended: handle it as that terminal state, from the rows below; `rejected` as `failed` | as for that state |
 | `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
 | leaving the gossip | close whatever is still open | `dropped` |
 
@@ -336,7 +337,7 @@ into the `subject` (and `activeForm`) on every transition:
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
 | `task_gap`, state `input-required` (initiator) | no `TaskUpdate`: the badge stays, `review` true or not |
-| `task_gap`, state `completed`, `failed` or `canceled` (initiator) | as for that terminal state: `completed` badge `done`, `failed` or `canceled` badge `dropped`, `status` `completed` |
+| `task_gap`, state `completed`, `failed`, `canceled` or `rejected` (initiator) | as for that terminal state: `completed` badge `done`, `failed`, `canceled` or `rejected` badge `dropped`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
@@ -556,8 +557,8 @@ Initiator flow:
    `GetTask` or ask the worker what it needs; the badge stays. When `review` is
    true the task waits for review with no result and there is no `text`: send a
    follow-up on the task that asks the worker to resend its result. With
-   `completed`, `failed` or `canceled` the task already ended: handle it exactly
-   as that terminal state from the lifecycle tables, print the line the skill
+   `completed`, `failed`, `canceled` or `rejected` the task already ended: handle
+   it exactly as that terminal state, `rejected` as `failed` from the lifecycle tables, print the line the skill
    prints for that end and close the badge. A `completed` with no result in sight
    takes no follow-up: open a new task to the worker that asks it to resend the
    result of task `$TASK_ID`. `text` keeps its newlines and is cut at 2000

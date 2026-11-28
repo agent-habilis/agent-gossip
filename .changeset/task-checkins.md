@@ -21,9 +21,9 @@ review with no result in sight, ask the worker again with a follow-up on the tas
 ended takes no follow-up, so open a new task that asks for the result.
 
 A new event `task_gap` tells the sender that a leg of the worker was lost and the task waits on
-it. It names the `state` the worker reported, and it is never shown: the reader reads `state` to
-see what to do. `task_timeout` has a new reason, `worker-lost`: the worker restarted and lost
-the task. The text of a check-in and of `mesh:status_text` is cut at 2000 characters, with its
+the sender, or is over. It names the `state` the worker reported, and it is never shown: the
+reader reads `state` to see what to do. `task_timeout` has a new reason, `worker-lost`: the
+worker restarted and lost the task. The text of a check-in and of `mesh:status_text` is cut at 2000 characters, with its
 newlines kept.
 
 Breaking for callers:
