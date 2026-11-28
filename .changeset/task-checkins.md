@@ -16,13 +16,14 @@ The initiator's daemon now mints the task id, and each message carries a
 in state submitted with `mesh:unconfirmed` instead of an error.
 
 Every leg of a task now carries `mesh:seq`, each party on its own counter. A leg with no
-`mesh:seq`, a replayed leg, and a leg behind a newer one are dropped whole: if a task ends or
-waits for review with no result in sight, ask the worker again with a follow-up on the task.
+`mesh:seq`, a replayed leg, and a leg behind a newer one are dropped whole. If a task waits for
+review with no result in sight, ask the worker again with a follow-up on the task. A task that
+ended takes no follow-up, so open a new task that asks for the result.
 
 A new event `task_gap` tells the sender that a leg of the worker was lost and the task waits on
-it. It names the `state` the worker reported; a question is never shown, and the end of a task
-is shown. `task_timeout` has a new reason, `worker-lost`: the worker restarted and lost the
-task. The text of a check-in and of `mesh:status_text` is cut at 2000 characters, with its
+it. It names the `state` the worker reported, and it is never shown: the reader reads `state` to
+see what to do. `task_timeout` has a new reason, `worker-lost`: the worker restarted and lost
+the task. The text of a check-in and of `mesh:status_text` is cut at 2000 characters, with its
 newlines kept.
 
 Breaking for callers:

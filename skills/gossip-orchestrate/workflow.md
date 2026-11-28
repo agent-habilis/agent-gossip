@@ -85,9 +85,11 @@ On `input-required` kind `artifact-update` — a worker's result — **verify
 before approving**: check the artifact against the subtask's completion
 criteria, not against a general sense of done.
 
-A late leg is dropped whole. When a subtask's task ends (`completed`) or waits for
-review (`input-required`) and no artifact reached you, send one follow-up with
-`--task-id` and `--text "resend your result"` before you count the subtask as failed.
+A late leg is dropped whole. When a subtask's task waits for review (`input-required`)
+and no artifact reached you, send one follow-up with `--task-id` and
+`--text "resend your result"` before you count the subtask as failed. A task that
+ended (`completed`) takes no follow-up: open one new task to the same worker that asks
+it to resend the result of the task with that id, before you count the subtask as failed.
 
 - Every criterion met → approve with a `--task-id` follow-up so the worker
   closes, then print one line:
@@ -132,10 +134,11 @@ from the queue; all of them appear on the report's `dropped:` line.
 
 A `task_timeout` with the reason `worker-lost` means the worker restarted and
 lost the task: re-dispatch the subtask like a stalled pickup. A `task_gap` event
-with the state `input-required` is never shown: read its `text` and answer it with a
-follow-up per the initiator flow, as for any question of a worker. One with a state
-that ends the task is the end of that task: handle it as that status-update, and ask
-the worker again to resend its result when a `completed` comes with no result.
+is never shown, and its `state` is the switch. With `input-required` read its `text` and
+answer it with a follow-up per the initiator flow, as for any question of a worker; with
+`review` true, ask the worker with a follow-up to resend its result. With a state that
+ends the task, handle it as that terminal state, and open a new task that asks the worker
+to resend the result when a `completed` comes with no result.
 
 A `task_timeout` on a task still unacknowledged (no `working` yet — see the
 initiator flow in the Event handling section) is a stalled pickup: the worker's

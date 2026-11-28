@@ -209,8 +209,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
 | `completed`, after approval | close it | `done` |
-| `task_gap`, state `input-required` (initiator) | leave it as it is; answer the worker | unchanged |
-| `task_gap`, state `completed`, `failed` or `canceled` (initiator) | the task ended: treat it as the status-update of that state | as for that state |
+| `task_gap`, state `input-required` (initiator) | leave it as it is; answer the worker, or ask it to resend its result when `review` is true | unchanged |
+| `task_gap`, state `completed`, `failed` or `canceled` (initiator) | the task ended: handle it as that terminal state, from the rows below | as for that state |
 | `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
 | leaving the gossip | close whatever is still open | `dropped` |
 
@@ -335,8 +335,8 @@ into the `subject` (and `activeForm`) on every transition:
 | `task_overdue` (initiator), the line says `waiting on user` | no `TaskUpdate`: the badge stays `waiting-user` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
-| `task_gap`, state `input-required` (initiator) | no `TaskUpdate`: the badge stays |
-| `task_gap`, state `completed`, `failed` or `canceled` (initiator) | as for the status-update of that state |
+| `task_gap`, state `input-required` (initiator) | no `TaskUpdate`: the badge stays, `review` true or not |
+| `task_gap`, state `completed`, `failed` or `canceled` (initiator) | as for that terminal state: `completed` badge `done`, `failed` or `canceled` badge `dropped`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
@@ -520,9 +520,12 @@ Initiator flow:
    `--task-id` is the one that creates the task.
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
-   A leg that arrives late is dropped whole. When a task ends (`completed`) or
-   waits for review (`input-required`) and you see no result, ask the worker
-   again with a follow-up on the task: `--text "resend your result"`.
+   A leg that arrives late is dropped whole. When a task waits for review
+   (`input-required`) and you see no result, ask the worker again with a
+   follow-up on the task: `--text "resend your result"`. A task that ended
+   (`completed`) takes no follow-up: with no result in sight, open a new task to
+   the same worker, with `SendMessage` and no `--task-id`, and ask it to resend
+   the result of task `$TASK_ID`.
 4. A task you initiated is **unacknowledged** until the worker's first event
    on it — `working`, or a decline `failed` — which is exactly the window its
    badge still reads `waiting`. `task_timeout` means the worker's daemon
@@ -546,20 +549,24 @@ Initiator flow:
    recovery with its own (orchestrate reassigns on its own); the detection
    above is the same everywhere.
    A `task_gap` event on a task you initiated says that a leg of the worker was
-   lost and your daemon caught up from a snapshot. Its `state` tells which.
-   With `input-required` it is never shown: read its `text`, the question of the
-   worker, and answer it with a follow-up on the task (`--task-id`). When
-   `review` is true the task waits on a result to review and there is no `text`.
-   With no `text`, probe the task with `GetTask` or ask the worker what it
-   needs. With `completed`, `failed` or `canceled` the task already ended, and
-   the event is shown, as the status leg that was lost would have been: treat it
-   as that status-update. A `completed` with no result in sight means you ask
-   the worker again with `--text "resend your result"`. `text` keeps its
-   newlines and is cut at 2000 characters, and `truncated` says so. Your daemon
-   takes the snapshot in when it repairs a gap, and a leg of the worker still on
-   its way with a seq at or below the snapshot is then dropped whole. This is a
-   known limit, and the same rule covers it: when the task ends or waits for
-   review with no result, ask the worker again.
+   lost and your daemon caught up from a snapshot. It is never shown, in any
+   state, and it rings the bell: its `state` is the switch. With `input-required`
+   the question of the worker was lost: read its `text` and answer it with a
+   follow-up on the task (`--task-id`); with no `text`, probe the task with
+   `GetTask` or ask the worker what it needs; the badge stays. When `review` is
+   true the task waits for review with no result and there is no `text`: send a
+   follow-up on the task that asks the worker to resend its result. With
+   `completed`, `failed` or `canceled` the task already ended: handle it exactly
+   as that terminal state from the lifecycle tables, print the line the skill
+   prints for that end and close the badge. A `completed` with no result in sight
+   takes no follow-up: open a new task to the worker that asks it to resend the
+   result of task `$TASK_ID`. `text` keeps its newlines and is cut at 2000
+   characters, and `truncated` says so; `label` is the name you gave the task.
+   Your daemon takes the snapshot in when it repairs a gap, and a leg of the
+   worker still on its way with a seq at or below the snapshot is then dropped
+   whole. This is a known limit, and the sender rule covers it: a task that waits
+   for review with no result gets a follow-up, and a task that ended with no
+   result gets a new task.
 5. To check a task's current state on demand — before re-briefing, or when a
    worker seems quiet — probe it:
    ```bash
