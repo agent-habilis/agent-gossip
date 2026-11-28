@@ -391,7 +391,8 @@ COMMANDS
               Make an A2A call to a peer. Short-lived; requires a running
               create/join daemon for that gossip + nickname. Blocks up to
               --timeout-secs (default 45); exits non-zero when the response is
-              an error or the call times out.
+              an error or the call times out. A SendMessage opening that
+              times out is not an error: it returns the task (see below).
 
               This always opens or advances a TASK. For chat, use a2a
               broadcast or a2a msg.
@@ -400,8 +401,12 @@ COMMANDS
               peer serves a safe method subset
               (each method on its own line, its meaning indented below):
                 SendMessage
-                    task creation (no --task-id: the peer mints the task id and
-                    returns {"task": <Task>}) or a follow-up into a task
+                    task creation (no --task-id: your daemon mints the task id and
+                    the response returns {"task": <Task>}; an opening with no
+                    answer before the deadline returns the Task in state
+                    submitted with metadata mesh:unconfirmed true, not an
+                    error: keep following that id, the initiator's sweep
+                    cancels it if no worker leg arrives) or a follow-up into a task
                     (--task-id: an answer / approval / change; a follow-up
                     to a task that is already closed is not surfaced to the
                     worker, and a follow-up that reuses a messageId gets the
@@ -412,13 +417,21 @@ COMMANDS
                     a follow-up: it travels over the blob channel as a
                     Part.url ticket the peer fetches with `a2a fetch`, as for
                     a2a artifact --file. The file lives as long as its task.
-                    If the call times out, no task is kept: a worker that
-                    took the brief anyway gets a canceled status
-                    (mesh:reason call-timed-out), and the file goes with it.
+                    The message carries the task id and a mesh:seq: 1 on the
+                    opening, the next integer on each follow-up. Your daemon
+                    stamps both; a caller may not set mesh:seq. A raw --params
+                    SendMessage that names an id this node holds no task for
+                    is refused locally (-32602 "SendMessage names a taskId
+                    with no task on this node"). The worker refuses, all
+                    -32602: "SendMessage needs a taskId and a mesh:seq from
+                    1"; "SendMessage names a taskId with no task on this
+                    peer" (an unknown id, another caller's id, or a mesh:seq
+                    above 1 on an unknown id); "the opening is older than the
+                    task timeout". A duplicate opening (same id, same peer)
+                    answers with the task snapshot and is not shown again.
                     A peer caps how many live tasks any one
-                    caller may hold with it, and refuses opens past that with
-                    an error rather than minting; closing finished tasks frees
-                    the allowance.
+                    caller may hold with it, and refuses opens past that
+                    (-32004); closing finished tasks frees the allowance.
                 GetTask
                     read one task you're a party to (--task-id). A task
                     between the peer and someone else answers the same
@@ -427,10 +440,13 @@ COMMANDS
                     (its text), mesh:progress (the progress shown for the
                     task, an integer from 0 to 100, which the beats of the
                     worker refresh; the beats of the initiator carry none)
-                    and mesh:label (the initiator's name for the task); a task that waits on its user carries mesh:waiting_user.
+                    and mesh:label (the initiator's name for the task); a task
+                    that waits on its user carries mesh:waiting_user. The
+                    metadata also carries mesh:seq, the number of the last
+                    message of the task.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
-                    whole registry
+                    whole registry; each task carries the same metadata
                 CancelTask
                     cancel a task you're a party to (--task-id)
                 SubscribeToTask
@@ -654,8 +670,11 @@ COMMANDS
               `a2a` subcommands above:
 
                 • The INITIATOR creates it with `a2a call --to <worker>
-                  --method SendMessage --text "<brief>"`; the worker mints the
-                  task id and returns the Task (capture result.task.id). Follow-ups
+                  --method SendMessage --text "<brief>"`; your daemon mints the
+                  task id and the response returns the Task (capture
+                  result.task.id; if it carries metadata mesh:unconfirmed true,
+                  the opening is sent but unconfirmed: track the id, do not
+                  send it again). Follow-ups
                   (answers, approval, change requests) are `a2a call --method
                   SendMessage --task-id <id> --text ...`.
                 • The WORKER drives its own status with `a2a status` (working /
@@ -1230,8 +1249,8 @@ A2A
               gossip-wide message is what has to announce itself), while
               a2a_msg is addressed to one peer, travels unicast, and is
               sealed to that peer. Neither is a task: a task is created by a
-              directed SendMessage (request/response) — the worker mints the task id
-              and returns the Task — then the worker pushes status/artifact
+              directed SendMessage (request/response) — the initiator's daemon mints the task id
+              and the response returns the Task — then the worker pushes status/artifact
               updates and authors the completed status after the initiator's
               approval (native A2A server-completes).
 
@@ -1699,8 +1718,8 @@ MCP SERVER
               method (SendMessage for task creation or a follow-up, GetTask,
               ListTasks, CancelTask — the task reads are scoped to tasks you
               share with that peer), params, timeout_secs. For task creation,
-              params.message is an A2A Message with no taskId — the peer mints
-              the task id and returns the Task.
+              params.message is an A2A Message with no taskId — your daemon mints
+              the task id and the response returns the Task.
 
        task_status
               As the WORKER on a task you're serving, emit a TaskStatusUpdate.

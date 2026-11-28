@@ -68,7 +68,7 @@ note to decline, `task_artifact` to return the result — which parks the task i
 input-required for the initiator's approval — and `task_status` \"completed\" \
 once that approval arrives as a message leg on the same task. Only you can \
 close it. To INITIATE a task, call `a2a_call` with method \"SendMessage\" and \
-no taskId; the response carries the task the worker minted. Every later leg of \
+no taskId; the response carries the task (an unanswered opening comes back as a submitted task marked `mesh:unconfirmed`: follow it, never resend). Every later leg of \
 yours is `a2a_call` \"SendMessage\" with that taskId — including the approval \
 that lets the worker close. Don't display task legs as chat lines; drive the \
 flow.

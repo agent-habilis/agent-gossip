@@ -1245,7 +1245,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 // ─── task + roster ───────────────────────────────────────────────
 
 /// Creating a task (via the `a2a_call` tool, `message/send`) from the joiner
-/// to the creator: the worker mints the id and returns a submitted `Task`, and
+/// to the creator: the initiator's daemon mints the id and the worker returns a submitted `Task`, and
 /// the creator (worker) surfaces the incoming message on `fetch_messages` as a
 /// `message`-kind `event:"task"` record.
 #[test]

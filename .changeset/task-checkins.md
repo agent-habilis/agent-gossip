@@ -11,5 +11,9 @@ initiator gets a `task_overdue` event after 10 minutes of silence, and the worke
 `checkin_due` reminder; `task_stalled` and `--task-stall-check-secs` are gone.
 An empty artifact is refused.
 
+The initiator's daemon now mints the task id, and each message carries a
+`mesh:seq` (1 on the opening). A `SendMessage` opening that times out returns the task
+in state submitted with `mesh:unconfirmed` instead of an error.
+
 Run `agent-gossip plug` after you upgrade: an old skill sends a bare `working`
 at accept, and the daemon refuses it.

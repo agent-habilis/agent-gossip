@@ -494,7 +494,11 @@ Initiator flow:
 1. Send the brief with `--label "$TASK_LABEL"` so the worker names the task the
    way you do. Capture the task id from the directed `SendMessage` response
    (`result.task.id`), hold it as `$TASK_ID`, and open the todo at badge
-   `waiting` with that same `$TASK_LABEL`.
+   `waiting` with that same `$TASK_LABEL`. A task whose `metadata` has
+   `mesh:unconfirmed: true` is sent but unconfirmed: the call timed out before
+   the worker answered. Track it like any other task, by its id and its task
+   events, and never send the brief again as a new task: the worker may hold
+   it already, and the daemon cancels the task if no worker leg arrives.
 2. Every follow-up into that task — an answer, an approval, a change request —
    carries `--task-id`:
    ```bash
@@ -502,7 +506,7 @@ Initiator flow:
    ```
    **A `SendMessage` without `--task-id` is not a follow-up — it opens a brand
    new task.** That is the protocol's rule, not a quirk: an absent task id means
-   "no task yet", so the worker mints one. The only `SendMessage` that omits
+   "no task yet", so your daemon mints one. The only `SendMessage` that omits
    `--task-id` is the one that creates the task.
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
