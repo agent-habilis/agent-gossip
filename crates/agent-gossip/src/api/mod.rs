@@ -23,7 +23,7 @@ pub use crate::a2a::WorkerLeg;
 pub use crate::a2a::status_update_params::Progress;
 
 mod a2a_call_params;
-mod advertiser;
+pub(crate) mod advertiser;
 mod create_error;
 pub(crate) mod directory;
 mod directory_error;

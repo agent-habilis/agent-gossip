@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::process::{Command, Stdio};
 
 /// One child process. Unless `quiet`, `run` and `read` echo the command line
-/// to stderr, as the task runner did before it dropped `xshell`.
+/// to stderr.
 pub(crate) struct Invocation {
     command: Command,
     quiet: bool,

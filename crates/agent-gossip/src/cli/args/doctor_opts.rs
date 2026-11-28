@@ -13,7 +13,7 @@ pub(crate) struct DoctorOpts {
     /// Analyze a specific gossip: decode its declared connection
     /// methods and live-probe which actually reach it. Omit for the
     /// machine-health report.
-    #[arg(long, alias = "room")]
+    #[arg(long)]
     pub gossip: Option<MeshId>,
 
     /// Skip the live network probes, reporting only what's known without

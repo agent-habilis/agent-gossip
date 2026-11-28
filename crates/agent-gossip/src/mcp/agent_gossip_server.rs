@@ -6,14 +6,13 @@ use anyhow::Result;
 use habilis_network::protocol::{
     JoinTarget, LookupSet, MeshName, MessageBody, Nickname, RelayLadder,
 };
-use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorData as McpError, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolResult, Content, ErrorData as McpError, ListToolsResult, PaginatedRequestParams,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{MaybeSendFuture, RequestContext};
-use rmcp::{RoleServer, ServerHandler, tool, tool_router};
+use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use tokio::sync::Mutex;
 
 use super::session::Session;
@@ -22,8 +21,9 @@ use super::{
     DiscoverResult, DiscoveredMesh, FetchMessagesArgs, FetchMessagesResult, JoinMeshArgs,
     LeaveResult, MCP_INSTRUCTIONS, MeshInfoResult, MeshRef, NoArgs, PingResult, SendBroadcastArgs,
     SendMsgArgs, SendResult, TaskArtifactArgs, TaskStatusArgs, TopicMeshArgs, VersionResult,
-    already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
-    parse_task_state, rejoin_existing, state_merge_error, to_mcp_error, worker_leg_message,
+    already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_nickname,
+    parse_task_id, parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
+    worker_leg_message,
 };
 use crate::a2a::ipc_command::MetaView;
 use crate::a2a::status_update_params::Progress;
@@ -84,13 +84,7 @@ impl AgentGossipServer {
                 McpError::invalid_params(format!("invalid gossip name: {error}"), None)
             })?,
         };
-        let nickname = args
-            .nickname
-            .map(|raw| Nickname::try_new(&raw))
-            .transpose()
-            .map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?;
+        let nickname = parse_nickname(args.nickname)?;
         let directory = args
             .directory
             .map(|raw| MeshName::try_new(&raw))
@@ -103,12 +97,8 @@ impl AgentGossipServer {
             .with_transport(resolved.transport)
             .with_advertise(args.advertise)
             .with_directory(directory);
-        if let Some(nickname) = nickname {
-            config = config.with_nickname(nickname);
-        }
-        if let Some(password) = args.password {
-            config = config.with_password(password);
-        }
+        config.nickname = nickname;
+        config.password = args.password;
         let session = Session::create(config).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable(_) => {
                 McpError::invalid_params(error.to_string(), None)
@@ -132,22 +122,13 @@ impl AgentGossipServer {
         })?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
-            let same_mesh = matches!(&target, JoinTarget::Mesh(id) if id == existing.mesh());
+            let same_mesh =
+                matches!(&target, JoinTarget::Mesh(id) if id == existing.core.mesh_id());
             return rejoin_existing(existing, args.nickname.as_deref(), same_mesh);
         }
-        let nickname = match args.nickname {
-            None => None,
-            Some(raw) => Some(Nickname::try_new(&raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?),
-        };
         let mut config = JoinConfig::new(target);
-        if let Some(nickname) = nickname {
-            config = config.with_nickname(nickname);
-        }
-        if let Some(password) = args.password {
-            config = config.with_password(password);
-        }
+        config.nickname = parse_nickname(args.nickname)?;
+        config.password = args.password;
         let session = Session::join(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
@@ -165,19 +146,11 @@ impl AgentGossipServer {
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
-            let same_mesh = derived.to_string() == existing.mesh().as_str();
+            let same_mesh = derived.to_string() == existing.core.mesh_id().as_str();
             return rejoin_existing(existing, args.nickname.as_deref(), same_mesh);
         }
-        let nickname = match args.nickname {
-            None => None,
-            Some(raw) => Some(Nickname::try_new(&raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?),
-        };
         let mut config = TopicConfig::new(args.string);
-        if let Some(nickname) = nickname {
-            config = config.with_nickname(nickname);
-        }
+        config.nickname = parse_nickname(args.nickname)?;
         let session = Session::topic(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
@@ -205,7 +178,7 @@ impl AgentGossipServer {
         &self,
         Parameters(args): Parameters<DiscoverMeshesArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // One-shot collection window, mirroring the pi extension: wait up to
+        // One-shot collection window: wait up to
         // `MAX` for the first listing, then return `GRACE` after the last one
         // (so a quiet directory returns fast once it has stopped producing).
         const GRACE: Duration = Duration::from_millis(1500);
@@ -262,8 +235,8 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let body = MessageBody::try_new(&args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session.send_broadcast(body).await.map_err(to_mcp_error)?;
-        ok_json(SendResult { id, message })
+        let message = session.core.broadcast(body).await.map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -279,12 +252,12 @@ impl AgentGossipServer {
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
         let to = Nickname::try_new(&args.to)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session.send_msg(to, body).await.map_err(to_mcp_error)?;
-        ok_json(SendResult { id, message })
+        let message = session.core.message(to, body).await.map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
-        description = "Return buffered events from the current gossip — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`; a \"meta\" event carries the merge only, read the meta document with `get_meta`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current gossip — chat, presence, task legs, shared-state changes (event \"state\", carrying the newly-derived `document`; a \"meta\" event carries no document, read the meta document with `get_meta`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -344,7 +317,7 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let mesh = MeshRef::from(session);
-        let roster = session.peers().await.map_err(to_mcp_error)?;
+        let roster = session.core.peers().await.map_err(to_mcp_error)?;
         ok_json(MeshInfoResult {
             mesh,
             peer_count: roster.count,
@@ -358,7 +331,7 @@ impl AgentGossipServer {
     async fn ping(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let peers = session.ping().await.map_err(to_mcp_error)?;
+        let peers = session.core.ping().await.map_err(to_mcp_error)?;
         ok_json(PingResult { peers })
     }
 
@@ -405,10 +378,12 @@ impl AgentGossipServer {
         let leg = WorkerLeg::parse(state, args.note, progress, args.waiting_on_user)
             .map_err(|error| McpError::invalid_params(worker_leg_message(error), None))?;
         let params = TaskStatusParams::new(task_id, leg);
-        match session.task_status(params).await {
-            Ok((id, message)) => ok_json(SendResult { id, message }),
-            Err(error) => Err(to_mcp_error(error)),
-        }
+        let message = session
+            .core
+            .task_status(params)
+            .await
+            .map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -432,7 +407,8 @@ impl AgentGossipServer {
             let path_name = file.as_ref().and_then(|path| path.file_name());
             path_name.and_then(|name| name.to_str()).map(str::to_owned)
         });
-        match session
+        let message = session
+            .core
             .task_artifact(TaskArtifactParams {
                 task_id,
                 text: args.text,
@@ -441,10 +417,8 @@ impl AgentGossipServer {
                 file_mime: args.file_mime,
             })
             .await
-        {
-            Ok((id, message)) => ok_json(SendResult { id, message }),
-            Err(error) => Err(to_mcp_error(error)),
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(SendResult::from(message))
     }
 
     #[tool(
@@ -459,6 +433,7 @@ impl AgentGossipServer {
         let peer = Nickname::try_new(&args.to)
             .map_err(|error| McpError::invalid_params(format!("invalid peer: {error}"), None))?;
         let response = session
+            .core
             .a2a_call(A2aCallParams {
                 peer,
                 method: args.method,
@@ -494,7 +469,8 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         session
-            .apply_state_merge(args.merge)
+            .core
+            .state_merge(args.merge)
             .await
             .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
@@ -509,7 +485,7 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let document = session.state_get().await.map_err(to_mcp_error)?;
+        let document = session.core.state_get().await.map_err(to_mcp_error)?;
         ok_json(serde_json::json!({ "document": document }))
     }
 
@@ -523,7 +499,8 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         session
-            .apply_meta_merge(args.merge)
+            .core
+            .meta_merge(args.merge)
             .await
             .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
@@ -540,21 +517,15 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         // The loop derives `absent`, with the same function as the CLI's `meta get`, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
-        let MetaView { document, absent } = session.meta_get().await.map_err(to_mcp_error)?;
+        let MetaView { document, absent } = session.core.meta_get().await.map_err(to_mcp_error)?;
         ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
 }
 
+#[tool_handler]
 impl ServerHandler for AgentGossipServer {
-    async fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        let tcc = ToolCallContext::new(self, request, context);
-        Self::tool_router().call(tcc).await
-    }
-
+    // Hand-written: the `list_tools` that `tool_handler` generates is an `async fn` with no
+    // `.await`, which `clippy::unused_async_trait_impl` rejects.
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -565,10 +536,6 @@ impl ServerHandler for AgentGossipServer {
             meta: None,
             next_cursor: None,
         }))
-    }
-
-    fn get_tool(&self, name: &str) -> Option<Tool> {
-        Self::tool_router().get(name).cloned()
     }
 
     fn get_info(&self) -> ServerInfo {

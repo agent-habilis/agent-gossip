@@ -29,14 +29,7 @@ use common::{InProcNode, MSG_TIMEOUT, POLL};
 use habilis_network::protocol::AuthorKey;
 use habilis_network::util::tuning;
 use habilis_network::x25519_dalek::PublicKey;
-use serde_json::{Value, json};
-
-// Delivery-barrier budget. These tests assert a message *is* delivered (so
-// the adversarial one was dropped / the gap surfaces); the fast path passes
-// in well under a second. It is an ordinary in-process delivery, so it tracks
-// the suite's steady-state standard (`common::MSG_TIMEOUT`) for the headroom a
-// loaded debug-build host needs — see that constant's note.
-const T: Duration = MSG_TIMEOUT;
+use serde_json::json;
 
 /// A victim + attacker pair on a fresh loopback mesh, **meshed** (a warmup
 /// from the attacker is observed by the victim) so injected bytes are
@@ -48,36 +41,11 @@ async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
     (victim, attacker)
 }
 
-/// The key of the peer called `nickname`, as `observer` knows it. A nickname is a label: a frame
-/// names its addressee by key.
-async fn key_of_peer(observer: &InProcNode, nickname: &str) -> AuthorKey {
-    let deadline = Instant::now() + T;
-    loop {
-        let roster = observer
-            .session
-            .peers()
-            .await
-            .expect("the session stays up for the whole test");
-        if let Some(entry) = roster
-            .peers
-            .iter()
-            .find(|entry| entry.nickname.as_str() == nickname)
-        {
-            return entry.key;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{nickname} never joined the roster of the observer"
-        );
-        tokio::time::sleep(POLL).await;
-    }
-}
-
-/// The seal key of the peer called `nickname`, as the engine of `observer` holds it. The key
-/// comes from the signed `PeerInfo` of the peer, so it can arrive after the roster entry.
-async fn seal_key_of_peer(observer: &InProcNode, nickname: &str) -> PublicKey {
-    let key = key_of_peer(observer, nickname).await;
-    let deadline = Instant::now() + T;
+/// The seal key of `peer`, as the engine of `observer` holds it. The key comes from the signed
+/// `PeerInfo` of the peer, so it can arrive after the roster entry.
+async fn seal_key_of_peer(observer: &InProcNode, peer: &InProcNode) -> PublicKey {
+    let key = peer.key_seen_by(observer).await;
+    let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         if let Some(seal_key) = observer
             .session
@@ -89,7 +57,8 @@ async fn seal_key_of_peer(observer: &InProcNode, nickname: &str) -> PublicKey {
         }
         assert!(
             Instant::now() < deadline,
-            "the engine of the observer never held the seal key of {nickname}"
+            "the engine of the observer never held the seal key of {}",
+            peer.nickname
         );
         tokio::time::sleep(POLL).await;
     }
@@ -122,7 +91,7 @@ async fn unsigned_message_is_dropped() {
     // injection. When it arrives, the unsigned one (sent first) had its turn.
     attacker.broadcast("barrier-unsigned").await;
     assert!(
-        victim.wait_body("barrier-unsigned", T).await,
+        victim.wait_body("barrier-unsigned", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -150,7 +119,7 @@ async fn tampered_message_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-tampered").await;
     assert!(
-        victim.wait_body("barrier-tampered", T).await,
+        victim.wait_body("barrier-tampered", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -174,7 +143,7 @@ async fn unparseable_frame_is_dropped_and_the_receiver_survives() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-unparseable").await;
     assert!(
-        victim.wait_body("barrier-unparseable", T).await,
+        victim.wait_body("barrier-unparseable", MSG_TIMEOUT).await,
         "barrier lost after an unparseable frame"
     );
     assert_eq!(
@@ -202,7 +171,7 @@ async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
         .await
         .expect("the honest control frame needs a live attacker session to reach the victim");
     assert!(
-        victim.wait_body("honest", T).await,
+        victim.wait_body("honest", MSG_TIMEOUT).await,
         "a correctly signed frame must surface: the control of the tamper test"
     );
     victim.leave().await;
@@ -228,7 +197,7 @@ async fn kind_flipped_after_signing_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-kindflip").await;
     assert!(
-        victim.wait_body("barrier-kindflip", T).await,
+        victim.wait_body("barrier-kindflip", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -262,7 +231,10 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     // Barrier (same link, in order) so the victim has processed the forged copy
     // before the genuine one arrives — makes the regression deterministic.
     attacker.broadcast("after-forged").await;
-    assert!(victim.wait_body("after-forged", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("after-forged", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
 
     // 2) A genuine SIGNED message reusing that id must still be delivered.
     let genuine = CraftedMsg::new(mesh, "replayer", "genuine")
@@ -276,7 +248,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
         .await
         .expect("the genuine frame follows the forgery and must still be accepted");
     assert!(
-        victim.wait_body("genuine", T).await,
+        victim.wait_body("genuine", MSG_TIMEOUT).await,
         "a genuine signed message with a replayed id must still be delivered"
     );
     victim.leave().await;
@@ -308,7 +280,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         .await
         .expect("the original must reach the victim once so the replay has something to duplicate");
     assert!(
-        victim.wait_body("said once", T).await,
+        victim.wait_body("said once", MSG_TIMEOUT).await,
         "the original never arrived"
     );
 
@@ -324,7 +296,7 @@ async fn a_replayed_chat_message_surfaces_once() {
     }
     let last_filler = format!("filler {}", fillers - 1);
     assert!(
-        victim.wait_body(&last_filler, T).await,
+        victim.wait_body(&last_filler, MSG_TIMEOUT).await,
         "the fillers never all arrived"
     );
 
@@ -336,7 +308,10 @@ async fn a_replayed_chat_message_surfaces_once() {
         .await
         .expect("the replay is the byte-identical copy that must not surface twice");
     injector.broadcast("after-replay").await;
-    assert!(victim.wait_body("after-replay", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("after-replay", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
 
     assert_eq!(
         victim.count_body("said once"),
@@ -369,7 +344,10 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         "the forgery carries a valid signature but a replayed id that must not block the victim",
     );
     injector.broadcast("after-forged").await;
-    assert!(receiver.wait_body("after-forged", T).await, "barrier lost");
+    assert!(
+        receiver.wait_body("after-forged", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
 
     // 2) The victim's genuine message reusing that id must still be delivered —
     //    the forgery's dedup key differs, so it never marked the id "seen".
@@ -384,7 +362,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         .await
         .expect("the victim's real message follows the forgery and must still be accepted");
     assert!(
-        receiver.wait_body("genuine", T).await,
+        receiver.wait_body("genuine", MSG_TIMEOUT).await,
         "a signed forgery reusing an id must not suppress the victim's genuine message"
     );
     receiver.leave().await;
@@ -405,7 +383,10 @@ async fn junk_payload_chat_is_dropped() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-junk").await;
-    assert!(victim.wait_body("barrier-junk", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("barrier-junk", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
     assert!(
         !surfaced(&mut victim, "raw-not-a2a"),
         "a signed chat frame with a non-A2A body must be dropped at the boundary"
@@ -434,7 +415,7 @@ async fn payload_frame_id_mismatch_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-mismatch").await;
     assert!(
-        victim.wait_body("barrier-mismatch", T).await,
+        victim.wait_body("barrier-mismatch", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -452,7 +433,7 @@ async fn status_task_id_mismatch_is_dropped() {
     // gate must drop it before it can touch the task machine or surface.
     let (mut victim, attacker) = meshed_pair("status-mismatch").await;
     let key = test_key::new_key();
-    let victim_key = key_of_peer(&attacker, &victim.nickname).await;
+    let victim_key = victim.key_seen_by(&attacker).await;
     let evil = CraftedMsg::status_frame(
         attacker.session.mesh_id(),
         test_key::StatusFrameParams::new(
@@ -470,7 +451,10 @@ async fn status_task_id_mismatch_is_dropped() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-status").await;
-    assert!(victim.wait_body("barrier-status", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("barrier-status", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
     let surfaced_status = victim
         .events()
         .iter()
@@ -490,20 +474,20 @@ async fn status_task_id_mismatch_is_dropped() {
 async fn a_working_leg_with_no_text_or_progress_is_dropped() {
     let (mut victim, attacker) = meshed_pair("incomplete-checkin").await;
     attacker.await_peer_card(&victim.nickname).await;
-    let seal_key = seal_key_of_peer(&attacker, &victim.nickname).await;
+    let seal_key = seal_key_of_peer(&attacker, &victim).await;
     let key = test_key::new_key();
-    let evil = CraftedMsg::sealed_task_status(
+    let victim_key: AuthorKey = victim.key_seen_by(&attacker).await;
+    let crafted = CraftedMsg::sealed_task_status(
         attacker.session.mesh_id(),
         test_key::SealedTaskStatusParams::new(
             "wire-thistle",
-            key_of_peer(&attacker, &victim.nickname).await,
+            victim_key,
             "550e8400-e29b-41d4-a716-446655440000",
             seal_key,
         )
         .with_state(TaskState::Working),
-    )
-    .sign(&key)
-    .bytes();
+    );
+    let evil = crafted.sign(&key).bytes();
     attacker
         .session
         .inject_raw(evil)
@@ -511,7 +495,7 @@ async fn a_working_leg_with_no_text_or_progress_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-incomplete").await;
     assert!(
-        victim.wait_body("barrier-incomplete", T).await,
+        victim.wait_body("barrier-incomplete", MSG_TIMEOUT).await,
         "barrier lost"
     );
     let surfaced_leg = victim
@@ -542,7 +526,7 @@ async fn a_beat_repairs_a_question_that_the_overlay_lost() {
         .parse()
         .expect("task id parses");
     assert!(
-        worker.wait_task_message(T).await,
+        worker.wait_task_message(MSG_TIMEOUT).await,
         "worker never received the brief"
     );
     worker
@@ -553,7 +537,9 @@ async fn a_beat_repairs_a_question_that_the_overlay_lost() {
         )
         .await;
     assert!(
-        initiator.wait_task_state(TaskState::Working, T).await,
+        initiator
+            .wait_task_state(TaskState::Working, MSG_TIMEOUT)
+            .await,
         "initiator never saw the task accepted"
     );
 
@@ -606,7 +592,7 @@ async fn a_beat_repairs_a_question_that_the_overlay_lost() {
 async fn directed_broadcast_is_dropped() {
     let (mut victim, attacker) = meshed_pair("dirbcast").await;
     let key = test_key::new_key();
-    let victim_key = key_of_peer(&attacker, &victim.nickname).await;
+    let victim_key = victim.key_seen_by(&attacker).await;
     // `a2a_broadcast` addressed to the victim: a private line wearing the
     // gossip-wide tag. Were it surfaced, a peer could make a 1:1 remark look
     // like something the whole gossip had seen.
@@ -624,7 +610,7 @@ async fn directed_broadcast_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-dirbcast").await;
     assert!(
-        victim.wait_body("barrier-dirbcast", T).await,
+        victim.wait_body("barrier-dirbcast", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -653,7 +639,7 @@ async fn broadcast_shaped_msg_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-bcastmsg").await;
     assert!(
-        victim.wait_body("barrier-bcastmsg", T).await,
+        victim.wait_body("barrier-bcastmsg", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -669,7 +655,7 @@ async fn broadcast_shaped_msg_is_dropped() {
 async fn msg_declaring_the_broadcast_extension_is_dropped() {
     let (mut victim, attacker) = meshed_pair("msgext").await;
     let key = test_key::new_key();
-    let victim_key = key_of_peer(&attacker, &victim.nickname).await;
+    let victim_key = victim.key_seen_by(&attacker).await;
     // A msg carrying a broadcast payload: correctly addressed, but its A2A
     // body declares `mesh-broadcast`. `wrap_a2a` composes the broadcast
     // payload; retagging afterwards leaves the extension in place.
@@ -684,7 +670,10 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-msgext").await;
-    assert!(victim.wait_body("barrier-msgext", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("barrier-msgext", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
     assert!(
         !surfaced(&mut victim, "evil-msg-ext"),
         "the mesh-broadcast extension is a gate, not decoration: a msg \
@@ -716,7 +705,7 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-msgrelay").await;
     assert!(
-        victim.wait_body("barrier-msgrelay", T).await,
+        victim.wait_body("barrier-msgrelay", MSG_TIMEOUT).await,
         "barrier lost"
     );
     assert!(
@@ -762,7 +751,10 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-msgself").await;
-    assert!(victim.wait_body("barrier-msgself", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("barrier-msgself", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
     assert!(
         !surfaced(&mut victim, "evil-msg-as-victim"),
         "a msg between two other peers must never surface as one we sent"
@@ -802,7 +794,7 @@ async fn a_bystanders_task_status_is_dropped() {
         .expect("a created task always reports its id in the JSON-RPC result")
         .to_owned();
     assert!(
-        worker.wait_task_message(T).await,
+        worker.wait_task_message(MSG_TIMEOUT).await,
         "worker never received the brief"
     );
     let tid: TaskId = task_id.parse().expect("task id parses");
@@ -814,7 +806,9 @@ async fn a_bystanders_task_status_is_dropped() {
         )
         .await;
     assert!(
-        initiator.wait_task_state(TaskState::Working, T).await,
+        initiator
+            .wait_task_state(TaskState::Working, MSG_TIMEOUT)
+            .await,
         "initiator never saw the task accepted"
     );
 
@@ -823,17 +817,13 @@ async fn a_bystanders_task_status_is_dropped() {
     // the initiator's to land rather than racing it — under load it has not
     // necessarily arrived by the time the task is established.
     attacker.await_peer_card(&initiator.nickname).await;
-    let seal_key = seal_key_of_peer(&attacker, &initiator.nickname).await;
+    let seal_key = seal_key_of_peer(&attacker, &initiator).await;
+    let initiator_key: AuthorKey = initiator.key_seen_by(&attacker).await;
     let key = test_key::new_key();
     let evil = CraftedMsg::sealed_task_status(
         attacker.session.mesh_id(),
-        test_key::SealedTaskStatusParams::new(
-            "wire-thistle",
-            key_of_peer(&attacker, &initiator.nickname).await,
-            &task_id,
-            seal_key,
-        )
-        .with_state(TaskState::Completed),
+        test_key::SealedTaskStatusParams::new("wire-thistle", initiator_key, &task_id, seal_key)
+            .with_state(TaskState::Completed),
     )
     .sign(&key)
     .bytes();
@@ -850,7 +840,9 @@ async fn a_bystanders_task_status_is_dropped() {
     // frozen record would swallow this artifact.
     worker.task_artifact(&tid, "the real result").await;
     assert!(
-        initiator.wait_task_state(TaskState::InputRequired, T).await,
+        initiator
+            .wait_task_state(TaskState::InputRequired, MSG_TIMEOUT)
+            .await,
         "the real worker's artifact must still park the task for review"
     );
     let forged_landed = initiator.events().iter().any(|event| {
@@ -884,13 +876,14 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
     let (mut victim, mut attacker) = meshed_pair("prejoin-receipt").await;
     attacker.await_peer_card(&victim.nickname).await;
     victim.await_peer_card(&attacker.nickname).await;
-    let seal_key = seal_key_of_peer(&attacker, &victim.nickname).await;
+    let seal_key = seal_key_of_peer(&attacker, &victim).await;
+    let victim_key: AuthorKey = victim.key_seen_by(&attacker).await;
 
     let old = CraftedMsg::sealed_msg(
         attacker.session.mesh_id(),
         test_key::SealedMsgParams::new(
             &attacker.nickname,
-            key_of_peer(&attacker, &victim.nickname).await,
+            victim_key,
             "from before the join",
             seal_key,
         ),
@@ -909,13 +902,16 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
     // was sent a full round trip before it.
     attacker.broadcast("after the injection").await;
     assert!(
-        victim.wait_body("after the injection", T).await,
+        victim.wait_body("after the injection", MSG_TIMEOUT).await,
         "the gossip barrier was lost"
     );
     let barrier = attacker.message(&victim.nickname, "barrier").await;
     assert!(
         attacker
-            .wait_for(T, |events| has_receipt_for(events, barrier.as_str()))
+            .wait_for(MSG_TIMEOUT, |events| has_receipt_for(
+                events,
+                barrier.as_str()
+            ))
             .await,
         "the barrier msg earned no receipt"
     );
@@ -943,20 +939,16 @@ async fn a_bystanders_forged_receipt_is_dropped() {
     let id = sender.message(&addressee.nickname, "for your eyes").await;
     assert!(
         sender
-            .wait_for(T, |events| has_receipt_for(events, id.as_str()))
+            .wait_for(MSG_TIMEOUT, |events| has_receipt_for(events, id.as_str()))
             .await,
         "the real delivered receipt never came"
     );
 
-    let seal_key = seal_key_of_peer(&attacker, &sender.nickname).await;
+    let seal_key = seal_key_of_peer(&attacker, &sender).await;
+    let sender_key: AuthorKey = sender.key_seen_by(&attacker).await;
     let forged = CraftedMsg::sealed_receipt(
         attacker.session.mesh_id(),
-        test_key::SealedMsgParams::new(
-            &attacker.nickname,
-            key_of_peer(&attacker, &sender.nickname).await,
-            id.as_str(),
-            seal_key,
-        ),
+        test_key::SealedMsgParams::new(&attacker.nickname, sender_key, id.as_str(), seal_key),
     )
     .sign(&test_key::new_key())
     .bytes();
@@ -967,7 +959,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
         .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("after the forgery").await;
     assert!(
-        sender.wait_body("after the forgery", T).await,
+        sender.wait_body("after the forgery", MSG_TIMEOUT).await,
         "the gossip barrier was lost"
     );
 
@@ -1010,7 +1002,7 @@ async fn gap_future_timestamp_is_accepted() {
         .inject_raw(evil)
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-    let seen = victim.wait_body("from-the-future", T).await;
+    let seen = victim.wait_body("from-the-future", MSG_TIMEOUT).await;
     assert!(
         !seen,
         "OPEN GAP: a far-future timestamp is accepted (no absolute-time bound)"
@@ -1036,7 +1028,7 @@ async fn a_message_that_impersonates_a_held_nickname_is_refused() {
         .inject_raw(evil)
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-    let seen = victim.wait_body("i-am-you", T).await;
+    let seen = victim.wait_body("i-am-you", MSG_TIMEOUT).await;
     assert!(
         !seen,
         "the frame of a key that has no proof of the nickname reached the victim, so the gate admitted it"
@@ -1077,7 +1069,7 @@ async fn gap_sybil_identities_are_accepted() {
             .expect("the attacker session stays connected to the mesh for the whole test");
     }
     let all_accepted = victim
-        .wait_for(T, |events| {
+        .wait_for(MSG_TIMEOUT, |events| {
             (0..5u32).all(|index| {
                 let body = format!("flood-{index}");
                 events.iter().any(|event| is_flood_message(event, &body))
@@ -1128,7 +1120,7 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
     // Live traffic flows again on the new subscription.
     attacker.broadcast("after-recovery").await;
     assert!(
-        victim.wait_body("after-recovery", T).await,
+        victim.wait_body("after-recovery", MSG_TIMEOUT).await,
         "victim deaf to live traffic after resubscribe"
     );
 
@@ -1164,28 +1156,9 @@ async fn introduce(
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        victim.wait_body("hello-from-the-forger", T).await,
+        victim.wait_body("hello-from-the-forger", MSG_TIMEOUT).await,
         "the signed introduction never surfaced"
     );
-}
-
-/// Poll the view of `channel` on `node` until `pred` holds or `timeout` elapses.
-async fn wait_view(
-    node: &InProcNode,
-    channel: Channel,
-    timeout: Duration,
-    mut pred: impl FnMut(&Value) -> bool,
-) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if pred(&node.get(channel).await) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(POLL).await;
-    }
 }
 
 /// A well-formed slice body, but UNSIGNED, must be dropped before it can touch the view of its
@@ -1220,11 +1193,12 @@ async fn unsigned_slice_is_never_folded_on(channel: Channel) {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        wait_view(&victim, channel, T, |view| {
-            view.as_object()
-                .is_some_and(|slices| slices.values().any(|slice| slice["control"] == true))
-        })
-        .await,
+        victim
+            .wait_view(channel, MSG_TIMEOUT, |view| {
+                view.as_object()
+                    .is_some_and(|slices| slices.values().any(|slice| slice["control"] == true))
+            })
+            .await,
         "the signed control slice never derived: the frame shape is wrong, so the test proves nothing: {}",
         victim.get(channel).await
     );
@@ -1278,10 +1252,11 @@ async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        wait_view(&victim, Channel::Meta, T, |view| {
-            view.pointer(&format!("/{witness_slot}/model")) == Some(&json!("own"))
-        })
-        .await,
+        victim
+            .wait_view(Channel::Meta, MSG_TIMEOUT, |view| {
+                view.pointer(&format!("/{witness_slot}/model")) == Some(&json!("own"))
+            })
+            .await,
         "the slice of the witness never derived: the frame shape is wrong: {}",
         victim.meta_get().await
     );
@@ -1310,10 +1285,11 @@ async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        wait_view(&victim, Channel::Meta, T, |view| {
-            view.pointer(&format!("/{forger_slot}/model")) == Some(&json!("barrier"))
-        })
-        .await,
+        victim
+            .wait_view(Channel::Meta, MSG_TIMEOUT, |view| {
+                view.pointer(&format!("/{forger_slot}/model")) == Some(&json!("barrier"))
+            })
+            .await,
         "the barrier slice of the forger never derived: {}",
         victim.meta_get().await
     );
@@ -1346,7 +1322,7 @@ async fn a_meta_write_naming_another_member_changes_only_the_own_entry() {
         .meta_merge(json!({"nickname": victim.nickname, "model": "forged"}))
         .await;
 
-    let deadline = Instant::now() + T;
+    let deadline = Instant::now() + MSG_TIMEOUT;
     let views = loop {
         let seen_by_victim = victim.meta_get().await;
         let seen_by_attacker = attacker.meta_get().await;
@@ -1408,7 +1384,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
 
     attacker.broadcast("barrier-shard-hdr").await;
     assert!(
-        victim.wait_body("barrier-shard-hdr", T).await,
+        victim.wait_body("barrier-shard-hdr", MSG_TIMEOUT).await,
         "barrier lost"
     );
     let (groups, bytes, _) = victim
@@ -1458,7 +1434,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
 
     attacker.broadcast("barrier-shard-sybil").await;
     assert!(
-        victim.wait_body("barrier-shard-sybil", T).await,
+        victim.wait_body("barrier-shard-sybil", MSG_TIMEOUT).await,
         "barrier lost"
     );
     let (groups, total_bytes, max_author_bytes) = victim
@@ -1506,7 +1482,7 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
     let big = "clean ".repeat(4 * 1024); // ~24 KB, several shards
     attacker.broadcast(&big).await;
     assert!(
-        victim.wait_body(&big, T).await,
+        victim.wait_body(&big, MSG_TIMEOUT).await,
         "the genuine multipart body never reassembled"
     );
     assert!(

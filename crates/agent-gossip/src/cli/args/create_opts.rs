@@ -98,115 +98,48 @@ mod tests {
             "--nickname",
             "my-nick",
         ]);
-        match cli.command {
-            Commands::Create { options } => {
-                assert_eq!(
-                    options.name.as_ref().map(MeshName::as_str),
-                    Some("team"),
-                    "--name team is kept as the mesh name"
-                );
-                assert_eq!(
-                    options.nickname.as_ref().map(Nickname::as_str),
-                    Some("my-nick"),
-                    "--nickname my-nick is kept"
-                );
-            }
-            Commands::Join { .. }
-            | Commands::Topic { .. }
-            | Commands::Poll { .. }
-            | Commands::Ping { .. }
-            | Commands::Discover { .. }
-            | Commands::Mcp { .. }
-            | Commands::Man
-            | Commands::Peers { .. }
-            | Commands::State { .. }
-            | Commands::Meta { .. }
-            | Commands::Topology { .. }
-            | Commands::A2a { .. }
-            | Commands::Ready { .. }
-            | Commands::Plug { .. }
-            | Commands::Unplug { .. }
-            | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Invite { .. }
-            | Commands::Session { .. }
-            | Commands::BellCheck { .. } => {
-                panic!("expected Create command")
-            }
-        }
+        let Commands::Create { options } = cli.command else {
+            panic!("expected Create command")
+        };
+        assert_eq!(
+            options.name.as_ref().map(MeshName::as_str),
+            Some("team"),
+            "--name team is kept as the mesh name"
+        );
+        assert_eq!(
+            options.nickname.as_ref().map(Nickname::as_str),
+            Some("my-nick"),
+            "--nickname my-nick is kept"
+        );
     }
 
     #[test]
     fn create_opts_without_nickname() {
         let cli = Cli::parse_from(["agent-gossip", "create", "--name", "team"]);
-        match cli.command {
-            Commands::Create { options } => {
-                assert_eq!(
-                    options.name.as_ref().map(MeshName::as_str),
-                    Some("team"),
-                    "--name team is kept as the mesh name"
-                );
-                assert_eq!(
-                    options.nickname, None,
-                    "without --nickname the nickname stays unset"
-                );
-            }
-            Commands::Join { .. }
-            | Commands::Topic { .. }
-            | Commands::Poll { .. }
-            | Commands::Ping { .. }
-            | Commands::Discover { .. }
-            | Commands::Mcp { .. }
-            | Commands::Man
-            | Commands::Peers { .. }
-            | Commands::State { .. }
-            | Commands::Meta { .. }
-            | Commands::Topology { .. }
-            | Commands::A2a { .. }
-            | Commands::Ready { .. }
-            | Commands::Plug { .. }
-            | Commands::Unplug { .. }
-            | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Invite { .. }
-            | Commands::Session { .. }
-            | Commands::BellCheck { .. } => {
-                panic!("expected Create command")
-            }
-        }
+        let Commands::Create { options } = cli.command else {
+            panic!("expected Create command")
+        };
+        assert_eq!(
+            options.name.as_ref().map(MeshName::as_str),
+            Some("team"),
+            "--name team is kept as the mesh name"
+        );
+        assert_eq!(
+            options.nickname, None,
+            "without --nickname the nickname stays unset"
+        );
     }
 
     #[test]
     fn create_opts_name_optional() {
         let cli = Cli::parse_from(["agent-gossip", "create"]);
-        match cli.command {
-            Commands::Create { options } => assert_eq!(
-                options.name, None,
-                "without --name the mesh name stays unset"
-            ),
-            Commands::Join { .. }
-            | Commands::Topic { .. }
-            | Commands::Poll { .. }
-            | Commands::Ping { .. }
-            | Commands::Discover { .. }
-            | Commands::Mcp { .. }
-            | Commands::Man
-            | Commands::Peers { .. }
-            | Commands::State { .. }
-            | Commands::Meta { .. }
-            | Commands::Topology { .. }
-            | Commands::A2a { .. }
-            | Commands::Ready { .. }
-            | Commands::Plug { .. }
-            | Commands::Unplug { .. }
-            | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Invite { .. }
-            | Commands::Session { .. }
-            | Commands::BellCheck { .. } => {
-                panic!("expected Create command")
-            }
-        }
+        let Commands::Create { options } = cli.command else {
+            panic!("expected Create command")
+        };
+        assert_eq!(
+            options.name, None,
+            "without --name the mesh name stays unset"
+        );
     }
 
     #[test]
@@ -236,29 +169,10 @@ mod tests {
     #[test]
     fn advertise_flag_absent_bare_and_valued() {
         fn advertise_of(args: &[&str]) -> DirectorySelection {
-            match Cli::parse_from(args).command {
-                Commands::Create { options } => options.advertise_selection(),
-                Commands::Join { .. }
-                | Commands::Topic { .. }
-                | Commands::Poll { .. }
-                | Commands::Ping { .. }
-                | Commands::Discover { .. }
-                | Commands::Mcp { .. }
-                | Commands::Man
-                | Commands::Peers { .. }
-                | Commands::State { .. }
-                | Commands::Meta { .. }
-                | Commands::Topology { .. }
-                | Commands::A2a { .. }
-                | Commands::Ready { .. }
-                | Commands::Plug { .. }
-                | Commands::Unplug { .. }
-                | Commands::Doctor { .. }
-                | Commands::Leave { .. }
-                | Commands::Invite { .. }
-                | Commands::Session { .. }
-                | Commands::BellCheck { .. } => panic!("expected Create"),
-            }
+            let Commands::Create { options } = Cli::parse_from(args).command else {
+                panic!("expected Create")
+            };
+            options.advertise_selection()
         }
         assert_eq!(
             advertise_of(&["agent-gossip", "create", "--lookup", "mdns,dht,relay"]),
@@ -297,29 +211,10 @@ mod tests {
     #[test]
     fn password_flag_absent_bare_and_valued() {
         fn password_of(args: &[&str]) -> Option<PasswordFlag> {
-            match Cli::parse_from(args).command {
-                Commands::Create { options } => options.password,
-                Commands::Join { .. }
-                | Commands::Topic { .. }
-                | Commands::Poll { .. }
-                | Commands::Ping { .. }
-                | Commands::Discover { .. }
-                | Commands::Mcp { .. }
-                | Commands::Man
-                | Commands::Peers { .. }
-                | Commands::State { .. }
-                | Commands::Meta { .. }
-                | Commands::Topology { .. }
-                | Commands::A2a { .. }
-                | Commands::Ready { .. }
-                | Commands::Plug { .. }
-                | Commands::Unplug { .. }
-                | Commands::Doctor { .. }
-                | Commands::Leave { .. }
-                | Commands::Invite { .. }
-                | Commands::Session { .. }
-                | Commands::BellCheck { .. } => panic!("expected Create"),
-            }
+            let Commands::Create { options } = Cli::parse_from(args).command else {
+                panic!("expected Create")
+            };
+            options.password
         }
         assert_eq!(
             password_of(&["agent-gossip", "create"]),
@@ -357,46 +252,23 @@ mod tests {
             "--nickname",
             "custom-name",
         ]);
-        match cli.command {
-            Commands::Create { options } => {
-                assert_eq!(
-                    options.name.as_ref().map(MeshName::as_str),
-                    Some("team"),
-                    "--name team is kept as the mesh name"
-                );
-                assert_eq!(
-                    options.nickname.as_ref().map(Nickname::as_str),
-                    Some("custom-name"),
-                    "--nickname custom-name is kept"
-                );
-                assert_eq!(
-                    options.lookups.lookup.len(),
-                    3,
-                    "each --lookup flag adds one lookup"
-                );
-            }
-            Commands::Join { .. }
-            | Commands::Topic { .. }
-            | Commands::Poll { .. }
-            | Commands::Ping { .. }
-            | Commands::Discover { .. }
-            | Commands::Mcp { .. }
-            | Commands::Man
-            | Commands::Peers { .. }
-            | Commands::State { .. }
-            | Commands::Meta { .. }
-            | Commands::Topology { .. }
-            | Commands::A2a { .. }
-            | Commands::Ready { .. }
-            | Commands::Plug { .. }
-            | Commands::Unplug { .. }
-            | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Invite { .. }
-            | Commands::Session { .. }
-            | Commands::BellCheck { .. } => {
-                panic!("expected Create command")
-            }
-        }
+        let Commands::Create { options } = cli.command else {
+            panic!("expected Create command")
+        };
+        assert_eq!(
+            options.name.as_ref().map(MeshName::as_str),
+            Some("team"),
+            "--name team is kept as the mesh name"
+        );
+        assert_eq!(
+            options.nickname.as_ref().map(Nickname::as_str),
+            Some("custom-name"),
+            "--nickname custom-name is kept"
+        );
+        assert_eq!(
+            options.lookups.lookup.len(),
+            3,
+            "each --lookup flag adds one lookup"
+        );
     }
 }

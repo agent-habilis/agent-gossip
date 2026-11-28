@@ -71,7 +71,7 @@ through byte-exact.
 pub fn expand(
     path: &Path,
     args: &[(&str, &str)],
-    loader: &mut dyn FnMut(&Path) -> Result<String, String>,
+    loader: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<String, Error>
 ```
 
@@ -89,7 +89,7 @@ files on disk.
 cargo test -p slot-template
 ```
 
-Everything lives in `src/lib.rs` — the tests included.
+Everything lives in `src/` — the tests included, in `src/tests.rs`.
 
 ## What it is not
 

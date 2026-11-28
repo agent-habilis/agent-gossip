@@ -10,7 +10,6 @@
         "moonspace-dom": "workspace:*",
         "moonspace-theme": "workspace:*",
         "visage-dom": "workspace:*",
-        "visage-router": "workspace:*",
         "visage-style": "workspace:*",
       },
       "devDependencies": {
@@ -53,13 +52,6 @@
     "visage-dom": {
       "name": "visage-dom",
       "version": "0.0.0",
-    },
-    "visage-router": {
-      "name": "visage-router",
-      "version": "0.0.0",
-      "dependencies": {
-        "visage-dom": "workspace:*",
-      },
     },
     "visage-style": {
       "name": "visage-style",
@@ -1059,8 +1051,6 @@
     "vfile-message": ["vfile-message@4.0.3", "", { "dependencies": { "@types/unist": "^3.0.0", "unist-util-stringify-position": "^4.0.0" } }, "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw=="],
 
     "visage-dom": ["visage-dom@workspace:visage-dom"],
-
-    "visage-router": ["visage-router@workspace:visage-router"],
 
     "visage-style": ["visage-style@workspace:visage-style"],
 

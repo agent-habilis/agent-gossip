@@ -1312,15 +1312,7 @@ async fn send_ends(state: &EventLoopState, context: &HandlerCtx<'_>, ends: Vec<E
             status_update_params::StatusUpdateParams::new(end.task_id, end.state)
                 .with_metadata(metadata),
         );
-        broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key: end.peer_key,
-                update: &update,
-            },
-        )
-        .await;
+        broadcast_status(state, context, end.peer_key, &update).await;
     }
 }
 
@@ -1561,28 +1553,13 @@ pub(crate) async fn tick_task_keepalive(
             status_update_params::StatusUpdateParams::new(&task_id, task_state)
                 .with_metadata(status_update_params::beat_metadata_with_extras(extras)),
         );
-        let sent = broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key: &peer_key,
-                update: &update,
-            },
-        )
-        .await;
+        let sent = broadcast_status(state, context, &peer_key, &update).await;
         if sent && let Some(rec) = app.tasks.get_mut(&task_id) {
             let sent_at = Instant::now();
             rec.last_activity = sent_at;
             rec.last_sent = sent_at;
         }
     }
-}
-
-/// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
-/// handles.
-struct BroadcastStatusParams<'caller> {
-    peer_key: &'caller AuthorKey,
-    update: &'caller super::TaskStatusUpdate,
 }
 
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
@@ -1594,9 +1571,9 @@ struct BroadcastStatusParams<'caller> {
 async fn broadcast_status(
     state: &EventLoopState,
     context: &HandlerCtx<'_>,
-    params: BroadcastStatusParams<'_>,
+    peer_key: &AuthorKey,
+    update: &super::TaskStatusUpdate,
 ) -> bool {
-    let BroadcastStatusParams { peer_key, update } = params;
     let Ok(body) = status_update_params::payload_body(update) else {
         return false;
     };

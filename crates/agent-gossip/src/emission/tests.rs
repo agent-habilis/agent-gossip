@@ -5,7 +5,7 @@
 use habilis_network::protocol::messages::{Authored, Verified};
 use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
-use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
+use super::simple_event::{format_msg_json, format_presence_json};
 use crate::a2a::{node, status_update_params, wire};
 use crate::emission::capture_events::capture_events;
 use crate::emission::simple_event;
@@ -21,19 +21,21 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
         data: Some(serde_json::json!({"k": 1})),
         ..crate::a2a::Part::default()
     });
-    let json = simple_event::format_task_message_json(&super::TaskMessageLeg {
-        id: "frame-id",
-        mesh: "mesh",
-        author: "alice-bot",
+    let json = simple_event::event_json(&super::OutputEvent::TaskMessage {
+        id: "frame-id".to_owned(),
+        ts: habilis_network::protocol::UnixSecs::ZERO,
+        mesh: "mesh".to_owned(),
+        author: "alice-bot".to_owned(),
         author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
-        peer: "calm-otter",
-        task_id: "task-id",
+        peer: "calm-otter".to_owned(),
+        task_id: "task-id".to_owned(),
         state: None,
-        text: "the brief",
+        text: "the brief".to_owned(),
         label: None,
-        message: Some(&message),
+        message: Some(Box::new(message)),
         is_self: false,
-    });
+    })
+    .expect("a task leg has a JSON line");
     let parsed = parse(&json);
     assert_eq!(
         parsed["payload"]["parts"],
@@ -51,20 +53,21 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
 #[test]
 fn a_task_message_line_names_the_key_of_its_sender_when_two_senders_share_a_name() {
     let line_from = |key: u8| {
-        let leg = super::TaskMessageLeg {
-            id: "frame-id",
-            mesh: "mesh",
-            author: "twin",
+        let leg = super::OutputEvent::TaskMessage {
+            id: "frame-id".to_owned(),
+            ts: habilis_network::protocol::UnixSecs::ZERO,
+            mesh: "mesh".to_owned(),
+            author: "twin".to_owned(),
             author_key: habilis_network::protocol::AuthorKey::from([key; 32]),
-            peer: "calm-otter",
-            task_id: "task-id",
+            peer: "calm-otter".to_owned(),
+            task_id: "task-id".to_owned(),
             state: None,
-            text: "the brief",
+            text: "the brief".to_owned(),
             label: None,
             message: None,
             is_self: false,
         };
-        parse(&simple_event::format_task_message_json(&leg))
+        parse(&simple_event::event_json(&leg).expect("a task leg has a JSON line"))
     };
 
     let first = line_from(7);
@@ -546,8 +549,7 @@ fn task_progress_event_json_shape() {
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);
-    // A beat renders as a distinct `task_progress` event with its
-    // `done`/`total`, never as a content `task` event.
+    // A beat renders as a distinct `task_progress` event, never as a content `task` event.
     assert_eq!(
         parsed["event"], "task_progress",
         "the event field is task_progress"
@@ -569,41 +571,29 @@ fn task_progress_event_json_shape() {
 fn task_timeout_event_json_shape() {
     use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
-    let json = simple_event::event_json(&OutputEvent::TaskTimeout {
-        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        reason: TaskGoneReason::Timeout,
-    })
-    .expect("task_timeout event produces a JSON line");
-    let parsed = parse(&json);
-    assert_eq!(
-        parsed["event"], "task_timeout",
-        "the event field is task_timeout"
-    );
-    assert_eq!(
-        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
-        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
-    );
-    assert_eq!(parsed["reason"], "timeout", "the reason field is timeout");
-}
-
-#[test]
-fn task_peer_left_event_json_shape() {
-    use super::{OutputEvent, TaskGoneReason};
-    use crate::a2a::TaskId;
-    let json = simple_event::event_json(&OutputEvent::TaskTimeout {
-        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        reason: TaskGoneReason::PeerLeft,
-    })
-    .expect("task_timeout event produces a JSON line");
-    let parsed = parse(&json);
-    assert_eq!(
-        parsed["event"], "task_timeout",
-        "the event field is task_timeout"
-    );
-    assert_eq!(
-        parsed["reason"], "peer-left",
-        "the reason field is peer-left"
-    );
+    for (reason, reason_text) in [
+        (TaskGoneReason::Timeout, "timeout"),
+        (TaskGoneReason::PeerLeft, "peer-left"),
+    ] {
+        let json = simple_event::event_json(&OutputEvent::TaskTimeout {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            reason,
+        })
+        .expect("task_timeout event produces a JSON line");
+        let parsed = parse(&json);
+        assert_eq!(
+            parsed["event"], "task_timeout",
+            "the event field is task_timeout"
+        );
+        assert_eq!(
+            parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+            "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(
+            parsed["reason"], reason_text,
+            "the reason field is {reason_text}"
+        );
+    }
 }
 
 #[test]
@@ -810,13 +800,12 @@ fn checkin_due_event_json_shape() {
 
 #[test]
 fn peer_timeout_json_shape() {
-    let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
-        nickname: "ball-blue",
-        pubkey: "ab".repeat(32).as_str(),
+    let json = simple_event::event_json(&super::OutputEvent::PeerTimeout {
+        nickname: nick("ball-blue"),
+        key: habilis_network::protocol::AuthorKey::from([0xab; 32]),
         last_seen_secs_ago: 94,
-        display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
-    .expect("a test value serializes to JSON");
+    .expect("a peer_timeout event has a JSON line");
     let parsed = parse(&json);
     assert_eq!(
         parsed["event"], "peer_timeout",
@@ -864,12 +853,11 @@ fn the_timeout_and_return_lines_name_the_key_of_the_peer() {
 
 #[test]
 fn peer_return_json_shape() {
-    let json = serde_json::to_string(&SimpleEvent::PeerReturn {
-        nickname: "ball-blue",
-        pubkey: "ab".repeat(32).as_str(),
-        display: "💬️ `<ball-blue>` came back".to_owned(),
+    let json = simple_event::event_json(&super::OutputEvent::PeerReturn {
+        nickname: nick("ball-blue"),
+        key: habilis_network::protocol::AuthorKey::from([0xab; 32]),
     })
-    .expect("a test value serializes to JSON");
+    .expect("a peer_return event has a JSON line");
     let parsed = parse(&json);
     assert_eq!(
         parsed["event"], "peer_return",
@@ -902,16 +890,16 @@ fn events_lost_json_carries_a_display_line() {
 
 #[test]
 fn receipt_json_shape() {
-    let json = serde_json::to_string(&SimpleEvent::Receipt {
-        from: "ball-blue",
-        ref_id: "7a1c",
-        state: "delivered",
+    let json = simple_event::event_json(&super::OutputEvent::Receipt {
+        from: nick("ball-blue"),
+        ref_id: "7a1c".to_owned(),
+        state: "delivered".to_owned(),
         ts: 1_792_000_000,
     })
-    .expect("a test value serializes to JSON");
+    .expect("a receipt event has a JSON line");
     assert_eq!(
         json,
-        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#,
+        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000,"is_visible":false}"#,
         "a delivered receipt is written as this exact one-line JSON"
     );
 }
@@ -1139,16 +1127,20 @@ mod snapshots {
     }
 
     /// The `{"event":"state",…}` line a shared-state change emits on the
-    /// `--output json` stream: header + the applied `merge` document + the
-    /// newly-derived `document` + `display` + `self`. Field order is wire-pinned.
-    fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
-        let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
+    /// `--output json` stream: header + the newly-derived `document` + `display` +
+    /// `self`. Field order is wire-pinned.
+    fn snap_state(slice: &str, document: &serde_json::Value, is_self: bool) -> String {
         super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
-            &view(Message::fixture(MessageKind::State, &body)),
+            &view(Message::fixture(MessageKind::State, &slice_body(slice))),
             Some(document),
             is_self,
         )
+    }
+
+    /// The body of a slice frame, as the engine writes it.
+    fn slice_body(value: &str) -> String {
+        format!(r#"{{"version":1,"value":{value}}}"#)
     }
 
     /// Every peer's agent card, the shape a `meta` document holds.
@@ -1179,14 +1171,13 @@ mod snapshots {
 
     /// A `meta` event drops the derived document: it is every peer's agent
     /// card, ~4k tokens with four peers, and the skills read it on demand with
-    /// `meta get`. The merge and the display stay. Pre-fix every meta echo
-    /// repeated all cards, and polls after a join reached 30 KB.
+    /// `meta get`. The display stays. Pre-fix every meta echo repeated all
+    /// cards, and polls after a join reached 30 KB.
     #[test]
     fn a_meta_event_carries_no_document() {
-        let merge = serde_json::json!({"peers": {"aa": {"status": "busy"}}});
         let message = view(Message::fixture(
             MessageKind::State,
-            &format!(r#"{{"k":"merge","merge":{merge}}}"#),
+            &slice_body(r#"{"status":"busy"}"#),
         ));
         let document = four_card_meta_document();
         let line = super::super::simple_event::format_state_json(
@@ -1201,23 +1192,21 @@ mod snapshots {
             parsed.get("document").is_none(),
             "the large meta document stays in the state file, not in the event line: {line}"
         );
-        assert_eq!(parsed["merge"], merge, "the merge field is merge");
         assert!(
             parsed["display"]
                 .as_str()
                 .expect("the JSON field is a string in this test")
-                .contains("/peers/aa"),
-            "the display names the peer path"
+                .contains("changed shared state"),
+            "the display line stays on a meta event: {line}"
         );
     }
 
     /// Pin: a `state` event keeps its document; the MCP tools promise it.
     #[test]
     fn a_state_event_keeps_its_document() {
-        let merge = serde_json::json!({"turn": "b"});
         let message = view(Message::fixture(
             MessageKind::State,
-            &format!(r#"{{"k":"merge","merge":{merge}}}"#),
+            &slice_body(r#"{"turn":"b"}"#),
         ));
         let document = serde_json::json!({"turn": "b"});
         let line = super::super::simple_event::format_state_json(
@@ -1244,26 +1233,6 @@ mod snapshots {
     }
 
     #[test]
-    fn state_display_sanitizes_peer_controlled_paths() {
-        // A peer-crafted merge key with a backtick (would break the markdown code
-        // span around the nick) and a newline (would forge a second line in the
-        // human eprintln feed) must not reach the `display` verbatim.
-        let line = snap_state("{\"x`\\n<evil>\": 1}", &serde_json::json!({}), false);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&line).expect("the JSON text comes from the test itself");
-        let display = parsed["display"]
-            .as_str()
-            .expect("the JSON field is a string in this test");
-        assert!(!display.contains('\n'), "no newline injection: {display:?}");
-        assert_eq!(
-            display.matches('`').count(),
-            2,
-            "only the two nick-wrapping backticks remain: {display:?}"
-        );
-        assert!(display.contains("/x<evil>"), "sanitized path: {display:?}");
-    }
-
-    #[test]
     fn snap_state_self() {
         insta::assert_snapshot!(snap_state(
             r#"{"n": 1}"#,
@@ -1274,13 +1243,10 @@ mod snapshots {
 }
 
 mod prop {
-    use habilis_network::protocol::Message;
     use proptest::arbitrary::any;
     use proptest::collection::vec as arb_vec;
     use proptest::strategy::Strategy;
     use proptest::{prop_assert, prop_assert_eq, proptest};
-
-    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, test_key, view};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7eu8, 0..200)
@@ -1303,7 +1269,7 @@ mod prop {
         ) {
             let expected = body_text.clone();
             let message = super::chat_frame(author.as_str(), &body_text);
-            let json = format_msg_json(&message, is_self, None);
+            let json = super::format_msg_json(&message, is_self, None);
             let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(parsed["body"].as_str().expect("the JSON field is a string in this test"), expected.as_str());
             prop_assert_eq!(
@@ -1312,18 +1278,31 @@ mod prop {
             );
             prop_assert!(!json.contains('\n'));
         }
-
-        #[test]
-        fn prop_presence_json_is_valid(is_join in any::<bool>()) {
-            let test_nick = habilis_network::protocol::Nickname::from("test-nick");
-            let (message, subtype) = if is_join {
-                (view(Message::new_joined(&sid(), &test_nick)), PresenceSubtype::Joined)
-            } else {
-                (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
-            };
-            let json = format_presence_json(&message, subtype, &test_key("x"));
-            let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
-            prop_assert_eq!(&parsed["type"], "presence");
-        }
     }
+}
+
+/// A task message line keeps the time of its leg. A reader that polls later gets the same `ts`
+/// as the stream printed, so the two lines of one event agree.
+#[test]
+fn a_task_message_line_keeps_the_time_of_its_leg() {
+    let leg = super::OutputEvent::TaskMessage {
+        id: "frame-id".to_owned(),
+        ts: habilis_network::protocol::UnixSecs::from_secs(1_700_000_000),
+        mesh: "mesh".to_owned(),
+        author: "alice-bot".to_owned(),
+        author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
+        peer: "calm-otter".to_owned(),
+        task_id: "task-id".to_owned(),
+        state: None,
+        text: "the brief".to_owned(),
+        label: None,
+        message: None,
+        is_self: false,
+    };
+    let line = simple_event::event_json(&leg).expect("a task leg has a JSON line");
+    assert_eq!(
+        parse(&line)["ts"],
+        1_700_000_000_i64,
+        "the line must carry the time of the leg, not the time of the render"
+    );
 }

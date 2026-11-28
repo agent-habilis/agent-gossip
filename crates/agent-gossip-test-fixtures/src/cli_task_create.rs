@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::{
-    MSG_TIMEOUT, await_peer_card_cli, cli_task_create_attempt, is_rpc_timeout, test_cmd,
+    MSG_TIMEOUT, RPC_ATTEMPT, await_peer_card_cli, is_rpc_timeout, task_create_command, test_cmd,
     unconfirmed_task_id,
 };
 
@@ -22,15 +22,22 @@ use crate::{
 /// including a semantic error like `unknown peer`, means the round trip
 /// completed and is handed to the assertion below untouched.
 ///
+/// Each attempt is budgeted at `RPC_ATTEMPT` rather than the much larger default of the CLI, so the
+/// retry sends a dropped frame again promptly and does not block on a frame the overlay discarded.
+///
 /// # Panics
 ///
 /// Panics if the call fails, or if its response carries no task id.
 #[must_use]
 pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
     await_peer_card_cli(mesh, nickname, to);
+    let attempt_secs = RPC_ATTEMPT.as_secs().to_string();
     let deadline = Instant::now() + MSG_TIMEOUT;
     let out = loop {
-        let attempt = cli_task_create_attempt(mesh, nickname, to, text);
+        let attempt = task_create_command(mesh, nickname, to, text)
+            .args(["--timeout-secs", &attempt_secs])
+            .output()
+            .expect("a2a call command failed to spawn");
         let body: serde_json::Value =
             serde_json::from_slice(&attempt.stdout).unwrap_or(serde_json::Value::Null);
         if !is_rpc_timeout(&body) || Instant::now() >= deadline {

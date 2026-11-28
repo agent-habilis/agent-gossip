@@ -1,22 +1,13 @@
 //! Integration tests for the join target that `AGENT_GOSSIP_DEFAULT_ROOM` supplies.
 
 use std::io::{BufRead, BufReader};
-use std::process::{Child, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::sync::mpsc;
 
-use agent_gossip_test_fixtures::{CONNECT_TIMEOUT, Node, test_cmd};
+use agent_gossip_test_fixtures::{CONNECT_TIMEOUT, KillOnDrop, Node, test_cmd};
 use serde_json::Value;
 
 const DEFAULT_ROOM_ENV: &str = "AGENT_GOSSIP_DEFAULT_ROOM";
-
-struct Killed(Child);
-
-impl Drop for Killed {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 fn join_without_target(env: Option<&str>) -> Output {
     let mut command = test_cmd();
@@ -32,17 +23,17 @@ fn join_without_target(env: Option<&str>) -> Output {
     command.output().expect("join spawns")
 }
 
-fn spawn_join(args: &[&str], env: &str) -> Killed {
+fn spawn_join(args: &[&str], env: &str) -> KillOnDrop {
     let mut command = test_cmd();
     command.arg("join").args(args).env(DEFAULT_ROOM_ENV, env);
     command.stdout(Stdio::piped()).stderr(Stdio::null());
     let child = command.spawn().expect("join spawns");
-    Killed(child)
+    KillOnDrop::new(child)
 }
 
 /// The `gossip` of the daemon's `ready` event, or `None` when none arrives in time.
-fn ready_gossip(joiner: &mut Killed) -> Option<String> {
-    let stdout = joiner.0.stdout.take().expect("stdout is piped");
+fn ready_gossip(joiner: &mut KillOnDrop) -> Option<String> {
+    let stdout = joiner.stdout.take().expect("stdout is piped");
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {

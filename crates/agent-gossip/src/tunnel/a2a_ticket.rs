@@ -11,9 +11,8 @@
 use anyhow::{Context, Result, bail};
 use habilis_network::iroh::EndpointAddr;
 use habilis_network::net::{endpoint_addr_from_json, endpoint_addr_to_json};
-use habilis_network::protocol::{LookupOpts, TicketSecret};
+use habilis_network::protocol::{LookupOpts, TicketSecret, base58check};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
-use sha2::{Digest, Sha256};
 
 use super::SECRET_LEN;
 
@@ -62,7 +61,7 @@ impl A2aTicket {
         framed.push(VERSION);
         framed.push(KIND);
         framed.extend_from_slice(&payload);
-        base58check_encode(&framed)
+        base58check::encode(&framed)
     }
 
     /// Decode a bare base58 a2a ticket.
@@ -75,7 +74,7 @@ impl A2aTicket {
         if text.len() > MAX_TICKET_TEXT {
             bail!("a2a ticket text is larger than one frame");
         }
-        let framed = base58check_decode(text)?;
+        let framed = base58check::decode(text, "a2a ticket")?;
         if framed.len() > MAX_TICKET_BYTES {
             bail!("a2a ticket is larger than one frame");
         }
@@ -108,63 +107,29 @@ impl A2aTicket {
     }
 }
 
-fn checksum(bytes: &[u8]) -> [u8; 4] {
-    let first = Sha256::digest(bytes);
-    let second = Sha256::digest(first);
-    let mut out = [0u8; 4];
-    out.copy_from_slice(&second[..4]);
-    out
-}
-
-fn base58check_encode(payload: &[u8]) -> String {
-    let mut with_checksum = payload.to_vec();
-    with_checksum.extend_from_slice(&checksum(payload));
-    bs58::encode(with_checksum).into_string()
-}
-
-fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
-    let decoded = bs58::decode(encoded)
-        .into_vec()
-        .context("invalid Base58 in a2a ticket")?;
-    if decoded.len() < 4 {
-        bail!("a2a ticket too short");
-    }
-    let (payload, received) = decoded.split_at(decoded.len() - 4);
-    if received != checksum(payload) {
-        bail!("invalid a2a ticket checksum");
-    }
-    Ok(payload.to_vec())
-}
-
 #[cfg(test)]
 mod tests {
-    use habilis_network::iroh::{EndpointAddr, SecretKey};
     use habilis_network::net::endpoint_addr_to_json;
     use habilis_network::ops::blob;
     use habilis_network::ops::blob::{BlobDigest, BlobTicket};
     use habilis_network::protocol::{LookupOpts, TicketSecret};
 
     use super::{
-        A2aTicket, KIND, MAX_TICKET_BYTES, MAX_TICKET_TEXT, SECRET_LEN, VERSION, base58check_encode,
+        A2aTicket, KIND, MAX_TICKET_BYTES, MAX_TICKET_TEXT, SECRET_LEN, VERSION, base58check,
     };
-
-    fn sample_addr(byte: u8) -> EndpointAddr {
-        let id = SecretKey::from_bytes(&[byte; 32]).public();
-        EndpointAddr::new(id)
-            .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"))
-    }
+    use crate::tunnel::tests as fixtures;
 
     /// A ticket whose address JSON carries `pad` bytes of an extra field, encoded the way
     /// [`A2aTicket::encode`] does.
     fn padded_ticket(pad: usize) -> String {
-        let mut value = endpoint_addr_to_json(&sample_addr(3));
+        let mut value = endpoint_addr_to_json(&fixtures::sample_addr(3));
         value["pad"] = serde_json::Value::String("x".repeat(pad));
         let mut framed = vec![VERSION, KIND];
         framed.extend_from_slice(&[9u8; SECRET_LEN]);
         framed.push(0);
         LookupOpts::public_preset().encode_into(&mut framed);
         framed.extend_from_slice(&serde_json::to_vec(&value).expect("json serializes"));
-        base58check_encode(&framed)
+        base58check::encode(&framed)
     }
 
     /// The densest frame of the cap, in base58, still fits the text cap.
@@ -207,7 +172,7 @@ mod tests {
 
     #[test]
     fn ticket_round_trips() {
-        let address = sample_addr(3);
+        let address = fixtures::sample_addr(3);
         let ticket = A2aTicket {
             address: address.clone(),
             secret: TicketSecret::from([9u8; SECRET_LEN]),
@@ -246,7 +211,7 @@ mod tests {
     #[test]
     fn password_flag_round_trips() {
         let ticket = A2aTicket {
-            address: sample_addr(11),
+            address: fixtures::sample_addr(11),
             secret: TicketSecret::from([9u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: true,
@@ -282,7 +247,7 @@ mod tests {
         // The blob ticket shares the bare-base58 shape but carries a different
         // kind byte, so it must not decode as an a2a ticket — and vice versa.
         let blob = BlobTicket::new(
-            sample_addr(3),
+            fixtures::sample_addr(3),
             TicketSecret::from([9u8; blob::SECRET_LEN]),
             BlobDigest::from([7u8; blob::HASH_LEN]),
             1_234_567,
@@ -291,7 +256,7 @@ mod tests {
         )
         .password(false);
         let a2a = A2aTicket {
-            address: sample_addr(4),
+            address: fixtures::sample_addr(4),
             secret: TicketSecret::from([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -309,7 +274,7 @@ mod tests {
     #[test]
     fn rejects_bad_checksum() {
         let ticket = A2aTicket {
-            address: sample_addr(5),
+            address: fixtures::sample_addr(5),
             secret: TicketSecret::from([1u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: false,

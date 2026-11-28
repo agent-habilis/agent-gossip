@@ -111,7 +111,7 @@ function wrap(peer: GossipPeer): Joined {
 export async function joinMesh(mesh: string, options: JoinOptions = {}): Promise<Joined> {
   if (!mesh) throw new Error('no gossip id in the url')
   const Peer = await loadWasm()
-  return wrap(await Peer.join(mesh, options.nickname, undefined))
+  return wrap(await Peer.join(mesh, options.nickname))
 }
 
 /**
@@ -120,5 +120,5 @@ export async function joinMesh(mesh: string, options: JoinOptions = {}): Promise
  */
 export async function createMesh(options: JoinOptions = {}): Promise<Joined> {
   const Peer = await loadWasm()
-  return wrap(await Peer.create(options.nickname, undefined))
+  return wrap(await Peer.create(options.nickname))
 }

@@ -90,7 +90,7 @@ mod parsing {
 
     #[divan::bench]
     fn mesh_id_invalid(bencher: Bencher<'_, '_>) {
-        bencher.bench(|| api::mesh_id_validate(black_box("not-an-ahs-id")));
+        bencher.bench(|| api::mesh_id_validate(black_box("not-a-mesh-id")));
     }
 
     #[divan::bench]

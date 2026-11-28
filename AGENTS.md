@@ -4,8 +4,8 @@ agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
 A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 18.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
-JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
-`src/cli/mod.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
+JSON-RPC binding (`--a2a-serve`; `src/a2a/a2a_binding.rs` + `src/a2a/rpc_error.rs`, wired in
+`src/cli/run_session.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
 `connect` QUIC tunnel. This file is guidance for working **on**
 the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
 (source: `docs/manual.txt`).
@@ -148,7 +148,7 @@ construction, which meant a window where the value was knowingly wrong.
 
 `docs/`, `skills/`, and `assets/` stay at the repo root, so the app reaches up
 for them: `build.rs` renders `../../skills`, and the embedded manual is an
-`include_str!("../../../../docs/manual.txt")` from `src/{cli,mcp}/mod.rs`.
+`include_str!("../../../../docs/manual.txt")` from `src/cli/dispatch.rs` and `src/mcp/agent_gossip_server.rs`.
 
 ### The engine knows nothing about A2A
 
@@ -167,7 +167,7 @@ adding to the engine:
 
 - Name the **mechanism**, not the consumer: an engine field carrying a served
   port is `http_port`, never `a2a_port`. The app renames at its own boundary
-  (`emission/mod.rs`, which owns the `a2a_port` JSON key) rather than pushing the
+  (`emission/output.rs`, which owns the `a2a_port` JSON key) rather than pushing the
   product's word down. `NodeEvent::Ready` carries only `mesh`/`name`/`nickname`
   today — the port reaches the app through `Startup`, not the event.
 - Push app vocabulary into config. The `meta` channel's per-peer write gate is a
@@ -220,7 +220,7 @@ Three layers:
   real event loop via the library `api` (`agent_gossip_test_fixtures::InProcNode`).
   Real iroh mesh, no subprocess — sub-second.
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
-  `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
+  JSON event stream / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT
   heal recovery, backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
 - **Adversarial (`--features adversarial`, `crates/agent-gossip/tests/adversarial.rs`):** an
@@ -229,22 +229,24 @@ Three layers:
   the moment a gap is closed. `cargo task test`/`ci` enable the feature.
 
 **Almost no environment-variable config.** Every knob is a `const` in
-`util::consts` (edit + commit to experiment). The few the suite must
+`a2a::tuning` or in the engine `habilis_network::util::consts` (edit + commit to
+experiment). The few the suite must
 vary per-run are **hidden CLI flags** (`#[arg(hide = true)]`, e.g.
 `--alive-timeout-secs`, `--heal-interval-secs`, `--log-dir`). Only `RUST_LOG`,
 `NO_COLOR` and `AGENT_GOSSIP_DEFAULT_ROOM` (the target of `join` when it gets
-none; `cli/args/join.rs`) are read from the environment.
+none; `cli/args/join_opts.rs`) are read from the environment.
 
 ### Terminal output
 
 `plug`, `unplug`, `man`, and `doctor` print a report for a human; every other
 command is JSON-only, and a live skill parses each. Two invariants:
 
-- **JSON is never colored.** Color lives only in `util::output` and `doctor`'s
+- **JSON is never colored.** Color lives only in `status` (`src/status.rs`) and `doctor`'s
   `render_human`, both written through `anstream` — it resolves color support
   per stream at write time, so a pipe gets plain bytes and an agent sees no
   escapes. Hence no `--color` flag, no `is_terminal()` call, no env read of our
-  own. `output::json::emit` stays plain `std::io::stdout`.
+  own. The JSON line writer in `emission/simple_event.rs` stays plain
+  `std::io::stdout`.
 - **stdout is the product, stderr is only errors.** The roster *is* `plug`'s
   output, so `status`/`status_warn` print to stdout; only `warn`/`error` go to
   stderr.
@@ -255,7 +257,7 @@ Developer logs use `tracing`. Daemons (`create`/`join`) write to
 `<log_dir>/<mesh_prefix>-<nick>.log` (default: the `agent-gossip/logs`
 subdir of the OS temp dir; `--log-dir` overrides). **Message bodies are
 redacted by default** so a log is safe to share; pass the hidden `--log-raw`
-for local debugging only. The `--output json` stdout stream is the functional
+for local debugging only. The JSON event stream on stdout is the functional
 agent API — always raw, a separate path from the file sink.
 
 Every log line carries an explicit `target:`, one per subsystem:
@@ -266,7 +268,7 @@ which the engine pins but no line emits at the pinned rev
 
 `agent-gossip` emits under its **own** targets — `agent_gossip::{a2a,directory}`
 — never the engine's. Those are pinned separately, in `APP_LOG_PINS`
-(`agent-gossip/src/lib.rs`), which `agent_gossip::log_filter()` appends to the
+(`agent-gossip/src/app_log_pins.rs`), which `agent_gossip::log_filter()` appends to the
 engine's list, and `tests/log_pins.rs` fails if a target is emitted without a
 pin.
 
@@ -380,28 +382,28 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   move it, it is stored per task in a map, and it goes on the wire as
   `TASK_STATE_*`.
 - A chain of distinct types already gives a compile-time order, so do not wrap
-  it again. `run_session` (`cli/mod.rs`) is the reference: `CreateParams` or
+  it again. `run_session` (`cli/run_session.rs`) is the reference: `CreateParams` or
   `JoinParams` resolve to `Resolved`, which `setup_mesh` turns into an
   `EventLoopConfig`.
 - For a CLI request, prefer a typed `enum` over a `String` plus `Option` flags,
   so that an illegal combination is an error and not a silent default. Each
-  variant holds only the fields it needs (`A2aCallRequest` in `cli/mod.rs`).
+  variant holds only the fields it needs (`A2aCallRequest` in `cli/a2a_call_request.rs`).
 - Parse, do not validate. Build a type only through a checked parse or
   constructor, so that every value of the type is valid (`Nickname`, `TaskId`
-  from `uuid_id!` in `a2a/model/mod.rs`, `MessageBody::new`).
+  from `UuidId` in `a2a/model/uuid_id.rs`, `MessageBody::new`).
 - Do not write a `_` arm on an `enum` match. `wildcard_enum_match_arm` in
   `[workspace.lints.clippy]` already enforces this, and CI runs clippy with
   `-D warnings`. Do not `#[allow]` it without a `reason`.
 - A state owns its data: put the data of each state inside its `enum` variant,
   take the state by value, and return the next one. Do not use `unreachable!`
   on a state mismatch, and do not keep side flags next to the state `enum`
-  (`State` in `tunnel/card_rewrite.rs`).
+  (`State` in `tunnel/card_rewriter.rs`).
 - When a struct holds values that must agree, keep its fields private and give
   it one constructor that derives them. A `#[cfg(test)]` constructor is the only
-  other way in (`Bridge::new` in `tunnel/connect.rs`).
+  other way in (`Bridge::new` in `tunnel/bridge.rs`).
 - When a step must pass before a later read or action, make the step return a
   value that only it can build: a private field, in its own module. Make the
-  later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
+  later read a method on that value (`ReadyStateFile` in `cli/ready_state_file.rs`, which
   `wait_for_ready` returns).
 
 ## Bounded memory
@@ -414,7 +416,7 @@ on disk are out of scope.
   set, queue, log, cache, document, table of dead peers and list of pending
   items. Growth with time, peers, messages or tasks is never free.
 - State the bound where you declare the collection: use a bounded type
-  (`BoundedFifoSet`, `BoundedQueue`) or write one comment with the cap and the
+  (`BoundedFifoSet`) or write one comment with the cap and the
   reason for its size.
 - Write down what happens when the bound is full: drop the oldest item, or
   refuse the new one. Do not leave the case open.
@@ -461,149 +463,10 @@ If the correct fix is large, split it into small steps. Each step compiles and p
 
 Until version 1.0, this project does not keep backward compatibility.
 Before 1.0, break compatibility when it gives a better design, better performance, or better reliability.
-Do not keep a shim, an alias, or a fallback only for old versions unless it is required to keep existing installed workflows operational.
+Do not keep a shim, an alias, or a fallback for an old version.
 
 ## Agent Restrictions
 
 - **NEVER** run `git commit` unless the user explicitly asks for it in the
   current request. Otherwise, the human user makes the commits.
 - **NEVER** run `git push`. All pushes are done by the human user.
-
-<!-- rtk-instructions v2 -->
-# RTK (Rust Token Killer) - Token-Optimized Commands
-
-## Golden Rule
-
-**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
-
-**Important**: Even in command chains with `&&`, use `rtk`:
-```bash
-# ❌ Wrong
-git add . && git commit -m "msg" && git push
-
-# ✅ Correct
-rtk git add . && rtk git commit -m "msg" && rtk git push
-```
-
-## RTK Commands by Workflow
-
-### Build & Compile (80-90% savings)
-```bash
-rtk cargo build         # Cargo build output
-rtk cargo check         # Cargo check output
-rtk cargo clippy        # Clippy warnings grouped by file (80%)
-rtk tsc                 # TypeScript errors grouped by file/code (83%)
-rtk lint                # ESLint/Biome violations grouped (84%)
-rtk prettier --check    # Files needing format only (70%)
-rtk next build          # Next.js build with route metrics (87%)
-```
-
-### Test (60-99% savings)
-```bash
-rtk cargo test          # Cargo test failures only (90%)
-rtk go test             # Go test failures only (90%)
-rtk jest                # Jest failures only (99.5%)
-rtk vitest              # Vitest failures only (99.5%)
-rtk playwright test     # Playwright failures only (94%)
-rtk pytest              # Python test failures only (90%)
-rtk rake test           # Ruby test failures only (90%)
-rtk rspec               # RSpec test failures only (60%)
-rtk test <cmd>          # Generic test wrapper - failures only
-```
-
-### Git (59-80% savings)
-```bash
-rtk git status          # Compact status
-rtk git log             # Compact log (works with all git flags)
-rtk git diff            # Compact diff (80%)
-rtk git show            # Compact show (80%)
-rtk git add             # Ultra-compact confirmations (59%)
-rtk git commit          # Ultra-compact confirmations (59%)
-rtk git push            # Ultra-compact confirmations
-rtk git pull            # Ultra-compact confirmations
-rtk git branch          # Compact branch list
-rtk git fetch           # Compact fetch
-rtk git stash           # Compact stash
-rtk git worktree        # Compact worktree
-```
-
-Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
-
-### GitHub (26-87% savings)
-```bash
-rtk gh pr view <num>    # Compact PR view (87%)
-rtk gh pr checks        # Compact PR checks (79%)
-rtk gh run list         # Compact workflow runs (82%)
-rtk gh issue list       # Compact issue list (80%)
-rtk gh api              # Compact API responses (26%)
-```
-
-### JavaScript/TypeScript Tooling (70-90% savings)
-```bash
-rtk pnpm list           # Compact dependency tree (70%)
-rtk pnpm outdated       # Compact outdated packages (80%)
-rtk pnpm install        # Compact install output (90%)
-rtk npm run <script>    # Compact npm script output
-rtk npx <cmd>           # Compact npx command output
-rtk prisma              # Prisma without ASCII art (88%)
-```
-
-### Files & Search (60-75% savings)
-```bash
-rtk ls <path>           # Tree format, compact (65%)
-rtk read <file>         # Code reading with filtering (60%)
-rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
-rtk find <pattern>      # Find grouped by directory (70%)
-```
-
-### Analysis & Debug (70-90% savings)
-```bash
-rtk err <cmd>           # Filter errors only from any command
-rtk log <file>          # Deduplicated logs with counts
-rtk json <file>         # JSON structure without values
-rtk deps                # Dependency overview
-rtk env                 # Environment variables compact
-rtk summary <cmd>       # Smart summary of command output
-rtk diff                # Ultra-compact diffs
-```
-
-### Infrastructure (85% savings)
-```bash
-rtk docker ps           # Compact container list
-rtk docker images       # Compact image list
-rtk docker logs <c>     # Deduplicated logs
-rtk kubectl get         # Compact resource list
-rtk kubectl logs        # Deduplicated pod logs
-```
-
-### Network (65-70% savings)
-```bash
-rtk curl <url>          # Compact HTTP responses (70%)
-rtk wget <url>          # Compact download output (65%)
-```
-
-### Meta Commands
-```bash
-rtk gain                # View token savings statistics
-rtk gain --history      # View command history with savings
-rtk discover            # Analyze Claude Code sessions for missed RTK usage
-rtk proxy <cmd>         # Run command without filtering (for debugging)
-rtk init                # Add RTK instructions to CLAUDE.md
-rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
-```
-
-## Token Savings Overview
-
-| Category | Commands | Typical Savings |
-|----------|----------|-----------------|
-| Tests | vitest, playwright, cargo test | 90-99% |
-| Build | next, tsc, lint, prettier | 70-87% |
-| Git | status, log, diff, add, commit | 59-80% |
-| GitHub | gh pr, gh run, gh issue | 26-87% |
-| Package Managers | pnpm, npm, npx | 70-90% |
-| Files | ls, read, grep, find | 60-75% |
-| Infrastructure | docker, kubectl | 85% |
-| Network | curl, wget | 65-70% |
-
-Overall average: **60-90% token reduction** on common development operations.
-<!-- /rtk-instructions -->

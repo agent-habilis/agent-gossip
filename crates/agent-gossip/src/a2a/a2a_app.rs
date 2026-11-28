@@ -1,10 +1,3 @@
-//! A2A-application state owned by the event loop, kept distinct from the
-//! generic mesh state in [`habilis_network::embed::EventLoopState`]. Holds the
-//! in-flight task registry, the outstanding gossip A2A-call waiters, and the
-//! lazily-bound blob server — the pieces that belong to the a2a layer, not the
-//! transport/membership engine. Threaded alongside `EventLoopState` as its own
-//! `&mut` borrow.
-
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -235,7 +228,7 @@ impl A2aApp {
     /// — for unit tests that drive handlers without a live event loop.
     #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self::detached(Output::silent())
+        Self::with_surfacing(Output::silent(), None)
     }
 
     /// Build the a2a-application state wired to a live surfacing tap: the tapped
@@ -248,36 +241,16 @@ impl A2aApp {
             // Consumed by `sink()`, which the caller already built.
             startup: _,
         } = io;
-        Self {
-            tasks: HashMap::new(),
-            closed_tasks: ClosedTasks::new(tuning::TASKS_CAP),
-            surfaced_chat: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            a2a_waiters: Vec::new(),
-            blob_server: None,
-            orphan_blobs: VecDeque::new(),
-            owed_ends: Vec::new(),
-            to_ask: Vec::new(),
-            a2a_port: None,
-            a2a_token: None,
-            output,
-            surfaced: SurfacedState::new(),
-            surfaced_rx: Some(surfaced_rx),
-            surfaced_tap: Some(tap),
-            own_legs: VecDeque::new(),
-            unsent_legs: Vec::new(),
-            sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            repair_budget: RepairBudget::new(Instant::now()),
-            #[cfg(feature = "adversarial")]
-            shards_resent: 0,
-            #[cfg(feature = "adversarial")]
-            legs_to_drop: 0,
-        }
+        Self::with_surfacing(output, Some((surfaced_rx, tap)))
     }
 
-    /// A detached instance around an explicit `Output` (no tap), for tests /
-    /// gossip-RPC fixtures that need an `A2aApp` without a running loop.
-    #[cfg(test)]
-    pub(crate) fn detached(output: Output) -> Self {
+    /// `tap` is the receiver and the sender of the surfacing tap, `None` for a detached test
+    /// `A2aApp` that has no live loop to drain it.
+    fn with_surfacing(
+        output: Output,
+        tap: Option<(mpsc::Receiver<OutputEvent>, SurfacedTap)>,
+    ) -> Self {
+        let (surfaced_rx, surfaced_tap) = tap.unzip();
         Self {
             tasks: HashMap::new(),
             closed_tasks: ClosedTasks::new(tuning::TASKS_CAP),
@@ -291,8 +264,8 @@ impl A2aApp {
             a2a_token: None,
             output,
             surfaced: SurfacedState::new(),
-            surfaced_rx: None,
-            surfaced_tap: None,
+            surfaced_rx,
+            surfaced_tap,
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
@@ -718,16 +691,13 @@ impl A2aResponder {
 
     /// Fail the call with `-32000` and `message`, in each transport's shape.
     fn send_error(self, message: &str) {
+        let error = || serde_json::json!({ "error": { "code": -32000, "message": message } });
         match self {
             A2aResponder::Ipc(tx) => {
-                let _ = tx.send(
-                    serde_json::json!({ "error": { "code": -32000, "message": message } })
-                        .to_string(),
-                );
+                let _ = tx.send(error().to_string());
             }
             A2aResponder::Typed(tx) => {
-                let _ =
-                    tx.send(serde_json::json!({ "error": { "code": -32000, "message": message } }));
+                let _ = tx.send(error());
             }
             A2aResponder::Rpc(tx) => {
                 let _ = tx.send(Err(RpcError {
@@ -800,10 +770,7 @@ fn is_error_reply(body: &str) -> bool {
 /// returns. A malformed/absent body reads as an internal error.
 fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, RpcError> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return Err(RpcError {
-            code: -32603,
-            message: "peer returned a malformed a2a response".to_string(),
-        });
+        return Err(RpcError::internal("peer returned a malformed a2a response"));
     };
     if !value["error"].is_null() {
         let code: i64 = value["error"]["code"].as_i64().unwrap_or(-32603);
@@ -1529,7 +1496,6 @@ mod tests {
                 | OutputEvent::Presence { .. }
                 | OutputEvent::PeerTimeout { .. }
                 | OutputEvent::PeerReturn { .. }
-                | OutputEvent::MsgPosted { .. }
                 | OutputEvent::Info { .. }
                 | OutputEvent::EventsLost { .. }
                 | OutputEvent::Error { .. }

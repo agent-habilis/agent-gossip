@@ -35,13 +35,6 @@ use crate::a2a::{
 };
 use crate::emission;
 
-/// Write the dev log of a just-built outbound message. The operator echo is
-/// the caller's responsibility — it differs by kind (`print_message_ex` for
-/// `Msg`, `print_task` for `Task`).
-fn log_outbound(message: &Verified) {
-    logging::log_out(message);
-}
-
 /// Write the dev log of a just-built outbound `Msg` and — when `echo` — print
 /// the operator line. The raw shards of a split body commit silently
 /// (`echo == false`); only the reassembled logical message is echoed.
@@ -53,9 +46,9 @@ fn commit_outbound_part(
 ) {
     if echo {
         let authored = message.authored();
-        out.print_message_ex(&authored, true, addressee_name(state, &authored).as_ref());
+        out.print_message(&authored, true, addressee_name(state, &authored).as_ref());
     }
-    log_outbound(message);
+    logging::log_out(message);
 }
 
 /// Headroom subtracted from a shard's body budget so the first shard's measured
@@ -118,9 +111,8 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     Some(chunks)
 }
 
-/// The identity + payload of one outbound chat frame — the fields `build_msg`
-/// shares with `synthesize_logical_msg`, grouped so the shard/signer args stay
-/// their own params.
+/// The identity + payload of one outbound chat frame, grouped so the
+/// shard/signer args of `build_msg` stay their own params.
 struct ChatFrameParams<'caller> {
     mesh: &'caller MeshId,
     author: &'caller Nickname,
@@ -177,6 +169,11 @@ fn fits_one_frame(wire_len: usize) -> bool {
 /// The bytes that an own task leg holds in the queue while its send waits: the plaintext body.
 fn own_leg_bytes(body: &str) -> usize {
     body.len()
+}
+
+/// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
+pub(crate) fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
+    live.filter(|nick| *nick == peer).count()
 }
 
 /// The bytes that an own content leg holds in the list while its send waits: the sealed frames,
@@ -556,7 +553,7 @@ async fn send_single_broadcast(
             .ok_or_else(|| {
                 anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
             })?;
-        out.print_message_ex(&plain, true, addressee_name(state, &plain).as_ref());
+        out.print_message(&plain, true, addressee_name(state, &plain).as_ref());
         return Ok((id, plain));
     }
     send_msg_part(
@@ -640,7 +637,7 @@ pub(crate) async fn send_broadcast(
     )?;
     let (header, group) = shards.send(state, sender, out).await?;
     let logical = reassembly::synthesize_from(&header, body.plain, &group);
-    out.print_message_ex(&logical, true, addressee_name(state, &logical).as_ref());
+    out.print_message(&logical, true, addressee_name(state, &logical).as_ref());
     Ok((logical.id.clone(), logical))
 }
 
@@ -709,7 +706,8 @@ async fn broadcast_directed_frame(
         app,
     } = frame;
     if task_id.is_some() {
-        app.admit_own_leg(own_leg_bytes(echo_body.as_str()))?;
+        // An own task leg holds its plaintext body in the queue while its send waits.
+        app.admit_own_leg(echo_body.as_str().len())?;
     }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
@@ -912,15 +910,8 @@ fn print_echo(
     addressee: Option<&Nickname>,
 ) {
     match echo_as {
-        EchoAs::Task => out.print_task(
-            echo,
-            emission::TaskView {
-                is_self: true,
-                addressee_name: addressee,
-                quarter_moved: false,
-            },
-        ),
-        EchoAs::Chat => out.print_message_ex(echo, true, addressee),
+        EchoAs::Task => out.print_task(echo, addressee, emission::TaskOrigin::Own),
+        EchoAs::Chat => out.print_message(echo, true, addressee),
     }
 }
 
@@ -959,164 +950,9 @@ pub(crate) async fn emit_task_status(
         leg,
         app,
     } = params;
-    let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
+    let Some(to) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
-    broadcast_task_status(
-        BroadcastTaskStatusParams {
-            mesh,
-            author,
-            peer_key: &peer_key,
-            task_id,
-            leg,
-            app,
-        },
-        state,
-        sender,
-        out,
-    )
-    .await
-    .map(|(_id, message, pending)| (message, pending))
-}
-
-/// A worker-emitted artifact leg's identity, task, result text/file, and the
-/// task registry it's resolved (and later ingested) against — grouped so
-/// `emit_task_artifact` stays within the argument budget alongside its
-/// state/sender/out handles.
-pub(crate) struct TaskArtifactEmitParams<'caller> {
-    pub(crate) mesh: &'caller MeshId,
-    pub(crate) author: &'caller Nickname,
-    pub(crate) task_id: &'caller crate::a2a::TaskId,
-    pub(crate) text: &'caller str,
-    pub(crate) file: Option<FileRef>,
-    pub(crate) app: &'caller mut A2aApp,
-}
-
-/// Worker-emit a `TaskArtifactUpdate` (the result) for a task we're serving.
-///
-/// # Errors
-/// An artifact with no text and no file, which would park the task for review
-/// with nothing to review; `unknown task` if we hold no record for `task_id`;
-/// otherwise a serialize/broadcast failure.
-pub(crate) async fn emit_task_artifact(
-    params: TaskArtifactEmitParams<'_>,
-    state: &mut EventLoopState,
-    sender: &MeshSender,
-    out: &emission::Output,
-) -> anyhow::Result<(Authored, Vec<PendingSend>)> {
-    let TaskArtifactEmitParams {
-        mesh,
-        author,
-        task_id,
-        text,
-        file,
-        app,
-    } = params;
-    if text.trim().is_empty() && file.is_none() {
-        anyhow::bail!("an artifact needs a text or a file");
-    }
-    let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
-        return Err(anyhow::anyhow!("unknown task '{task_id}'"));
-    };
-    broadcast_task_artifact(
-        BroadcastTaskArtifactParams {
-            mesh,
-            author,
-            peer_key: &peer_key,
-            task_id,
-            text,
-            file,
-            app,
-        },
-        state,
-        sender,
-        out,
-    )
-    .await
-    .map(|(_id, message, pending)| (message, pending))
-}
-
-/// Seal a directed payload `body` to the published X25519 key of the member `to`. A directed
-/// frame is **never** sent in plaintext — if the seal key of the recipient has
-/// not arrived yet, this errors rather than leaking the body. The Ed25519
-/// frame signature (added later, over this ciphertext) authenticates the sender.
-///
-/// # Errors
-/// The recipient's seal key is not yet known (its `PeerInfo` is not here yet), or the
-/// seal operation fails.
-pub(crate) fn seal_directed(
-    state: &EventLoopState,
-    to: &AuthorKey,
-    body: &MessageBody,
-) -> anyhow::Result<MessageBody> {
-    let key = state.seal_key_of(to).ok_or_else(|| {
-        let known: Option<Nickname> = state.known_nickname_of(to);
-        let name: String = known.map_or_else(|| to.to_string(), |nickname| nickname.to_string());
-        anyhow::anyhow!("cannot seal to '{name}': its encryption key is not known yet")
-    })?;
-    habilis_network::protocol::seal_to_body(key, body.as_str()).map_err(anyhow::Error::from)
-}
-
-/// A worker-emitted status leg's identity, addressee, task, state/note, and
-/// the task registry the frame is ingested into — grouped so
-/// `broadcast_task_status` stays within the argument budget alongside its
-/// state/sender/out handles.
-pub(crate) struct BroadcastTaskStatusParams<'caller> {
-    pub(crate) mesh: &'caller MeshId,
-    pub(crate) author: &'caller Nickname,
-    pub(crate) peer_key: &'caller AuthorKey,
-    pub(crate) task_id: &'caller crate::a2a::TaskId,
-    pub(crate) leg: WorkerLeg,
-    pub(crate) app: &'caller mut A2aApp,
-}
-
-/// The status leg a worker emits: its state and note, its `mesh:seq`, and the check-in fields.
-fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
-    let StatusLegParams {
-        mesh,
-        task_id,
-        leg,
-        seq,
-    } = leg;
-    let metadata = status_update_params::status_metadata(leg.waiting_user(), leg.progress(), seq);
-    let update =
-        status_update_params::StatusUpdateParams::new(task_id, leg.state()).with_metadata(metadata);
-    let update = match leg.note() {
-        Some(note) => update.with_note(note),
-        None => update,
-    };
-    status_update_params::status_update(mesh, update)
-}
-
-/// The fields of one worker status leg, grouped so [`worker_status_leg`] stays
-/// within the argument budget.
-#[derive(Clone, Copy)]
-struct StatusLegParams<'caller> {
-    mesh: &'caller MeshId,
-    task_id: &'caller crate::a2a::TaskId,
-    leg: &'caller WorkerLeg,
-    seq: u64,
-}
-
-/// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
-/// payload and push it to the key `peer_key` fire-and-forget.
-///
-/// # Errors
-/// Propagates a serialize/broadcast failure.
-pub(crate) async fn broadcast_task_status(
-    params: BroadcastTaskStatusParams<'_>,
-    state: &mut EventLoopState,
-    sender: &MeshSender,
-    out: &emission::Output,
-) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
-    let BroadcastTaskStatusParams {
-        mesh,
-        author,
-        peer_key,
-        task_id,
-        leg,
-        app,
-    } = params;
     let seq = task_record::next_seq(&app.tasks, task_id)
         .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
     let update = worker_status_leg(StatusLegParams {
@@ -1126,7 +962,6 @@ pub(crate) async fn broadcast_task_status(
         seq,
     });
     let plain = status_update_params::payload_body(&update)?;
-    let to = *peer_key;
     let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::STATUS),
@@ -1155,7 +990,144 @@ pub(crate) async fn broadcast_task_status(
     if sent.is_err() {
         task_record::give_back_seq(&mut app.tasks, task_id, seq);
     }
-    sent
+    sent.map(|(_id, message, pending)| (message, pending))
+}
+
+/// A worker-emitted artifact leg's identity, task, result text/file, and the
+/// task registry it's resolved (and later ingested) against — grouped so
+/// `emit_task_artifact` stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct TaskArtifactEmitParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) task_id: &'caller crate::a2a::TaskId,
+    pub(crate) text: &'caller str,
+    pub(crate) file: Option<FileRef>,
+    pub(crate) app: &'caller mut A2aApp,
+}
+
+/// Worker-emit a `TaskArtifactUpdate` (`a2a artifact`, the result) for a task we're serving.
+///
+/// # Errors
+/// An artifact with no text and no file, which would park the task for review
+/// with nothing to review; `unknown task` if we hold no record for `task_id`;
+/// otherwise a serialize/broadcast failure.
+pub(crate) async fn emit_task_artifact(
+    params: TaskArtifactEmitParams<'_>,
+    state: &mut EventLoopState,
+    sender: &MeshSender,
+    out: &emission::Output,
+) -> anyhow::Result<(Authored, Vec<PendingSend>)> {
+    let TaskArtifactEmitParams {
+        mesh,
+        author,
+        task_id,
+        text,
+        file,
+        app,
+    } = params;
+    if text.trim().is_empty() && file.is_none() {
+        anyhow::bail!("an artifact needs a text or a file");
+    }
+    let Some(to) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
+        return Err(anyhow::anyhow!("unknown task '{task_id}'"));
+    };
+    // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
+    app.admit_own_leg(own_leg_bytes(text))?;
+    let parts = build_offload_parts(
+        OffloadTextParams {
+            mesh,
+            author,
+            task_id,
+            text,
+            file,
+        },
+        state,
+        app,
+    )
+    .await?;
+    let seq = task_record::next_seq(&app.tasks, task_id)
+        .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
+    let update = status_update_params::artifact_update_parts(mesh, task_id, parts, seq);
+    let plain = status_update_params::payload_body(&update)?;
+    let sealed = seal_directed(state, &to, &plain)?;
+    let kind = MessageKind::App {
+        tag: wire::app_tag(wire::ARTIFACT),
+        to: Some(to),
+        corr: None,
+    };
+    task_record::take_seq(&mut app.tasks, task_id, seq);
+    let sent = broadcast_directed_frame(
+        DirectedFrameParams {
+            mesh,
+            author,
+            task_id: Some(task_id),
+            kind,
+            payload_body: sealed,
+            echo_body: plain,
+            content: true,
+            echo_as: EchoAs::Task,
+            id: None,
+            app: &mut *app,
+        },
+        state,
+        sender,
+        out,
+    )
+    .await;
+    if sent.is_err() {
+        task_record::give_back_seq(&mut app.tasks, task_id, seq);
+    }
+    sent.map(|(_id, message, pending)| (message, pending))
+}
+
+/// Seal a directed payload `body` to the published X25519 key of the member `to`. A directed
+/// frame is **never** sent in plaintext — if the seal key of the recipient has
+/// not arrived yet, this errors rather than leaking the body. The Ed25519
+/// frame signature (added later, over this ciphertext) authenticates the sender.
+///
+/// # Errors
+/// The recipient's seal key is not yet known (its `PeerInfo` is not here yet), or the
+/// seal operation fails.
+pub(crate) fn seal_directed(
+    state: &EventLoopState,
+    to: &AuthorKey,
+    body: &MessageBody,
+) -> anyhow::Result<MessageBody> {
+    let key = state.seal_key_of(to).ok_or_else(|| {
+        let known: Option<Nickname> = state.known_nickname_of(to);
+        let name: String = known.map_or_else(|| to.to_string(), |nickname| nickname.to_string());
+        anyhow::anyhow!("cannot seal to '{name}': its encryption key is not known yet")
+    })?;
+    habilis_network::protocol::seal_to_body(key, body.as_str()).map_err(anyhow::Error::from)
+}
+
+/// The status leg a worker emits: its state and note, its `mesh:seq`, and the check-in fields.
+fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
+    let StatusLegParams {
+        mesh,
+        task_id,
+        leg,
+        seq,
+    } = leg;
+    let metadata = status_update_params::status_metadata(leg.waiting_user(), leg.progress(), seq);
+    let update =
+        status_update_params::StatusUpdateParams::new(task_id, leg.state()).with_metadata(metadata);
+    let update = match leg.note() {
+        Some(note) => update.with_note(note),
+        None => update,
+    };
+    status_update_params::status_update(mesh, update)
+}
+
+/// The fields of one worker status leg, grouped so [`worker_status_leg`] stays
+/// within the argument budget.
+#[derive(Clone, Copy)]
+struct StatusLegParams<'caller> {
+    mesh: &'caller MeshId,
+    task_id: &'caller crate::a2a::TaskId,
+    leg: &'caller WorkerLeg,
+    seq: u64,
 }
 
 /// The identity, addressee and text of one outbound msg — grouped
@@ -1191,11 +1163,6 @@ pub(crate) struct MsgParams<'caller> {
 /// the addressee's seal key has not replicated yet (rather than sending in
 /// plaintext), and propagates a serialize/deliver failure or a full unmeshed
 /// pending-outbound buffer.
-/// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
-pub(crate) fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
-    live.filter(|nick| *nick == peer).count()
-}
-
 pub(crate) async fn send_msg(
     params: MsgParams<'_>,
     state: &mut EventLoopState,
@@ -1253,90 +1220,6 @@ pub(crate) async fn send_msg(
         out,
     )
     .await
-}
-
-/// A worker-emitted artifact leg's identity, addressee, task, result
-/// text/file, and the task registry the frame is ingested into — grouped so
-/// `broadcast_task_artifact` stays within the argument budget alongside its
-/// state/sender/out handles.
-pub(crate) struct BroadcastTaskArtifactParams<'caller> {
-    pub(crate) mesh: &'caller MeshId,
-    pub(crate) author: &'caller Nickname,
-    pub(crate) peer_key: &'caller AuthorKey,
-    pub(crate) task_id: &'caller crate::a2a::TaskId,
-    pub(crate) text: &'caller str,
-    pub(crate) file: Option<FileRef>,
-    pub(crate) app: &'caller mut A2aApp,
-}
-
-/// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
-/// artifact payload and push it to the key `peer_key` fire-and-forget.
-///
-/// # Errors
-/// Propagates a serialize/broadcast failure.
-pub(crate) async fn broadcast_task_artifact(
-    params: BroadcastTaskArtifactParams<'_>,
-    state: &mut EventLoopState,
-    sender: &MeshSender,
-    out: &emission::Output,
-) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
-    let BroadcastTaskArtifactParams {
-        mesh,
-        author,
-        peer_key,
-        task_id,
-        text,
-        file,
-        app,
-    } = params;
-    // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
-    app.admit_own_leg(own_leg_bytes(text))?;
-    let parts = build_offload_parts(
-        OffloadTextParams {
-            mesh,
-            author,
-            task_id,
-            text,
-            file,
-        },
-        state,
-        app,
-    )
-    .await?;
-    let seq = task_record::next_seq(&app.tasks, task_id)
-        .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
-    let update = status_update_params::artifact_update_parts(mesh, task_id, parts, seq);
-    let plain = status_update_params::payload_body(&update)?;
-    let to = *peer_key;
-    let sealed = seal_directed(state, &to, &plain)?;
-    let kind = MessageKind::App {
-        tag: wire::app_tag(wire::ARTIFACT),
-        to: Some(to),
-        corr: None,
-    };
-    task_record::take_seq(&mut app.tasks, task_id, seq);
-    let sent = broadcast_directed_frame(
-        DirectedFrameParams {
-            mesh,
-            author,
-            task_id: Some(task_id),
-            kind,
-            payload_body: sealed,
-            echo_body: plain,
-            content: true,
-            echo_as: EchoAs::Task,
-            id: None,
-            app: &mut *app,
-        },
-        state,
-        sender,
-        out,
-    )
-    .await;
-    if sent.is_err() {
-        task_record::give_back_seq(&mut app.tasks, task_id, seq);
-    }
-    sent
 }
 
 /// The identity + task-target of a `--file`-bearing leg — grouped so
@@ -1551,7 +1434,7 @@ async fn send_directed_leg(
 /// is the caller's, and it waits for the delivery verdict.
 fn retain_leg(message: &Verified, content: bool) {
     if content {
-        log_outbound(message);
+        logging::log_out(message);
     }
 }
 
@@ -1610,7 +1493,7 @@ fn take_sent_legs(app: &mut A2aApp) -> Vec<UnsentLeg> {
 pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
     for leg in take_sent_legs(app) {
         for frame in &leg.frames {
-            log_outbound(frame);
+            logging::log_out(frame);
         }
         if let Some((group, frames)) = leg.cache {
             state.shard_cache_mut().insert(group, frames);
@@ -1717,11 +1600,6 @@ fn ingest_own_leg_when_sent(
     vec![verdict_rx]
 }
 
-/// Client side of the gossip A2A request/response: mint an `rpc_id`, park a
-/// waiter (keyed by `rpc_id` + `peer`, with `timeout`), and broadcast an
-/// `A2aReq` directed at `peer` carrying the JSON-RPC `{method, params}`. The
-/// peer serves the safe method set and replies with an `A2aResp` that the
-/// receive path routes into the waiter (`app.fulfill_a2a_waiter`); the
 /// Ask the authors of our stalled big (unlogged) partial groups to re-send the
 /// missing shards — the repair half of big-group reliability (the author half is
 /// `state.shard_cache_mut()`, served by `resend_cached_shards`). Runs on the app tick;
@@ -1931,7 +1809,12 @@ async fn prepare_call(
     }
 }
 
-/// The waiter times out via the loop's a2a-deadline arm. Fails fast (through the
+/// Client side of the gossip A2A request/response: mint an `rpc_id`, park a
+/// waiter (keyed by `rpc_id` + `peer`, with `timeout`), and broadcast an
+/// `A2aReq` directed at `peer` carrying the JSON-RPC `{method, params}`. The
+/// peer serves the safe method set and replies with an `A2aResp` that the
+/// receive path routes into the waiter (`app.fulfill_a2a_waiter`); the
+/// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
 /// responder) when `peer` isn't a current peer or the waiter registry
 /// is full — no silent park.
 pub(crate) async fn broadcast_a2a_call(
@@ -2212,19 +2095,6 @@ pub(crate) async fn send_directed_rpc(
         state.shard_cache_mut().insert(series.group, cache_frames);
     }
     Ok(())
-}
-
-/// Start a fresh ping round carrying the responder; the deadline-driven
-/// `finalize_ping_round` delivers the RTT rows through it. Mirrors the IPC
-/// `Ping` handler, which passes no responder and emits the `ping_report`
-/// event instead.
-async fn session_ping(
-    response: Sender<Vec<(Nickname, u64)>>,
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-) -> bool {
-    habilis_network::ops::start_ping_round(state, context, Some(response)).await;
-    true
 }
 
 /// The identity and handles a session request is served through.
@@ -2525,7 +2395,13 @@ pub(crate) async fn handle_session_request(
             let _ = response.send(ipc_command::meta_view(state));
             false
         }
-        SessionRequest::Ping { response } => session_ping(response, state, context).await,
+        // The round carries the responder, and the engine delivers the RTT rows
+        // through it at the deadline. The IPC `Ping` handler passes no responder
+        // and emits the `ping_report` event instead.
+        SessionRequest::Ping { response } => {
+            habilis_network::ops::start_ping_round(state, context, Some(response)).await;
+            true
+        }
         SessionRequest::A2aCall {
             peer,
             method,

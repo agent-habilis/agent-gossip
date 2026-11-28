@@ -48,22 +48,7 @@ pub fn send_message_payload(
     text: &str,
     label: Option<&str>,
 ) -> Message {
-    send_message_payload_parts(mesh, task_id, vec![Part::text(text)], label)
-}
-
-/// As [`send_message_payload`] but carrying arbitrary parts — used when the
-/// message attaches a file (a `Part` with a blob `url`) alongside or instead of
-/// text. Input files ride the request `Message.parts`; they are never wrapped in
-/// an `Artifact` (the A2A request has no artifact slot).
-#[must_use]
-pub(crate) fn send_message_payload_parts(
-    mesh: &MeshId,
-    task_id: Option<&TaskId>,
-    parts: Vec<Part>,
-    label: Option<&str>,
-) -> Message {
-    let mut message = Message::text(Role::User, "");
-    message.parts = parts;
+    let mut message = Message::text(Role::User, text);
     message.context_id = Some(mesh.as_str().to_string());
     message.task_id = task_id.cloned();
     // Left None without a label so an unlabeled message stays byte-identical

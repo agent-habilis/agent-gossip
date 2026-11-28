@@ -62,9 +62,7 @@ impl NodeApp for A2aApp {
                 ref_id: message.id.as_str().to_owned(),
                 state: ReceiptState::Delivered,
             };
-            // Best effort: `send_receipt` logs its own failure, and a lost
-            // receipt only leaves the sender without a delivery proof.
-            let _ = send_receipt(state, context, &message.key(), &receipt).await;
+            send_receipt(state, context, &message.key(), &receipt).await;
         }
         routed.loggable
     }
@@ -211,22 +209,7 @@ impl NodeDriver for A2aApp {
             .await;
             return;
         }
-        let out = self.output.clone();
-        let port = self.a2a_port();
-        let outcome = rpc_error::handle_op(
-            rpc_error::HandleOpParams {
-                op,
-                mesh: context.mesh,
-                author: context.author,
-                our_pubkey: context.our_pubkey,
-                a2a_port: port,
-                app: self,
-            },
-            state,
-            context.sender,
-            &out,
-        )
-        .await;
+        let outcome = rpc_error::handle_op(op, self, state, context).await;
         let _ = response.send(outcome);
     }
 
@@ -236,22 +219,7 @@ impl NodeDriver for A2aApp {
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) -> bool {
-        let out = self.output.clone();
-        ipc_command::handle_ipc_command(
-            ipc_command::IpcDispatchParams {
-                command: request.command,
-                resp_tx: request.response,
-                mesh: context.mesh,
-                name: request.name,
-                author: context.author,
-                endpoint: context.endpoint,
-                app: self,
-            },
-            state,
-            context,
-            &out,
-        )
-        .await
+        ipc_command::handle_ipc_command(request, self, state, context).await
     }
 }
 
@@ -313,7 +281,6 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
         | OutputEvent::NicknameHeld { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => emission::simple_event::is_visible(event),
     }
 }
@@ -344,7 +311,7 @@ fn is_self_task_echo(event: &emission::OutputEvent) -> bool {
 /// allow-list of the documented pollable contract (chat, presence joined/left,
 /// content task legs, and the transient `ping_report`/`peer_timeout`/
 /// `peer_return`/`task_timeout`/`fork`). Deliberately an allow-list, not
-/// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
+/// "everything except X": operational notices (`info`/`error`) and
 /// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
 /// liveness widget update, never a retained record).
@@ -368,10 +335,7 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
         OutputEvent::Task { message, .. } => !classify(message).beat(),
-        OutputEvent::Info { .. }
-        | OutputEvent::Error { .. }
-        | OutputEvent::MsgPosted { .. }
-        | OutputEvent::Ready { .. } => false,
+        OutputEvent::Info { .. } | OutputEvent::Error { .. } | OutputEvent::Ready { .. } => false,
     }
 }
 
@@ -452,52 +416,41 @@ fn route_content(
     // `classify`: a directed BROADCAST or a broadcast MSG falls through to
     // the no-op arm rather than being surfaced/logged by a relay.
     match (tag.as_str(), to) {
+        // Mesh broadcast chat is always loggable. `surface` gates only the
+        // *display*: a pre-join message is still logged/relayed but not printed.
         (wire::BROADCAST, None) => Routed {
             loggable: surface_chat(message, surfaceable, app, |out, surface| {
-                handle_broadcast(out, message, surface)
+                if surface {
+                    out.print_message(message, false, None);
+                }
+                true
             }),
             fresh_for_us: false,
         },
-        (wire::MSG, Some(to)) => {
-            let fresh_for_us = surfaceable
-                && *to == context.our_pubkey
-                && !is_replayed_chat(&app.surfaced_chat, message);
+        // A directed frame is surfaced and logged **only by its addressee**.
+        // Anyone else is a relay: it forwards the frame, which never reaches
+        // its transcript or poll buffer, and it tracks no task.
+        //
+        // The party check is not redundant with unicast routing or sealing.
+        // Unicast decides who receives the bytes and sealing decides who can
+        // read them, but a multihop relay legitimately holds a frame it is not
+        // party to; this is the gate that stops it surfacing there.
+        (_, Some(to)) if *to != context.our_pubkey => Routed::default(),
+        (wire::MSG, Some(_)) => {
+            let fresh_for_us = surfaceable && !is_replayed_chat(&app.surfaced_chat, message);
             let loggable = surface_chat(message, surfaceable, app, |out, surface| {
-                handle_msg(
-                    out,
-                    MsgParams {
-                        message,
-                        to,
-                        surfaceable: surface,
-                        self_key: &context.our_pubkey,
-                        self_name: context.author,
-                    },
-                )
+                handle_msg(out, message, surface, context.author)
             });
             Routed {
                 loggable,
                 fresh_for_us,
             }
         }
-        (wire::STATUS | wire::ARTIFACT, Some(to)) => {
-            let leg = handle_task_leg(
-                TaskLegParams {
-                    message,
-                    to,
-                    surfaceable,
-                },
-                app,
-                context,
-            );
-            Routed {
-                loggable: leg.loggable,
-                fresh_for_us: leg.fresh_for_us,
-            }
+        (wire::STATUS | wire::ARTIFACT, Some(_)) => {
+            handle_task_leg(message, surfaceable, app, context)
         }
-        (wire::RECEIPT, Some(to)) => {
-            if *to == context.our_pubkey {
-                surface_receipt(message, app);
-            }
+        (wire::RECEIPT, Some(_)) => {
+            surface_receipt(message, app);
             Routed::default()
         }
         _ => Routed::default(),
@@ -572,37 +525,26 @@ async fn answer_beats(app: &mut A2aApp, state: &mut EventLoopState, context: &Ha
     }
 }
 
-/// The value cluster [`handle_task_leg`] needs beyond its `app`/`ctx` handles
-/// — the input of [`route_content`]'s task-leg arm.
-#[derive(Clone, Copy)]
-struct TaskLegParams<'caller> {
-    message: &'caller Authored,
-    to: &'caller AuthorKey,
-    surfaceable: bool,
-}
-
 /// Process an inbound task leg (a task-related `a2a_status` or `a2a_artifact`)
-/// for its addressee: advance the coarse state machine (addressee only — a
-/// third-party relay tracks nothing), then surface it via the lifecycle layer.
-fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCtx<'_>) -> Routed {
-    let TaskLegParams {
-        message,
-        to,
-        surfaceable,
-    } = leg;
+/// addressed to us: advance the coarse state machine, then surface it via the
+/// lifecycle layer. The caller checks the addressee — a third-party relay
+/// tracks nothing.
+fn handle_task_leg(
+    message: &Authored,
+    surfaceable: bool,
+    app: &mut A2aApp,
+    context: &HandlerCtx<'_>,
+) -> Routed {
     #[cfg(feature = "adversarial")]
-    if app.legs_to_drop > 0 && *to == context.our_pubkey && !is_beat_frame(message) {
+    if app.legs_to_drop > 0 && !is_beat_frame(message) {
         app.legs_to_drop -= 1;
         return Routed::default();
     }
     let mut surface = surfaceable;
     let mut replay = false;
     let mut quarter_moved = false;
-    // Only the addressee is a party: a third-party relay tracks nothing. The
-    // receiver's body is already unsealed here, so the task id parses out of it.
-    if *to == context.our_pubkey
-        && let Some(task_id) = status_update_params::frame_task_id(message)
-    {
+    // The receiver's body is already unsealed here, so the task id parses out of it.
+    if let Some(task_id) = status_update_params::frame_task_id(message) {
         // …and being the addressee is not enough: the leg must come from the
         // task's own counterparty. Anyone can seal to us (the key is published
         // in the meta document) and name a task id, so without this a bystander
@@ -668,21 +610,12 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
             surface = false;
         }
     }
-    let loggable = handle_task(
-        &app.output,
-        TaskDisplayParams {
-            message,
-            to,
-            surfaceable: surface,
-            self_key: &context.our_pubkey,
-            self_name: context.author,
-            quarter_moved,
-        },
-    );
+    let shown = surface.then_some(emission::TaskOrigin::Peer { quarter_moved });
+    let loggable = handle_task(&app.output, message, shown, context.author);
     // A beat is liveness plumbing and never logged, so it earns no receipt.
     Routed {
         loggable,
-        fresh_for_us: surfaceable && *to == context.our_pubkey && loggable && !replay,
+        fresh_for_us: surfaceable && loggable && !replay,
     }
 }
 
@@ -718,105 +651,42 @@ fn is_replayed_chat(surfaced: &BoundedFifoSet<DedupKey>, message: &Authored) -> 
     surfaced.contains(&message.dedup_key())
 }
 
-/// Returns whether the message should be logged (pushed to the poll buffer).
-/// `a2a_broadcast` is mesh broadcast chat — always loggable. `surfaceable`
-/// gates only the *display*: a pre-join message is still logged/relayed but not
-/// printed.
-fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: bool) -> bool {
-    if message.kind.is_app(wire::BROADCAST) {
-        if surfaceable {
-            out.print_message(message, None);
-        }
-        true
-    } else {
-        false
-    }
-}
-
-/// The value cluster [`handle_msg`] needs beyond its `out` sink handle.
-#[derive(Clone, Copy)]
-struct MsgParams<'caller> {
-    message: &'caller Authored,
-    to: &'caller AuthorKey,
-    surfaceable: bool,
-    self_key: &'caller AuthorKey,
-    self_name: &'caller Nickname,
-}
-
-/// A msg: printed and logged **only by its addressee** (`to == self_key`).
-/// Anyone else is a relay: it forwards the frame and returns `false` here, so
-/// the msg never reaches that peer's transcript or poll buffer.
-///
-/// The party check is not redundant with unicast routing or sealing. Unicast
-/// decides who receives the bytes and sealing decides who can read them, but a
-/// multihop relay legitimately holds a msg it is not party to; this is the gate
-/// that stops it surfacing there. `surfaceable` gates only the *display*
-/// (join-horizon), never the relay/log.
+/// A msg addressed to us: printed and logged. `surfaceable` gates only the
+/// *display* (join-horizon), never the relay/log.
 ///
 /// The sender's own copy does **not** come through here — it is rendered from a
-/// plaintext twin on the send path (`send::print_echo`), because the wire body
-/// is sealed to the addressee. Both call sites are inbound hooks, and the
-/// engine drops our own frames by **pubkey** before either one, so a frame
+/// plaintext twin on the send path (`broadcast_params::print_echo`), because
+/// the wire body is sealed to the addressee. The call site is an inbound hook,
+/// and the engine drops our own frames by **pubkey** before it, so a frame
 /// reaching this function carrying our nickname is by construction someone
 /// else's: nicknames are display labels the engine deliberately never pins.
 /// An `author == self_author` escape hatch here therefore admitted nothing
 /// honest and exactly one thing hostile — a relayed msg between two other
 /// peers, surfaced to us as though we had sent it.
-fn handle_msg(out: &emission::Output, params: MsgParams<'_>) -> bool {
-    let MsgParams {
-        message,
-        to,
-        surfaceable,
-        self_key,
-        self_name,
-    } = params;
-    if to != self_key {
-        return false;
-    }
+fn handle_msg(
+    out: &emission::Output,
+    message: &Authored,
+    surfaceable: bool,
+    self_name: &Nickname,
+) -> bool {
     if surfaceable {
-        out.print_message(message, Some(self_name));
+        out.print_message(message, false, Some(self_name));
     }
     true
 }
 
-/// The value cluster [`handle_task`] needs beyond its `out` sink handle.
-#[derive(Clone, Copy)]
-struct TaskDisplayParams<'caller> {
-    message: &'caller Authored,
-    to: &'caller AuthorKey,
-    surfaceable: bool,
-    self_key: &'caller AuthorKey,
-    self_name: &'caller Nickname,
-    quarter_moved: bool,
-}
-
-/// A task leg: surfaced + logged only by the addressee (`to == self_key`)
-/// and, via the sender's echo path, the sender itself — third parties relay it
-/// without retaining. Returns whether to **log** (content legs only — a beat
-/// status is liveness plumbing, surfaced as a `task_progress` widget event but
-/// never retained). `surfaceable` gates only the *display* (join-horizon),
-/// never the relay/log.
-fn handle_task(out: &emission::Output, params: TaskDisplayParams<'_>) -> bool {
-    let TaskDisplayParams {
-        message,
-        to,
-        surfaceable,
-        self_key,
-        self_name,
-        quarter_moved,
-    } = params;
-    if to != self_key {
-        return false;
-    }
-    if surfaceable {
-        out.print_task(
-            message,
-            emission::TaskView {
-                is_self: false,
-                addressee_name: Some(self_name),
-                quarter_moved,
-            },
-        );
+/// A task leg addressed to us: surfaced, and logged if it is a content leg.
+/// The sender surfaces its own copy via its echo path. Returns whether to
+/// **log**. `shown` is `None` before the join horizon: it gates only the *display*, never the
+/// relay/log.
+fn handle_task(
+    out: &emission::Output,
+    message: &Authored,
+    shown: Option<emission::TaskOrigin>,
+    self_name: &Nickname,
+) -> bool {
+    if let Some(origin) = shown {
+        out.print_task(message, Some(self_name), origin);
     }
     // Content legs log; a liveness beat (a status marked `mesh:beat`) is
     // plumbing — surfaced as a `task_progress` widget event but never retained.
@@ -879,7 +749,7 @@ struct A2aReqParams<'caller> {
 }
 
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
-/// against the safe method set (`gossip_rpc::classify`), run the resulting
+/// against the safe method set (`served::classify`), run the resulting
 /// action, and broadcast an `a2a_resp` back to the requester echoing `corr`.
 /// A `shard/repair` ask gets no `a2a_resp`: it is served or dropped.
 async fn handle_a2a_req(
@@ -898,25 +768,7 @@ async fn handle_a2a_req(
             Ok(envelope) => {
                 let method = envelope["method"].as_str().unwrap_or_default();
                 match served::classify(method, &envelope["params"], &requester_key, app) {
-                    Served::Op(op) => {
-                        let out = app.output.clone();
-                        rpc_error::handle_op(
-                            rpc_error::HandleOpParams {
-                                op,
-                                mesh: context.mesh,
-                                author: context.author,
-                                our_pubkey: context.our_pubkey,
-                                // No local HTTP port on the gossip path; only card
-                                // ops read it, and those aren't in the safe set here.
-                                a2a_port: 0,
-                                app,
-                            },
-                            state,
-                            context.sender,
-                            &out,
-                        )
-                        .await
-                    }
+                    Served::Op(op) => rpc_error::handle_op(op, app, state, context).await,
                     Served::Ingest(payload) => {
                         let remote = RemoteRequest {
                             key: &requester_key,
@@ -930,15 +782,8 @@ async fn handle_a2a_req(
                         // its next tick, and a reply is a sealed, signed, directed frame that
                         // costs this node as much as the ask costs the requester.
                         if app.repair_budget.admit(requester_key, Instant::now()) {
-                            let resent = resend_cached_shards(
-                                ShardRepairParams {
-                                    group: &group,
-                                    missing: &missing,
-                                    requester: &requester_key,
-                                },
-                                state,
-                            )
-                            .await;
+                            let resent =
+                                resend_cached_shards(&group, &missing, &requester_key, state).await;
                             #[cfg(feature = "adversarial")]
                             app.note_shards_resent(resent);
                             #[cfg(not(feature = "adversarial"))]
@@ -1008,24 +853,16 @@ async fn handle_a2a_req(
     }
 }
 
-/// The value cluster [`resend_cached_shards`] needs beyond its `state`
-/// handle.
-struct ShardRepairParams<'caller> {
-    group: &'caller habilis_network::protocol::ShardGroup,
-    missing: &'caller [u32],
-    requester: &'caller AuthorKey,
-}
-
 /// Serve a `shard/repair` ask: re-deliver the named cached frames of one of our
 /// big (unlogged) outbound groups to the requester. The frames are the raw,
 /// already-signed shards we cached at send time (`state.shard_cache_mut()`), so they
 /// reassemble on the requester exactly as the original send would have.
-async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLoopState) -> usize {
-    let ShardRepairParams {
-        group,
-        missing,
-        requester,
-    } = params;
+async fn resend_cached_shards(
+    group: &habilis_network::protocol::ShardGroup,
+    missing: &[u32],
+    requester: &AuthorKey,
+    state: &mut EventLoopState,
+) -> usize {
     // A repeated index would send one frame several times for one ask.
     let mut seen = HashSet::new();
     let firsts = missing.iter().copied().filter(|index| seen.insert(*index));
@@ -1060,11 +897,6 @@ async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLo
     resent
 }
 
-/// A `message/send` directed at us over gossip-RPC — we are the task's A2A
-/// **server** (the worker). A message with no `taskId` opens a new task (we
-/// mint the id); one with a `taskId` is a follow-up. Either way we advance our
-/// coarse machine, surface the message to our skill, and return the
-/// authoritative `Task`.
 /// Refusal for an offer the registry has no room for, or `None` to admit.
 pub(crate) fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError> {
     use crate::a2a::task_record::Admission;
@@ -1241,19 +1073,22 @@ fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context:
     } = *remote;
     let rec_state = app.tasks.get(task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
-    let mesh_name: &str = context.mesh.as_str();
-    let peer_name: &str = context.author.as_str();
-    app.output.task_message(&emission::TaskMessageLeg {
-        id: payload.message_id.as_str(),
-        mesh: mesh_name,
-        author: requester.as_str(),
+    let id = payload.message_id.as_str().to_owned();
+    let mesh = context.mesh.as_str().to_owned();
+    let author = requester.as_str().to_owned();
+    let peer = context.author.as_str().to_owned();
+    app.output.task_message(emission::OutputEvent::TaskMessage {
+        id,
+        ts: UnixSecs::now(),
+        mesh,
+        author,
         author_key: *requester_key,
-        peer: peer_name,
-        task_id: task_id.as_str(),
+        peer,
+        task_id: task_id.as_str().to_owned(),
         state: rec_state,
-        text: &text,
-        label,
-        message: Some(payload),
+        text,
+        label: label.map(str::to_owned),
+        message: Some(Box::new(payload.clone())),
         is_self: false,
     });
     // The reminder repeats an unanswered brief or follow-up. A brief counts too: a worker that
@@ -1414,6 +1249,7 @@ mod classify_tests {
     fn task_message(is_self: bool) -> OutputEvent {
         OutputEvent::TaskMessage {
             id: String::from("m"),
+            ts: UnixSecs::ZERO,
             mesh: String::from("sw"),
             author: String::from("initiator"),
             author_key: key("initiator"),
@@ -1930,7 +1766,7 @@ mod classify_tests {
     // log is one every peer's digest re-offers.
     #[test]
     fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
-        let mut app = A2aApp::detached(crate::emission::Output::silent());
+        let mut app = A2aApp::new();
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
 
         // A msg addressed to someone else: the handler declines, nothing recorded.

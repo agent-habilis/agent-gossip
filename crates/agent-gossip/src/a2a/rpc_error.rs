@@ -1,4 +1,4 @@
-use habilis_network::embed::{EventLoopState, KeyOfError};
+use habilis_network::embed::{EventLoopState, HandlerCtx, KeyOfError};
 use habilis_network::ops::{MergeCtx, MeshSender, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::{AuthorKey, Channel, MeshId, MessageBody, Nickname};
 use serde_json::Value;
@@ -140,6 +140,19 @@ pub(crate) fn is_send_message(method: &str) -> bool {
     matches!(method, "SendMessage" | "SendStreamingMessage")
 }
 
+pub(crate) fn task_id_param(params: &Value) -> Result<TaskId, RpcError> {
+    params["id"]
+        .as_str()
+        .and_then(TaskId::from_uuid_str)
+        .ok_or_else(|| RpcError::invalid_params("params.id must be a task id (uuid)"))
+}
+
+pub(crate) fn message_param(params: &Value) -> Result<super::Message, RpcError> {
+    serde_json::from_value(params["message"].clone()).map_err(|error| {
+        RpcError::invalid_params(&format!("params.message is not an A2A Message: {error}"))
+    })
+}
+
 /// Map a JSON-RPC `method` + `params` (+ the URL-derived target) to an op.
 ///
 /// # Errors
@@ -149,37 +162,23 @@ pub(crate) fn parse_op(
     params: &Value,
     target: Option<PeerRef>,
 ) -> Result<A2aOp, RpcError> {
-    let task_id_param = || {
-        params["id"]
-            .as_str()
-            .and_then(TaskId::from_uuid_str)
-            .ok_or_else(|| RpcError::invalid_params("params.id must be a task id (uuid)"))
-    };
     match method {
         // `SendStreamingMessage` shares `SendMessage`'s create semantics; the
         // streaming events ride the worker's pushed status/artifact frames (the
         // gossip push plane). The SSE `text/event-stream` edge encoding for an
         // off-the-shelf HTTP client is layered on top of that plane.
-        "SendMessage" | "SendStreamingMessage" => {
-            let message: super::Message = serde_json::from_value(params["message"].clone())
-                .map_err(|error| {
-                    RpcError::invalid_params(&format!(
-                        "params.message is not an A2A Message: {error}"
-                    ))
-                })?;
-            Ok(A2aOp::SendMessage {
-                to: target,
-                message,
-            })
-        }
+        "SendMessage" | "SendStreamingMessage" => Ok(A2aOp::SendMessage {
+            to: target,
+            message: message_param(params)?,
+        }),
         // Subscribe returns the current snapshot; the caller (a party) keeps
         // receiving the worker's pushed frames.
         "GetTask" | "SubscribeToTask" => Ok(A2aOp::GetTask {
-            task_id: task_id_param()?,
+            task_id: task_id_param(params)?,
         }),
         "ListTasks" => Ok(A2aOp::ListTasks { peer: None }),
         "CancelTask" => Ok(A2aOp::CancelTask {
-            task_id: task_id_param()?,
+            task_id: task_id_param(params)?,
         }),
         // The authenticated extended card. We have nothing extra to gate behind
         // auth, so it returns the same full card `own_card` builds.
@@ -207,17 +206,10 @@ pub(crate) fn parse_op(
         // Streaming and push-notification configs are declared off in the
         // card (`capabilities`); a client that calls them anyway gets the
         // standard method-not-found.
-        other => Err(RpcError {
-            code: -32601,
-            message: format!("method not found: {other}"),
-        }),
+        other => Err(RpcError::method_not_found(other)),
     }
 }
 
-/// The A2A `Task` object for a live record — what `tasks/get`/`tasks/list`
-/// return and what a task-creating `message/send` echoes. History/artifact
-/// accumulation is not stored daemon-side (the event stream carries them);
-/// mesh-specific coordinates ride `metadata`.
 /// The `ListTasks` payload. `peer` scopes the listing to that counterparty's
 /// tasks — what a remote caller may see; `None` lists everything, for the
 /// local binding whose caller owns the daemon.
@@ -237,6 +229,10 @@ fn list_tasks(app: &A2aApp, peer: Option<&AuthorKey>, mesh: &MeshId) -> Value {
     serde_json::json!({ "tasks": tasks })
 }
 
+/// The A2A `Task` object for a live record — what `tasks/get`/`tasks/list`
+/// return and what a task-creating `message/send` echoes. History/artifact
+/// accumulation is not stored daemon-side (the event stream carries them);
+/// mesh-specific coordinates ride `metadata`.
 pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> Value {
     let role = |value: TaskRole| match value {
         TaskRole::Initiator => "initiator",
@@ -311,18 +307,6 @@ pub(crate) fn get_task(app: &A2aApp, task_id: &TaskId, mesh: &MeshId) -> Result<
         .ok_or_else(|| RpcError::task_not_found(task_id))
 }
 
-/// One JSON-RPC op's identity (mesh/author/pubkey/local port) plus the app
-/// state it's resolved against — grouped so `handle_op` stays within the
-/// argument budget alongside its state/sender/output handles.
-pub(crate) struct HandleOpParams<'caller> {
-    pub(crate) op: A2aOp,
-    pub(crate) mesh: &'caller MeshId,
-    pub(crate) author: &'caller Nickname,
-    pub(crate) our_pubkey: AuthorKey,
-    pub(crate) a2a_port: u16,
-    pub(crate) app: &'caller mut A2aApp,
-}
-
 /// The error of a card route whose nickname names no one key of the roster: no live key uses it, or
 /// two or more do.
 pub(crate) fn address_error(nickname: &Nickname, error: KeyOfError) -> RpcError {
@@ -336,19 +320,19 @@ pub(crate) fn address_error(nickname: &Nickname, error: KeyOfError) -> RpcError 
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
 pub(crate) async fn handle_op(
-    params: HandleOpParams<'_>,
+    op: A2aOp,
+    app: &mut A2aApp,
     state: &mut EventLoopState,
-    sender: &MeshSender,
-    output: &emission::Output,
+    context: &HandlerCtx<'_>,
 ) -> Result<Value, RpcError> {
-    let HandleOpParams {
-        op,
+    let HandlerCtx {
         mesh,
         author,
-        our_pubkey,
-        a2a_port,
-        app,
-    } = params;
+        sender,
+        ..
+    } = *context;
+    // A clone, so the render sink does not alias the `&mut app` passed alongside it.
+    let output = &app.output.clone();
     match op {
         A2aOp::SendMessage { to, message } => {
             send_message(
@@ -409,16 +393,13 @@ pub(crate) async fn handle_op(
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
-            let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-            let mut card = super::card::full_card(author, our_pubkey, &seal_b58);
-            // Served over the localhost binding, so advertise the JSONRPC
-            // interface alongside the always-present gossip one.
-            card.supported_interfaces.push(super::AgentInterface {
-                url: format!("http://127.0.0.1:{a2a_port}/"),
-                protocol_binding: "JSONRPC".to_string(),
-                tenant: None,
-                protocol_version: super::PROTOCOL_VERSION.to_string(),
-            });
+            // Served over the localhost binding, so the card names the JSONRPC
+            // interface of this daemon alongside the always-present gossip one.
+            // Only the localhost binding parses a card op, so the port never
+            // reaches a gossip caller.
+            let own_url = format!("http://127.0.0.1:{}/", app.a2a_port());
+            let seal = state.identity().seal_public();
+            let card = super::card::peer_card(context.our_pubkey, author, Some(&seal), &own_url);
             serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
@@ -441,7 +422,7 @@ pub(crate) async fn handle_op(
                 });
             };
             // The route names the exact key, because two members can share a nickname.
-            let relay_url = format!("http://127.0.0.1:{a2a_port}/peers/{key}");
+            let relay_url = format!("http://127.0.0.1:{}/peers/{key}", app.a2a_port());
             let card = super::card::peer_card(key, &nickname, state.seal_key_of(&key), &relay_url);
             let card = serde_json::to_value(&card)
                 .map_err(|error| RpcError::internal(&error.to_string()))?;
@@ -463,7 +444,7 @@ struct SendMessageParams<'caller> {
 /// A **broadcast** `message/send` (no addressee): re-author the wire payload
 /// from the client Message's text projection (role/context/extension stamping
 /// stays the daemon's job) and flood it. A *directed* `message/send` (task
-/// creation) never reaches here — the localhost dispatch (`handle_a2a_arm`)
+/// creation) never reaches here — the localhost dispatch (`handle_http`)
 /// intercepts it and routes it through the gossip request/response waiter, and
 /// the gossip serve path ingests it directly — so a `Some(to)` here is a bug.
 async fn send_message(
@@ -498,12 +479,11 @@ async fn send_message(
     )
     .await
     .map_err(|error| RpcError::internal(&error.to_string()))?;
-    // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof; a broadcast
+    // A2A v1.0 `SendMessage` returns a oneof keyed by member name; a broadcast
     // has no task, so echo the daemon-authored Message as `{"message": …}`.
     let echo: super::Message = serde_json::from_str(frame.body.as_str())
         .map_err(|error| RpcError::internal(&error.to_string()))?;
-    serde_json::to_value(super::SendMessageResponse::Message(echo))
-        .map_err(|error| RpcError::internal(&error.to_string()))
+    Ok(serde_json::json!({ "message": echo }))
 }
 
 #[cfg(test)]

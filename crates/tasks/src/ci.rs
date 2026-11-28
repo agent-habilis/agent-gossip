@@ -5,27 +5,8 @@ pub(crate) fn run() -> TaskOutcome {
     output::status("Checking", "formatting");
     crate::fmt::check()?;
 
-    // No layering gate any more: it checked that the engine crate named neither
-    // A2A nor the app, and the engine now lives in its own repo (`habilis-network`), so
-    // the boundary is enforced by the repo edge rather than by a grep.
-
     output::status("Running", "clippy");
-    // `--features adversarial` so the adversarial suite + shim are linted
-    // too (they are `required-features`-gated, else clippy would skip them).
-    // See `lint.rs` for why the feature is qualified and why this is
-    // `--workspace`.
-    Invocation::cargo([
-        "clippy",
-        "--workspace",
-        "--all-targets",
-        "--features",
-        "agent-gossip/adversarial",
-        "--",
-        "-D",
-        "warnings",
-    ])
-    .quiet()
-    .run()?;
+    crate::lint::run()?;
 
     // The `bench` feature builds the bench shim and the benches, which no other
     // step compiles.

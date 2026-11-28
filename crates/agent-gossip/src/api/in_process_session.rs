@@ -4,13 +4,12 @@ use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, Nickna
 use habilis_network::runtime::{EventLoopConfig, Node, SignalHandling};
 use tokio::sync::{broadcast, oneshot};
 
-use super::a2a_call_params::{A2aCallParams, TaskStatusParams};
+use super::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
 use super::advertiser::Advertiser;
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
-use crate::a2a::TaskId;
 use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::ipc_command::MetaView;
@@ -36,7 +35,7 @@ impl InProcessSession {
     /// Spawn the event loop and build the core. `push` is `Some` to fan inbound
     /// traffic out to a broadcast ([`MeshSession::messages`](crate::api::MeshSession::messages)), `None` for a
     /// poll-only consumer (MCP). `env.handle_signals`: see
-    /// `DriverMode::InProcess` — `false` for sessions living inside a
+    /// `DriverMode::InProcess` — `SignalHandling::Leave` for sessions living inside a
     /// foreground command that owns its own lifetime.
     pub(super) fn spawn(
         elc: EventLoopConfig,
@@ -83,13 +82,8 @@ impl InProcessSession {
         resp_rx.await.map_err(|_| SessionError::DroppedResponse)
     }
 
-    /// Create a new mesh as a poll-only, silent core (the MCP server).
-    ///
-    /// # Errors
-    /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
-    pub(crate) async fn create_poll(config: CreateConfig) -> Result<Self, CreateError> {
-        let (elc, io, advertiser) = create_setup(config, Output::silent()).await?;
-        Ok(Self::spawn(
+    fn spawn_poll(elc: EventLoopConfig, io: SurfacedIo, advertiser: Option<Advertiser>) -> Self {
+        Self::spawn(
             elc,
             io,
             SpawnEnv {
@@ -97,7 +91,16 @@ impl InProcessSession {
                 handle_signals: SignalHandling::Handle,
             },
             None,
-        ))
+        )
+    }
+
+    /// Create a new mesh as a poll-only, silent core (the MCP server).
+    ///
+    /// # Errors
+    /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
+    pub(crate) async fn create_poll(config: CreateConfig) -> Result<Self, CreateError> {
+        let (elc, io, advertiser) = create_setup(config, Output::silent()).await?;
+        Ok(Self::spawn_poll(elc, io, advertiser))
     }
 
     /// Join an existing mesh as a poll-only, silent core (the MCP server).
@@ -106,15 +109,7 @@ impl InProcessSession {
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
     pub(crate) async fn join_poll(config: JoinConfig) -> Result<Self, JoinError> {
         let (elc, io) = join_setup(config, Output::silent()).await?;
-        Ok(Self::spawn(
-            elc,
-            io,
-            SpawnEnv {
-                advertiser: None,
-                handle_signals: SignalHandling::Handle,
-            },
-            None,
-        ))
+        Ok(Self::spawn_poll(elc, io, None))
     }
 
     /// Join a topic (string-derived public mesh) as a poll-only, silent core
@@ -125,15 +120,7 @@ impl InProcessSession {
     /// endpoint/gossip failure.
     pub(crate) async fn topic_poll(config: TopicConfig) -> Result<Self, JoinError> {
         let (elc, io) = topic_setup(config, Output::silent()).await?;
-        Ok(Self::spawn(
-            elc,
-            io,
-            SpawnEnv {
-                advertiser: None,
-                handle_signals: SignalHandling::Handle,
-            },
-            None,
-        ))
+        Ok(Self::spawn_poll(elc, io, None))
     }
 
     pub(crate) fn mesh_id(&self) -> &MeshId {
@@ -149,8 +136,7 @@ impl InProcessSession {
     }
 
     /// Build, sign and gossip-broadcast a message; returns the canonical
-    /// [`Message`](crate::Message) the loop built, or `None` when the sender-side rate
-    /// limiter dropped it.
+    /// [`Message`](crate::Message) the loop built.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -219,10 +205,20 @@ impl InProcessSession {
     /// Fails if the event loop has stopped or dropped the response.
     pub(crate) async fn task_artifact(
         &self,
-        task_id: TaskId,
-        text: String,
-        file: Option<FileRef>,
+        artifact: TaskArtifactParams,
     ) -> Result<Authored, SessionError> {
+        let TaskArtifactParams {
+            task_id,
+            text,
+            file,
+            file_name,
+            file_mime,
+        } = artifact;
+        let file = file.map(|path| FileRef {
+            path,
+            name: file_name,
+            mime: file_mime,
+        });
         self.call_loop(|response| SessionRequest::TaskArtifact {
             task_id,
             text,
@@ -282,8 +278,8 @@ impl InProcessSession {
             .collect())
     }
 
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
-    /// valid merge; `Err` is a transport/serialize failure only.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state. The top-level merge must be
+    /// an object; `Err` is a stopped loop or a write that the state refuses.
     pub(crate) async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.call_loop(|response| SessionRequest::StateMerge { merge, response })
             .await

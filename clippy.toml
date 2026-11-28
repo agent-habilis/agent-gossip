@@ -1,5 +1,5 @@
 # Readability-focused Clippy configuration. See [workspace.lints] in
-# Cargo.toml for the enabled lint set, and CLAUDE.md "Lint policy".
+# Cargo.toml for the enabled lint set.
 
 # Forbid every wildcard import, including `use super::*` in test modules
 # and prelude globs (clippy's wildcard_imports exempts those by default).
@@ -29,12 +29,12 @@ allowed-duplicate-crates = [
     # `chacha20poly1305` 0.10 (`chacha20` 0.9), and `crypto-common` 0.1 against 0.2.
     "base16ct", "chacha20", "const-oid", "cpufeatures", "crypto-common", "der", "getrandom",
     "pem-rfc7468", "pkcs8", "r-efi", "rand", "rand_core", "signature", "spki",
-    # `dimpl` uses `nom` 8; `acto` uses `smol_str` 0.1 and `automerge` uses 0.3.
-    "nom", "smol_str",
+    # `dimpl` uses `nom` 8.
+    "nom",
     # Two generations of the platform bindings under the network and TLS stack.
     "core-foundation", "jni", "jni-sys", "thiserror", "thiserror-impl", "untrusted", "windows-sys",
     "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc", "windows_i686_gnu",
     "windows_i686_msvc", "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
-    # `futures-buffered` uses `spin` 0.10; an older line of `spin` and `embedded-io` sits beside it.
-    "embedded-io", "spin",
+    # Two lines of `embedded-io` sit under the network stack.
+    "embedded-io",
 ]

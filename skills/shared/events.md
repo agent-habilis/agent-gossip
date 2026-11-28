@@ -83,8 +83,7 @@ recipient daemon got it. `read` means the recipient agent's poll served it.
 `ref` is the id of your original frame. A task brief or follow-up (`a2a call
 SendMessage`) earns `read` only, and its `ref` is the `messageId` of that
 message. `from` is always the peer that the frame went to. A receipt can come
-before your own echo, and the same receipt can come again later. A peer on an
-older version sends no receipts.
+before your own echo, and the same receipt can come again later.
 
 A receipt has `is_visible` false and does not ring the bell. Do not print it.
 Your own echo of a directed msg or task leg appears only after the daemon sent
@@ -97,8 +96,7 @@ send and echoes it at once.
 `peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
 `bell` is false and `last_poll_secs_ago` is large or null, no agent reads that
 peer.
-The key is absent for your own row, for a peer that runs an older version, and
-for a peer that did not answer in time. `last_poll_secs_ago` is null before the
+The key is absent for your own row and for a peer that did not answer in time. `last_poll_secs_ago` is null before the
 first poll of that peer.
 
 ### Answering

@@ -1,31 +1,27 @@
 //! The MCP server's mesh handle — a thin wrapper over the in-process
-//! [`crate::api::MeshSession`] that adds the implicit `fetch` cursor. The rmcp
+//! [`crate::api::InProcessSession`] that adds the implicit `fetch` cursor. The rmcp
 //! server, tool handlers, and arg/result types live in [`super`]; only the
 //! session plumbing lives here, reused from `api` rather than duplicated.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
-use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::AuthorKey;
 
-use crate::a2a::broadcast_params::FileRef;
-use crate::a2a::ipc_command::MetaView;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
-    A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
-    SessionError, TaskArtifactParams, TaskStatusParams, TopicConfig,
+    CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError, SessionError, TopicConfig,
 };
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
 /// Dropping it winds the loop down via the core's own `Drop`.
 pub(crate) struct Session {
-    inner: InProcessSession,
+    pub(super) core: InProcessSession,
     own_key: AuthorKey,
-    /// Implicit `after` seq cursor for [`Session::fetch_messages`].
-    last_delivered_seq: Mutex<Option<u64>>,
+    /// Implicit `after` seq cursor for [`Session::fetch_messages`]. It starts at 0, the
+    /// before-anything cursor.
+    last_delivered_seq: AtomicU64,
 }
 
 /// Our author key, or the setup failure that a stopped event loop leaves behind. A session
@@ -41,9 +37,9 @@ impl Session {
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
     pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        let inner = InProcessSession::create_poll(config).await?;
-        let own_key = require_own_key(inner.own_key().await).map_err(CreateError::Setup)?;
-        Ok(Self::wrap(inner, own_key))
+        let core = InProcessSession::create_poll(config).await?;
+        let own_key = require_own_key(core.own_key().await).map_err(CreateError::Setup)?;
+        Ok(Self::wrap(core, own_key))
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -52,9 +48,9 @@ impl Session {
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        let inner = InProcessSession::join_poll(config).await?;
-        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
-        Ok(Self::wrap(inner, own_key))
+        let core = InProcessSession::join_poll(config).await?;
+        let own_key = require_own_key(core.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(core, own_key))
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -63,169 +59,22 @@ impl Session {
     /// # Errors
     /// [`JoinError`] on setup failure.
     pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        let inner = InProcessSession::topic_poll(config).await?;
-        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
-        Ok(Self::wrap(inner, own_key))
+        let core = InProcessSession::topic_poll(config).await?;
+        let own_key = require_own_key(core.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(core, own_key))
     }
 
-    fn wrap(inner: InProcessSession, own_key: AuthorKey) -> Self {
+    fn wrap(core: InProcessSession, own_key: AuthorKey) -> Self {
         Self {
-            inner,
+            core,
             own_key,
-            last_delivered_seq: Mutex::new(None),
+            last_delivered_seq: AtomicU64::new(0),
         }
     }
 
     /// Our author key: the slot of our meta entry is its hex.
     pub(super) fn own_key(&self) -> AuthorKey {
         self.own_key
-    }
-
-    /// The resolved mesh id.
-    pub(super) fn mesh(&self) -> &MeshId {
-        self.inner.mesh_id()
-    }
-
-    /// The decoded mesh name.
-    pub(super) fn name(&self) -> &MeshName {
-        self.inner.name()
-    }
-
-    /// Our effective nickname.
-    pub(super) fn nickname(&self) -> &Nickname {
-        self.inner.nickname()
-    }
-
-    /// Broadcast a message. Returns `(id, echo)` — the new id and the
-    /// canonical [`Message`](crate::Message). The full echo is returned here, so a caller
-    /// need not re-fetch to see its own send; the self-echo also surfaces
-    /// once in a later `fetch_messages` (with `self:true`), matching the
-    /// live stream.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Authored)> {
-        let message = self.inner.broadcast(body).await?;
-        Ok((message.id.clone(), message))
-    }
-
-    /// Send a chat message to one peer. Returns `(id, echo)`, like
-    /// [`Self::send_broadcast`].
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped, or if the peer's seal key has not
-    /// replicated yet (a msg is never sent in plaintext).
-    pub(super) async fn send_msg(
-        &self,
-        to: Nickname,
-        body: MessageBody,
-    ) -> Result<(MessageId, Authored)> {
-        let message = self.inner.message(to, body).await?;
-        Ok((message.id.clone(), message))
-    }
-
-    /// Worker-emit a task `TaskStatusUpdate`. Returns `(id, echo)`.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn task_status(
-        &self,
-        status: TaskStatusParams,
-    ) -> Result<(MessageId, Authored)> {
-        let message = self.inner.task_status(status).await?;
-        Ok((message.id.clone(), message))
-    }
-
-    /// Worker-emit a task `TaskArtifactUpdate` (the result). Returns `(id, echo)`.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn task_artifact(
-        &self,
-        artifact: TaskArtifactParams,
-    ) -> Result<(MessageId, Authored)> {
-        let TaskArtifactParams {
-            task_id,
-            text,
-            file,
-            file_name,
-            file_mime,
-        } = artifact;
-        let file = file.map(|path| FileRef {
-            path,
-            name: file_name,
-            mime: file_mime,
-        });
-        let message = self.inner.task_artifact(task_id, text, file).await?;
-        Ok((message.id.clone(), message))
-    }
-
-    /// Call a peer's A2A server over gossip (request/response); returns the
-    /// parsed JSON-RPC response.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn a2a_call(
-        &self,
-        call: A2aCallParams,
-    ) -> Result<serde_json::Value, SessionError> {
-        self.inner.a2a_call(call).await
-    }
-
-    /// Snapshot the live peer roster (active + quiet, recency-sorted).
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn peers(&self) -> Result<RosterSnapshot, SessionError> {
-        self.inner.peers().await
-    }
-
-    /// Run an RTT round and return the per-peer rows. Blocks for the ping
-    /// window (a few seconds) while pongs are collected.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn ping(&self) -> Result<Vec<crate::emission::PingPeer>, SessionError> {
-        self.inner.ping().await
-    }
-
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped, if the merge is not a JSON object, or if the state
-    /// refuses the write: a slice too large, a write too soon after the last one, or a gone key.
-    pub(super) async fn apply_state_merge(
-        &self,
-        merge: serde_json::Value,
-    ) -> Result<(), SessionError> {
-        self.inner.state_merge(merge).await
-    }
-
-    /// The current derived shared-state document (the merge fold).
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn state_get(&self) -> Result<serde_json::Value, SessionError> {
-        self.inner.state_get().await
-    }
-
-    /// `meta`-channel counterpart of [`apply_state_merge`](Self::apply_state_merge).
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn apply_meta_merge(
-        &self,
-        merge: serde_json::Value,
-    ) -> Result<(), SessionError> {
-        self.inner.meta_merge(merge).await
-    }
-
-    /// `meta`-channel counterpart of [`state_get`](Self::state_get).
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn meta_get(&self) -> Result<MetaView, SessionError> {
-        self.inner.meta_get().await
     }
 
     /// Fetch surfaced events after `after`, or after the implicit seq cursor
@@ -240,41 +89,22 @@ impl Session {
     /// # Errors
     /// Fails if the event loop has stopped.
     pub(super) async fn fetch_messages(&self, after: Option<u64>, long: bool) -> Result<PollBatch> {
-        let batch = self.inner.fetch(self.effective_after(after), long).await?;
+        // Never `None`: MCP keeps its own per-session cursor, so it always speaks the
+        // explicit-seq protocol. The daemon-side read cursor and its waking-only bell
+        // semantics belong to the cursor-less CLI `poll` alone.
+        let cursor = after.unwrap_or_else(|| self.last_delivered_seq.load(Ordering::Relaxed));
+        let batch = self.core.fetch(Some(cursor), long).await?;
         if after.is_none()
             && let Some(seq) = batch.events.last().map(|item| item.seq)
         {
-            self.advance_cursor_to(seq);
+            self.last_delivered_seq.store(seq, Ordering::Relaxed);
         }
         Ok(batch)
     }
 
-    /// Explicit cursor wins; otherwise fall back to the implicit one, which
-    /// starts at 0 (the before-anything cursor). Never `None`: MCP keeps its
-    /// own per-session cursor, so it always speaks the explicit-seq protocol —
-    /// the daemon-side read cursor and its waking-only bell semantics belong
-    /// to the cursor-less CLI `poll` alone.
-    fn effective_after(&self, explicit: Option<u64>) -> Option<u64> {
-        explicit
-            .or_else(|| {
-                *self.last_delivered_seq.lock().expect(
-                    "the cursor lock is never held across a panic, so it cannot be poisoned",
-                )
-            })
-            .or(Some(0))
-    }
-
-    fn advance_cursor_to(&self, seq: u64) {
-        *self
-            .last_delivered_seq
-            .lock()
-            .expect("the cursor lock is never held across a panic, so it cannot be poisoned") =
-            Some(seq);
-    }
-
     /// Clean shutdown — delegates to the core's `leave`.
     pub(super) async fn leave(self) {
-        let _ = self.inner.leave().await;
+        let _ = self.core.leave().await;
     }
 }
 
@@ -283,10 +113,13 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::{AuthorKey, JoinTarget, Message, MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{
+        AuthorKey, JoinTarget, MeshId, MeshName, Message, MessageBody, MessageId, MessageKind,
+        Nickname, PresenceSubtype,
+    };
     use serde_json::json;
 
-    use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
+    use super::Session;
     use crate::a2a::status_update_params::chat_text;
     use crate::a2a::surfaced_event::SurfacedEvent;
     use crate::api::{CreateConfig, JoinConfig};
@@ -316,7 +149,6 @@ mod tests {
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }
             | OutputEvent::PeerReturn { .. }
-            | OutputEvent::MsgPosted { .. }
             | OutputEvent::Info { .. }
             | OutputEvent::Error { .. }
             | OutputEvent::NicknameHeld { .. }
@@ -423,7 +255,8 @@ mod tests {
     async fn establish_link(from: &Session, to: &Session, from_nick: &str) {
         let deadline = tokio::time::Instant::now() + DELIVER;
         loop {
-            from.send_broadcast(MessageBody::from("warmup"))
+            from.core
+                .broadcast(MessageBody::from("warmup"))
                 .await
                 .expect("send warmup");
             let window = (tokio::time::Instant::now() + Duration::from_secs(2)).min(deadline);
@@ -465,16 +298,16 @@ mod tests {
             .await
             .expect("a loopback create needs no network and cannot fail");
         assert!(
-            MeshId::try_new(session.mesh().as_str()).is_ok(),
+            MeshId::try_new(session.core.mesh_id().as_str()).is_ok(),
             "the mesh name is a valid mesh id"
         );
         assert_eq!(
-            session.name().as_str(),
+            session.core.name().as_str(),
             "test1",
             "the session reports the mesh name it joined"
         );
         assert_eq!(
-            session.nickname().as_str(),
+            session.core.nickname().as_str(),
             "alice-test",
             "the session reports its nickname"
         );
@@ -486,13 +319,13 @@ mod tests {
         let creator = Session::create(create_cfg("two", "alice-two"))
             .await
             .expect("a loopback create needs no network and cannot fail");
-        let mesh = creator.mesh().clone();
+        let mesh = creator.core.mesh_id().clone();
 
         let joiner = Session::join(join_cfg(&mesh, "bob-two"))
             .await
             .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
         assert_eq!(
-            joiner.name().as_str(),
+            joiner.core.name().as_str(),
             "two",
             "the joiner reports the mesh name"
         );
@@ -501,10 +334,13 @@ mod tests {
         establish_link(&joiner, &creator, "bob-two").await;
 
         // Send from creator → joiner should see it.
-        let (sent_id, _) = creator
-            .send_broadcast(MessageBody::from("hi bob"))
+        let sent_id = creator
+            .core
+            .broadcast(MessageBody::from("hi bob"))
             .await
-            .expect("a live session accepts a broadcast while the mesh is up");
+            .expect("a live session accepts a broadcast while the mesh is up")
+            .id
+            .clone();
 
         let observed = wait_for_gossip(&joiner, "alice-two", "hi bob").await;
         assert_eq!(
@@ -514,10 +350,13 @@ mod tests {
         );
 
         // And the reverse direction.
-        let (reply_id, _) = joiner
-            .send_broadcast(MessageBody::from("hi alice"))
+        let reply_id = joiner
+            .core
+            .broadcast(MessageBody::from("hi alice"))
             .await
-            .expect("a live session accepts a broadcast while the mesh is up");
+            .expect("a live session accepts a broadcast while the mesh is up")
+            .id
+            .clone();
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
         assert_eq!(
             observed2,
@@ -534,7 +373,7 @@ mod tests {
         let creator = Session::create(create_cfg("lp", "alice-lp"))
             .await
             .expect("a loopback create needs no network and cannot fail");
-        let mesh = creator.mesh().clone();
+        let mesh = creator.core.mesh_id().clone();
         let joiner = Session::join(join_cfg(&mesh, "bob-lp"))
             .await
             .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
@@ -559,7 +398,7 @@ mod tests {
         let delayed_send = async {
             tokio::time::sleep(Duration::from_millis(300)).await;
             creator
-                .send_broadcast(MessageBody::from("after warmup"))
+                .core.broadcast(MessageBody::from("after warmup"))
                 .await
                 .expect("the sender is still joined, so the broadcast that wakes the poller must go out");
         };
@@ -607,11 +446,12 @@ mod tests {
             .await
             .expect("a loopback create needs no network and cannot fail");
 
-        let (sent, echo) = alice
-            .send_broadcast(MessageBody::from("self-echo"))
+        let echo = alice
+            .core
+            .broadcast(MessageBody::from("self-echo"))
             .await
             .expect("a live session accepts a broadcast while the mesh is up");
-        assert_eq!(echo.id, sent, "the echo carries the sent message id");
+        let sent = echo.id.clone();
         assert_eq!(
             echo.author.as_str(),
             "alice-replay",
@@ -656,7 +496,7 @@ mod tests {
         let alice = Session::create(create_cfg("cursor", "alice-cursor"))
             .await
             .expect("a loopback create needs no network and cannot fail");
-        let mesh = alice.mesh().clone();
+        let mesh = alice.core.mesh_id().clone();
         let bob = Session::join(join_cfg(&mesh, "bob-cursor"))
             .await
             .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
@@ -691,7 +531,8 @@ mod tests {
 
         // Bob sends — alice's next cursor-less fetch must surface bob's
         // message, nothing older.
-        bob.send_broadcast(MessageBody::from("hi via cursor"))
+        bob.core
+            .broadcast(MessageBody::from("hi via cursor"))
             .await
             .expect("a live session accepts a broadcast while the mesh is up");
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -750,7 +591,7 @@ mod tests {
         let first = Session::create(create_cfg("cy-a", "cycler-a"))
             .await
             .expect("a fresh process has no session yet, so the first create is not blocked");
-        let first_mesh = first.mesh().clone();
+        let first_mesh = first.core.mesh_id().clone();
         first.leave().await;
 
         // Second cycle — new session, new mesh.
@@ -758,12 +599,12 @@ mod tests {
             .await
             .expect("second create after first was left");
         assert_ne!(
-            second.mesh(),
+            second.core.mesh_id(),
             &first_mesh,
             "second create should mint a fresh mesh id"
         );
         assert_eq!(
-            second.nickname().as_str(),
+            second.core.nickname().as_str(),
             "cycler-b",
             "the second session reports its own nickname"
         );
@@ -780,12 +621,14 @@ mod tests {
         let own = session.own_key().to_string();
 
         session
-            .apply_state_merge(json!({"turn": "a"}))
+            .core
+            .state_merge(json!({"turn": "a"}))
             .await
             .expect("an object merge applies");
         let expected = json!({ own.as_str(): {"turn": "a"} });
         assert_eq!(
             session
+                .core
                 .state_get()
                 .await
                 .expect("a created session owns its shared state document, so reading it succeeds"),
@@ -794,11 +637,12 @@ mod tests {
         );
 
         assert!(
-            session.apply_state_merge(json!([1, 2, 3])).await.is_err(),
+            session.core.state_merge(json!([1, 2, 3])).await.is_err(),
             "a non-object top-level merge must be rejected"
         );
         assert_eq!(
             session
+                .core
                 .state_get()
                 .await
                 .expect("a created session owns its shared state document, so reading it succeeds"),

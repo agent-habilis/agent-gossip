@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -186,18 +185,15 @@ impl Node {
             .count()
     }
 
-    /// How many **distinct** messages from `author` have a body starting with
-    /// `prefix` — the convergence metric for the anti-entropy gap-recovery
-    /// tests (each sends `prefix-{i}` and waits for the full distinct set).
+    /// Whether the child still runs. A child that exited is reaped by this call.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// The process id of the daemon, for a test that signals it or reads its files.
     #[must_use]
-    pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
-        let messages: Vec<ChatMessage> = self.messages().collect();
-        let matching: Vec<&ChatMessage> = messages
-            .iter()
-            .filter(|message| message.author == author && message.body.starts_with(prefix))
-            .collect();
-        let distinct: HashSet<&String> = matching.iter().map(|message| &message.body).collect();
-        distinct.len()
+    pub fn pid(&self) -> u32 {
+        self.child.id()
     }
 
     /// Send SIGINT to the child process (triggers the ctrl-c handler).
@@ -244,7 +240,7 @@ impl Node {
     // timing symptom. INT and KILL stay lenient: a test may signal a child
     // that has already exited.
     fn signal(&self, signature: &str) {
-        let pid = self.child.id();
+        let pid = self.pid();
         let status = Command::new("kill")
             .args([signature, &pid.to_string()])
             .status();

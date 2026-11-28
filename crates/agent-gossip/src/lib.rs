@@ -34,9 +34,9 @@
 // externally-visible `agent_gossip::` API stable across the engine split.
 pub use habilis_network::embed::{Lane, Reach, RosterEntry, RosterSnapshot};
 pub use habilis_network::protocol::{
-    BodyError, Channel, IdError, InviteTicket, JoinTarget, LookupSet, MeshId, MeshIdError,
-    MeshName, Message, MessageBody, MessageId, MessageKind, NameError, Nickname, NicknameError,
-    PresenceSubtype, RelayLadder, RelayLadderError, RelaySelection, Shard, ShardGroup,
+    BodyError, Channel, IdError, JoinTarget, LookupSet, MeshId, MeshIdError, MeshName, Message,
+    MessageBody, MessageId, MessageKind, NameError, Nickname, NicknameError, PresenceSubtype,
+    RelayLadder, RelayLadderError, RelaySelection,
 };
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.

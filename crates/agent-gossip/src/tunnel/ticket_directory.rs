@@ -10,23 +10,24 @@
 //! / [`TicketDirectory`]) wrap it around a directory [`MeshSession`].
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use habilis_network::ops::directory;
-use habilis_network::protocol::{LookupOpts, LookupSet, MeshId, MeshName, MessageBody, Nickname};
-use habilis_network::runtime::CoHostPolicy;
-use habilis_network::runtime::tuning::{
-    advertise_interval, directory_expiry, directory_private_for_test,
+use habilis_network::protocol::{
+    LookupOpts, LookupSet, MeshId, MeshName, Message, MessageBody, Nickname,
 };
+use habilis_network::runtime::CoHostPolicy;
+use habilis_network::runtime::tuning::{directory_expiry, directory_private_for_test};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
-use crate::api::{
-    DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory, event_sink,
-};
+use crate::a2a::status_update_params;
+use crate::api::advertiser::Advertiser;
+use crate::api::directory::Collector;
+use crate::api::{MeshSession, directory as api_directory, event_sink};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
 /// flood of hostile ads must not grow the picker without bound.
@@ -71,13 +72,6 @@ pub(crate) struct TicketListing {
     last_seen: Instant,
 }
 
-/// The change one [`TicketListings::note`] made, keyed by the ticket string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TicketChange {
-    Found(String),
-    Updated(String),
-}
-
 /// The pure, network-free ticket collector.
 #[derive(Debug, Default)]
 pub(crate) struct TicketListings {
@@ -85,17 +79,11 @@ pub(crate) struct TicketListings {
 }
 
 impl TicketListings {
-    pub(crate) fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-
     /// Process one directory message body. A valid [`TicketAd`] whose ticket
-    /// decodes as an a2a ticket refreshes liveness; `Found` for a new ticket,
-    /// `Updated` only when the label changed, `None` for an unchanged re-ad, a
-    /// non-a2a ticket, or an unparseable body.
-    pub(crate) fn note(&mut self, body: &str, now: Instant) -> Option<TicketChange> {
+    /// decodes as an a2a ticket refreshes liveness; the listing for a new
+    /// ticket or a changed label, `None` for an unchanged re-ad, a non-a2a
+    /// ticket, or an unparseable body.
+    pub(crate) fn note(&mut self, body: &str, now: Instant) -> Option<&TicketListing> {
         let ad = TicketAd::parse(body)?;
         // The structural ticket decode is the validity gate (prefix + checksum).
         let password = A2aTicket::decode(&ad.ticket).ok()?.password;
@@ -103,16 +91,8 @@ impl TicketListings {
             .label
             .map(|label| label.chars().take(MAX_LABEL_CHARS).collect());
 
-        if let Some(listing) = self.entries.get_mut(&ad.ticket) {
-            listing.last_seen = now;
-            if listing.label == label {
-                return None;
-            }
-            listing.label = label;
-            return Some(TicketChange::Updated(ad.ticket));
-        }
-
-        if self.entries.len() >= MAX_LISTINGS
+        if !self.entries.contains_key(&ad.ticket)
+            && self.entries.len() >= MAX_LISTINGS
             && let Some((ticket, _)) = self
                 .entries
                 .iter()
@@ -121,16 +101,33 @@ impl TicketListings {
             let stalest = ticket.clone();
             self.entries.remove(&stalest);
         }
-        self.entries.insert(
-            ad.ticket.clone(),
-            TicketListing {
-                ticket: ad.ticket.clone(),
-                label,
-                password,
-                last_seen: now,
-            },
-        );
-        Some(TicketChange::Found(ad.ticket))
+        match self.entries.entry(ad.ticket) {
+            Entry::Occupied(occupied) => {
+                let listing = occupied.into_mut();
+                listing.last_seen = now;
+                if listing.label == label {
+                    return None;
+                }
+                listing.label = label;
+                Some(listing)
+            }
+            Entry::Vacant(vacant) => {
+                let ticket = vacant.key().clone();
+                Some(vacant.insert(TicketListing {
+                    ticket,
+                    label,
+                    password,
+                    last_seen: now,
+                }))
+            }
+        }
+    }
+
+    /// Record the ad that `frame` carries. An ad rides a broadcast chat frame, so the ad is the text of the
+    /// payload, not the frame body: that body is a serialized A2A message.
+    fn note_frame(&mut self, frame: &Message, now: Instant) -> Option<&TicketListing> {
+        let ad_text = status_update_params::chat_text(frame)?;
+        self.note(&ad_text, now)
     }
 
     /// Drop every listing whose last ad is older than `ttl`, returning the
@@ -147,10 +144,6 @@ impl TicketListings {
         expired
     }
 
-    fn get(&self, ticket: &str) -> Option<&TicketListing> {
-        self.entries.get(ticket)
-    }
-
     /// The current listings, sorted by label then ticket. Test-only: the live
     /// path streams `TicketDirectoryEvent`s rather than snapshotting.
     #[cfg(test)]
@@ -165,9 +158,9 @@ impl TicketListings {
     }
 }
 
-/// Advertise `ad` into `directory` on a timer, reachable over `lookups`. Returns
-/// the task handle; dropping it leaves the directory. A directory-join failure
-/// logs and ends the task — the bridge keeps serving, just unlisted.
+/// Advertise `ad` into `directory` on a timer, reachable over `lookups`. The
+/// task runs until the caller drops the returned guard. A directory-join
+/// failure logs and ends the task — the bridge keeps serving, just unlisted.
 ///
 /// # Errors
 /// The ad fails to serialize into a message body (a bad label).
@@ -175,44 +168,22 @@ pub(crate) fn spawn_ticket_advertiser(
     directory: MeshName,
     lookups: LookupOpts,
     ad: &TicketAd,
-) -> Result<JoinHandle<()>> {
+) -> Result<Advertiser> {
     // Validate/render once, eagerly — a bad label errors at spawn, not silently
     // every tick.
     let body = ad.to_body()?;
-    Ok(tokio::spawn(async move {
-        let mesh = directory::directory_mesh(&directory, lookups);
-        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
-        {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::warn!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    directory = %directory,
-                    "a2a advertise: could not join the directory; ticket stays unlisted"
-                );
-                return;
-            }
-        };
-        let mut ticker = tokio::time::interval(advertise_interval());
-        loop {
-            ticker.tick().await;
-            if let Err(error) = session.broadcast(body.clone()).await {
-                tracing::debug!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    "a2a advertise: re-broadcast failed (will retry next tick)"
-                );
-            }
-        }
-    }))
+    Ok(Advertiser::spawn(api_directory::advertise(
+        directory,
+        lookups,
+        move || body.clone(),
+    )))
 }
 
 /// A ticket-directory change observed by a [`TicketDirectory`].
 #[derive(Debug, Clone)]
 pub(crate) enum TicketDirectoryEvent {
+    /// A new ticket, or a listed ticket whose label changed.
     Found(TicketListing),
-    Updated(TicketListing),
     Lost(String),
     /// The feed dropped this many events since the last one it sent, so the listing may be stale.
     EventsLost(u64),
@@ -233,28 +204,32 @@ impl event_sink::Evictable for TicketDirectoryEvent {
 /// background, and ages out silent publishers.
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
-    session: Option<MeshSession>,
-    events_rx: Option<event_sink::EventReceiver<TicketDirectoryEvent>>,
-    task: Option<JoinHandle<()>>,
+    // First, so that an implicit drop stops the collector before the session, as `close` does.
+    collector: Collector,
+    session: MeshSession,
 }
 
 impl TicketDirectory {
     /// Open directory `name` and collect a2a ticket ads over `lookups` — the
     /// same topic-coupling rule as mesh discovery: advertiser and discoverer
-    /// meet only over the same lookups.
+    /// meet only over the same lookups. Returns the directory and its event
+    /// stream (`Found` / `Lost`).
     ///
     /// # Errors
     /// The directory session cannot be established.
-    pub(crate) async fn open(name: MeshName, lookups: LookupSet) -> Result<Self> {
+    pub(crate) async fn open(
+        name: &MeshName,
+        lookups: LookupSet,
+    ) -> Result<(Self, event_sink::EventReceiver<TicketDirectoryEvent>)> {
         let resolved =
             api_directory::resolve_lookups_or_public(!directory_private_for_test(), lookups);
-        let mesh = directory::directory_mesh(&name, resolved);
+        let mesh = directory::directory_mesh(name, resolved);
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
-        let mut listings = TicketListings::new();
+        let mut listings = TicketListings::default();
         let (events_tx, events_rx) = event_sink::event_feed();
 
-        let task = tokio::spawn(async move {
+        let collector = Collector::spawn(async move {
             let ttl = directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
@@ -263,21 +238,8 @@ impl TicketDirectory {
                     received = inbound.recv() => match received {
                         Ok(message) => {
                             let now = Instant::now();
-                            let event = {
-                                let change = listings.note(message.body.as_str(), now);
-                                let listing_of = |ticket: &str| listings.get(ticket).cloned();
-                                match change {
-                                    Some(TicketChange::Found(ticket)) => {
-                                        listing_of(&ticket).map(TicketDirectoryEvent::Found)
-                                    }
-                                    Some(TicketChange::Updated(ticket)) => {
-                                        listing_of(&ticket).map(TicketDirectoryEvent::Updated)
-                                    }
-                                    None => None,
-                                }
-                            };
-                            if let Some(event) = event {
-                                events_tx.publish(event);
+                            if let Some(listing) = listings.note_frame(&message, now) {
+                                events_tx.publish(TicketDirectoryEvent::Found(listing.clone()));
                             }
                         }
                         // A slow consumer dropped inbound — listings self-heal on
@@ -296,47 +258,21 @@ impl TicketDirectory {
             }
         });
 
-        Ok(Self {
-            session: Some(session),
-            events_rx: Some(events_rx),
-            task: Some(task),
-        })
+        Ok((Self { collector, session }, events_rx))
     }
 
-    /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
-    /// returns the receiver once, then `None`.
-    pub(crate) fn events(&mut self) -> Option<event_sink::EventReceiver<TicketDirectoryEvent>> {
-        self.events_rx.take()
-    }
-
-    /// The directory session's `(mesh id, nickname)` while open — for
-    /// `logging::attach`.
-    pub(crate) fn session_identity(&self) -> Option<(&MeshId, &Nickname)> {
-        self.session
-            .as_ref()
-            .map(|session| (session.mesh_id(), session.nickname()))
+    /// The directory session's `(mesh id, nickname)` — for `logging::attach`.
+    pub(crate) fn session_identity(&self) -> (&MeshId, &Nickname) {
+        (self.session.mesh_id(), self.session.nickname())
     }
 
     /// Leave the directory and stop collecting.
     ///
     /// # Errors
     /// Propagates a clean-shutdown error from [`MeshSession::leave`].
-    pub(crate) async fn close(mut self) -> Result<()> {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-        if let Some(session) = self.session.take() {
-            session.leave().await?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for TicketDirectory {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
+    pub(crate) async fn close(self) -> Result<()> {
+        drop(self.collector);
+        Ok(self.session.leave().await?)
     }
 }
 
@@ -344,17 +280,16 @@ impl Drop for TicketDirectory {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use habilis_network::iroh::{EndpointAddr, SecretKey};
-    use habilis_network::protocol::LookupOpts;
+    use habilis_network::protocol::{AppFrameParams, LookupOpts, MeshId, Message, Nickname};
 
-    use super::{TicketAd, TicketChange, TicketListings};
+    use super::{TicketAd, TicketListings};
+    use crate::a2a::{status_update_params, wire};
     use crate::tunnel::a2a_ticket::A2aTicket;
+    use crate::tunnel::tests as fixtures;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
-        let address = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())
-            .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"));
         A2aTicket {
-            address,
+            address: fixtures::sample_addr(secret),
             secret: habilis_network::protocol::TicketSecret::from([secret; 32]),
             lookups: LookupOpts::loopback(),
             password,
@@ -373,6 +308,36 @@ mod tests {
         .to_owned()
     }
 
+    /// The frame that `MeshSession::broadcast` puts on the wire for `text`: the text is one part of an A2A
+    /// message, and that message is the frame body.
+    fn broadcast_frame(text: &str) -> Message {
+        let mesh = MeshId::from("test");
+        let payload = status_update_params::compose_broadcast(&mesh, text);
+        let body = status_update_params::payload_body(&payload).expect("a text payload serializes");
+        Message::new_app(
+            &mesh,
+            &Nickname::from("exposer"),
+            AppFrameParams::new(wire::app_tag(wire::BROADCAST), None, None, body),
+        )
+    }
+
+    #[test]
+    fn an_ad_in_a_broadcast_frame_is_a_new_listing() {
+        let ticket = a2a_ticket(7, false);
+        let mut dir = TicketListings::default();
+
+        let listing = dir.note_frame(
+            &broadcast_frame(&ad_body(&ticket, Some("one"))),
+            Instant::now(),
+        );
+
+        assert_eq!(
+            listing.map(|listing| listing.ticket.clone()),
+            Some(ticket),
+            "the advertiser sends the ad through `MeshSession::broadcast`, so `a2a discover` never lists a bridge"
+        );
+    }
+
     #[test]
     fn mesh_ads_and_ticket_ads_never_cross_parse() {
         // A mesh ad has `id`; a ticket ad `ticket`.
@@ -385,14 +350,11 @@ mod tests {
     #[test]
     fn note_found_then_updated_then_expire_lost() {
         let ticket = a2a_ticket(7, false);
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         let start = Instant::now();
 
         assert!(
-            matches!(
-                dir.note(&ad_body(&ticket, Some("one")), start),
-                Some(TicketChange::Found(_))
-            ),
+            dir.note(&ad_body(&ticket, Some("one")), start).is_some(),
             "the first ad is a new listing"
         );
         assert!(
@@ -404,13 +366,11 @@ mod tests {
             "an unchanged re-ad refreshes liveness without an event"
         );
         assert!(
-            matches!(
-                dir.note(
-                    &ad_body(&ticket, Some("two")),
-                    start + Duration::from_secs(30)
-                ),
-                Some(TicketChange::Updated(_))
-            ),
+            dir.note(
+                &ad_body(&ticket, Some("two")),
+                start + Duration::from_secs(30)
+            )
+            .is_some(),
             "a changed label is an update"
         );
         assert_eq!(
@@ -430,7 +390,7 @@ mod tests {
     #[test]
     fn passworded_ticket_listing_carries_the_flag() {
         let ticket = a2a_ticket(5, true);
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         dir.note(&ad_body(&ticket, Some("drop")), Instant::now());
         assert!(dir.snapshot()[0].password, "a password listing is flagged");
     }
@@ -439,7 +399,7 @@ mod tests {
     fn hostile_labels_are_truncated() {
         let ticket = a2a_ticket(9, false);
         let long = "x".repeat(10_000);
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         dir.note(&ad_body(&ticket, Some(&long)), Instant::now());
         assert_eq!(
             dir.snapshot()[0].label.as_ref().map(String::len),
@@ -450,7 +410,7 @@ mod tests {
 
     #[test]
     fn junk_and_malformed_tickets_are_ignored() {
-        let mut dir = TicketListings::new();
+        let mut dir = TicketListings::default();
         assert!(
             dir.note("", Instant::now()).is_none(),
             "an empty note is ignored"
