@@ -508,7 +508,9 @@ pub(crate) fn apply_leg(
     // before it: only the leg that closes a task still moves its record. A leg that the state
     // machine does not accept is no news and takes no seq in.
     if reach == Reach::Finished && facts.kind == LegKind::Beat && !mine {
-        let resend = tasks.get(task_id).is_some_and(owes_end);
+        let resend = tasks
+            .get(task_id)
+            .is_some_and(|rec| owes_end(rec) && rec.peer_key == *peer_key);
         return Applied {
             beat: resend.then_some(BeatAction::Resend),
             ..Applied::NONE
@@ -537,22 +539,22 @@ pub(crate) fn apply_leg(
         && tasks
             .get_mut(task_id)
             .is_some_and(|rec| worker_lost(rec, (facts.seq, facts.at), now));
+    if lost {
+        return Applied {
+            beat: Some(BeatAction::Lost),
+            ..Applied::NONE
+        };
+    }
     let quarter_moved = record_frame_facts(tasks, task_id, &facts, (mine, fresh));
     let finished = closed.get(task_id).is_some();
     let repair = from_peer_beat
-        && !lost
         && tasks
             .get_mut(task_id)
             .is_some_and(|rec| asks_for_repair(rec, facts.seq, now));
-    let beat = if lost {
-        Some(BeatAction::Lost)
-    } else {
-        repair.then_some(BeatAction::Ask)
-    };
     Applied {
         news: fresh && !finished && reach != Reach::Unknown,
         quarter_moved: quarter_moved && !finished,
-        beat,
+        beat: repair.then_some(BeatAction::Ask),
     }
 }
 
@@ -1065,7 +1067,6 @@ pub(crate) fn reconcile_initiator(
     rec.last_peer_activity = now;
     rec.asked_at = None;
     let seq = snapshot.seq.filter(|seq| *seq > rec.peer_seq)?;
-    let asked = rec.state;
     rec.peer_seq = seq;
     rec.peer_seq_at = sent_at;
     if snapshot.state.is_terminal() {
@@ -1083,7 +1084,7 @@ pub(crate) fn reconcile_initiator(
         rec.shown_progress = snapshot.progress;
         rec.shown_seq = seq;
     }
-    let parked = snapshot.state == TaskState::InputRequired && asked != TaskState::InputRequired;
+    let parked = snapshot.state == TaskState::InputRequired;
     (parked || snapshot.state.is_terminal()).then(|| gap_notice(task_id, rec, &snapshot))
 }
 
@@ -1100,7 +1101,7 @@ fn gap_notice(task_id: &TaskId, rec: &TaskRecord, snapshot: &Snapshot) -> GapNot
         state: snapshot.state,
         text,
         truncated: capped.is_some_and(|capped| capped.truncated),
-        review: snapshot.review,
+        review: rec.review,
     }
 }
 
@@ -1152,7 +1153,7 @@ pub(crate) fn give_back_seq(tasks: &mut HashMap<TaskId, TaskRecord>, task_id: &T
     if let Some(rec) = tasks.get_mut(task_id)
         && rec.seq == seq
     {
-        rec.seq = seq - 1;
+        rec.seq = seq.saturating_sub(1);
     }
 }
 
@@ -4750,8 +4751,8 @@ mod tests {
             "and the worker that asked it"
         );
         assert!(
-            reconcile(&mut tasks, question(5)).is_none(),
-            "a task that was parked already is not a new gap"
+            reconcile(&mut tasks, question(5)).is_some(),
+            "a second question that was lost, on a task parked already, is a gap too"
         );
 
         let mut other = working_task_we_opened(start);
@@ -4945,6 +4946,38 @@ mod tests {
         assert!(
             super::asks_for_repair(answered, Some(9), start),
             "the reply cleared the ask, so a beat that shows a leg beyond it asks again"
+        );
+    }
+
+    /// A worker already in `input-required` can send another question or a corrected result. A
+    /// snapshot that shows it, after the leg was lost, is a gap like any other.
+    #[test]
+    fn a_lost_second_question_is_a_gap() {
+        let start = Instant::now();
+        let mut parked = working_task_we_opened(start);
+        let reconcile = |registry: &mut HashMap<TaskId, TaskRecord>, seq: u64| {
+            super::reconcile_initiator(
+                registry,
+                super::ReconcileParams {
+                    task_id: &tid(),
+                    peer_key: &peer_key("calm-otter"),
+                    snapshot: snapshot_at(TaskState::InputRequired, seq),
+                    sent_at: UnixSecs::now(),
+                    now: start,
+                },
+            )
+        };
+        assert!(
+            reconcile(&mut parked, 2).is_some(),
+            "the first question that was lost is a gap"
+        );
+        assert!(
+            reconcile(&mut parked, 4).is_some(),
+            "so is a second one, though the task was already parked"
+        );
+        assert!(
+            reconcile(&mut parked, 4).is_none(),
+            "a snapshot that shows nothing new is no gap"
         );
     }
 

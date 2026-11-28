@@ -741,12 +741,6 @@ async fn handle_a2a_rpc(
             (&message.key(), message.timestamp),
             message.body.as_str(),
         );
-        // No test drives this call: the event-loop types have no test constructor. The decision
-        // itself, `owed_ends_full`, has a test at 10 times the cap. If this line goes, the
-        // owed cancels wait for the next task sweep and the list can pass its cap.
-        if app.owed_ends_full() {
-            task_record::send_owed_ends(state, app, context).await;
-        }
     }
 }
 

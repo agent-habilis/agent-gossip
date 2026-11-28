@@ -1,6 +1,6 @@
 //! Native A2A task lifecycle tests (in-process, via the `InProcNode`
 //! harness). A task is created by a directed `message/send` over the gossip
-//! request/response binding — the **worker** mints the id and returns the
+//! request/response binding — the **initiator** mints the id and the worker returns the
 //! `Task` — then advanced by worker-pushed `TaskStatusUpdate` /
 //! `TaskArtifactUpdate` frames (the A2A streaming plane) and initiator
 //! `message/send` follow-ups, and closed by the **worker's** `completed`
@@ -329,8 +329,7 @@ async fn cancel_advances_the_cancellers_own_record_and_response() {
     bob.leave().await;
 }
 
-/// Two tasks created on the same worker get **distinct** server-minted ids and
-/// advance independently.
+/// Two tasks created to the same worker get **distinct** ids and advance independently.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_tasks_get_distinct_ids() {
     let alice = InProcNode::create("t-two").await;
@@ -339,7 +338,7 @@ async fn two_tasks_get_distinct_ids() {
 
     let first = task_id_of(&alice.create_task("t-two-bob", "task one").await);
     let second = task_id_of(&alice.create_task("t-two-bob", "task two").await);
-    assert_ne!(first, second, "each task gets its own server-minted id");
+    assert_ne!(first, second, "each task gets its own id");
 
     alice.leave().await;
     bob.leave().await;

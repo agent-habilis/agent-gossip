@@ -139,8 +139,7 @@ pub(crate) struct A2aApp {
     orphan_blobs: VecDeque<ContentId>,
     /// Ends owed to peers: a task that this node ended by a leg of its own, whose peer still beats
     /// as if it never got that leg. The receive path sends them after the frame that owed one, and
-    /// when the list reaches `OWED_ENDS_CAP`, and the task sweep drains the whole Vec, so it holds
-    /// one frame's pushes at most.
+    /// the task sweep drains the whole Vec, so it holds one frame's pushes at most.
     owed_ends: Vec<(TaskId, AuthorKey)>,
     /// Tasks whose worker showed, by a beat, a leg that never arrived, with the key of the worker:
     /// the receive path asks each worker for its task after the frame that showed it, so the Vec
@@ -527,11 +526,6 @@ impl A2aApp {
         }
     }
 
-    /// Whether the ends owed to peers reached [`tuning::OWED_ENDS_CAP`]: the caller sends them at once.
-    pub(crate) fn owed_ends_full(&self) -> bool {
-        self.owed_ends.len() >= tuning::OWED_ENDS_CAP
-    }
-
     /// Whether any end is owed.
     pub(crate) fn owes_ends(&self) -> bool {
         !self.owed_ends.is_empty()
@@ -567,6 +561,9 @@ impl A2aApp {
         let Some(returned) = returned_task(body) else {
             return;
         };
+        // The worker echoes the label of the brief, so the alarm can name the task, and so can a
+        // notice of a gap.
+        task_record::set_label(&mut self.tasks, &returned.id, peer_key, returned.label);
         let gap = task_record::reconcile_initiator(
             &mut self.tasks,
             task_record::ReconcileParams {
@@ -577,8 +574,6 @@ impl A2aApp {
                 now: Instant::now(),
             },
         );
-        // The worker echoes the label of the brief, so the alarm can name the task.
-        task_record::set_label(&mut self.tasks, &returned.id, peer_key, returned.label);
         // A question or an end that was lost on the way: the agent of the sender must hear it.
         if let Some(gap) = gap {
             self.output.task_gap(&gap);
@@ -910,34 +905,6 @@ mod tests {
         assert!(
             !kept.contains(&&ContentId::new("group-0")),
             "the oldest orphan must be gone, or the cap drops the new ones"
-        );
-    }
-
-    /// The receive path sends the owed ends at once when the list is full, so the list never holds
-    /// more than the cap, and no end is dropped.
-    #[test]
-    fn the_owed_ends_never_pass_the_cap_and_none_is_lost() {
-        let mut app = super::A2aApp::new();
-        let mut sent = 0;
-        let mut longest = 0;
-        for _ in 0..10 * tuning::OWED_ENDS_CAP {
-            app.owe_end(&TaskId::random(), &bob_key());
-            longest = longest.max(app.owed_ends.len());
-            if app.owed_ends_full() {
-                sent += app.take_owed_ends().len();
-            }
-        }
-        sent += app.take_owed_ends().len();
-
-        assert_eq!(
-            longest,
-            tuning::OWED_ENDS_CAP,
-            "10 times the cap was owed: the list must not hold more than the cap"
-        );
-        assert_eq!(
-            sent,
-            10 * tuning::OWED_ENDS_CAP,
-            "every owed end must be sent, none dropped for want of room"
         );
     }
 

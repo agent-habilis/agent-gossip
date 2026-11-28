@@ -6,7 +6,7 @@ pub(crate) struct TaskStatusArgs {
     /// The task id (UUID) you're serving.
     pub(crate) task_id: String,
     /// The A2A task state: "working", "input-required" (a question, or
-    /// "please review" after an artifact), "completed", "failed", "canceled".
+    /// "please review" after an artifact), "completed", "failed", "canceled", "rejected".
     pub(crate) state: String,
     /// The status message: a question, a completion summary, a failure
     /// reason. Required with state "working" (what changed since the last
