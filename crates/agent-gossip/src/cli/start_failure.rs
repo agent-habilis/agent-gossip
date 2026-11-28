@@ -27,16 +27,24 @@ fn serving(state_file: &Path) -> bool {
 }
 
 /// Write `text` to `path` as one file that only the user reads, in one step: a reader sees the old
-/// file or the new one, never half of it.
+/// file or the new one, never half of it. The scratch name holds the pid, and the file is made new, so
+/// 2 starts that fail at the same time never write into one scratch file.
 fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     let mut name = path.as_os_str().to_owned();
-    name.push(".tmp-failed");
+    name.push(format!(".tmp-failed-{}", std::process::id()));
     let scratch = PathBuf::from(name);
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true).mode(0o600);
+    options.write(true).create_new(true).mode(0o600);
+    // A scratch file of this pid that an earlier crash left is not ours to append to.
+    let _ = std::fs::remove_file(&scratch);
     let mut file = options.open(&scratch)?;
-    file.write_all(text.as_bytes())?;
-    std::fs::rename(&scratch, path)
+    let written = file
+        .write_all(text.as_bytes())
+        .and_then(|()| std::fs::rename(&scratch, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&scratch);
+    }
+    written
 }
 
 /// Put the error of a start that failed into `state_file`, as a snapshot that is not ready, for
