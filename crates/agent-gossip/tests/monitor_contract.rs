@@ -196,6 +196,20 @@ impl JsonNode {
             .collect()
     }
 
+    /// SIGSTOP the daemon: it stays alive and answers nothing until [`cont`](Self::cont).
+    fn stop(&self) {
+        let _ = Command::new("kill")
+            .args(["-STOP", &self.child.id().to_string()])
+            .status();
+    }
+
+    /// SIGCONT a daemon that [`stop`](Self::stop) froze.
+    fn cont(&self) {
+        let _ = Command::new("kill")
+            .args(["-CONT", &self.child.id().to_string()])
+            .status();
+    }
+
     fn sigint(&self) {
         let _ = Command::new("kill")
             .args(["-2", &self.child.id().to_string()])
@@ -2576,6 +2590,9 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-late");
 
     let (sent, _bytes) = scratch_file("late.tar");
+    // The frozen worker cannot answer before the deadline, whatever the timing: the reply of a
+    // worker that races the deadline is a confirmed task, not the unconfirmed one under test.
+    worker.stop();
     let out: std::process::Output = cli_call(
         &mesh,
         &creator.nickname,
@@ -2589,6 +2606,7 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     )
     .output()
     .expect("a2a call command failed to spawn");
+    worker.cont();
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("mesh:unconfirmed"),
         "the call must time out before the reply and hand back its task unconfirmed: {}",
@@ -2650,6 +2668,9 @@ async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
     );
     common::await_peer_card_cli(&mesh, &creator.nickname, "tp-late");
 
+    // The frozen worker cannot answer before the deadline, whatever the timing: the reply of a
+    // worker that races the deadline is a confirmed task, not the unconfirmed one under test.
+    worker.stop();
     let out: std::process::Output = cli_call(
         &mesh,
         &creator.nickname,
@@ -2663,6 +2684,7 @@ async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
     )
     .output()
     .expect("a2a call command failed to spawn");
+    worker.cont();
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("mesh:unconfirmed"),
         "the call must time out before the reply and hand back its task unconfirmed: {}",

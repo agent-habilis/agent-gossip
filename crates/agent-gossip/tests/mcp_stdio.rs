@@ -1273,13 +1273,30 @@ fn task_creation_surfaces_to_worker_via_fetch() {
                 "timeout_secs": 10,
             }),
         );
-        let unconfirmed = tool_result_json(&raw).is_some_and(|response| {
-            response["result"]["task"]["metadata"]["mesh:unconfirmed"] == true
+        let unconfirmed: Option<String> = tool_result_json(&raw).and_then(|response| {
+            let task = &response["result"]["task"];
+            (task["metadata"]["mesh:unconfirmed"] == true)
+                .then(|| task["id"].as_str().map(str::to_owned))
+                .flatten()
         });
-        let timed_out =
-            unconfirmed || tool_error(&raw).is_some_and(|error| error.contains("timed out"));
+        let timed_out = unconfirmed.is_some()
+            || tool_error(&raw).is_some_and(|error| error.contains("timed out"));
         if !timed_out || Instant::now() >= call_deadline {
             break raw;
+        }
+        // The task that the attempt left unconfirmed must not outlive the retry. The creator may
+        // not hold it, and then the cancel is refused, which is fine.
+        if let Some(task_id) = unconfirmed {
+            let _ = joiner.tool_call(
+                attempt_id + 100,
+                "a2a_call",
+                &serde_json::json!({
+                    "to": creator_nick,
+                    "method": "CancelTask",
+                    "params": { "id": task_id },
+                    "timeout_secs": 5,
+                }),
+            );
         }
         attempt_id += 1;
     };

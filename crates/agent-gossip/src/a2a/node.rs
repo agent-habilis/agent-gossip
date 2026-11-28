@@ -74,12 +74,7 @@ impl NodeApp for A2aApp {
         _state: &mut EventLoopState,
         _ctx: &HandlerCtx<'_>,
     ) {
-        // Clone the render sink into a local so it doesn't alias the `&mut
-        // self` passed alongside it. Tasks first, then waiters: a waiter must
-        // never resolve while its task record is still live.
-        let out = self.output.clone();
-        task_record::fail_tasks_for_departed_peer(&mut self.tasks, key, &out);
-        self.fail_a2a_waiters_for_peer((key, nickname));
+        self.peer_left((key, nickname));
     }
 }
 
@@ -581,6 +576,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         if status_update_params::is_incomplete_checkin(message) {
             return Routed::default();
         }
+        let known = app.tasks.contains_key(&task_id);
         let applied = task_record::apply_leg(
             &mut app.tasks,
             &app.closed_tasks,
@@ -596,12 +592,17 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         replay = !applied.news;
         quarter_moved = applied.quarter_moved;
         if replay {
+            let reason = if known {
+                "replayed task leg kept off the surface"
+            } else {
+                "task leg for a task with no record kept off the surface"
+            };
             tracing::info!(
                 target: "agent_gossip::a2a",
                 %task_id,
                 leg = %message.id,
                 author = %message.author,
-                "replayed task leg kept off the surface"
+                "{reason}"
             );
             surface = false;
         }
@@ -1106,7 +1107,7 @@ fn apply_remote_leg(
             // the event loop, so an unbounded registry is a stall as well as a leak.
             if task_record::is_stale_at(sent_at) {
                 return Err(RpcError::invalid_params(
-                    "the opening is older than the task timeout",
+                    "the opening is older than the task timeout (or the clocks differ)",
                 ));
             }
             if let Some(error) = task_admission_error(app, requester_key) {

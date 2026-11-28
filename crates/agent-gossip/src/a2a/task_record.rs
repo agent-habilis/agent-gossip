@@ -859,21 +859,23 @@ pub(crate) fn reconcile_initiator(
     }
 }
 
-/// Record a follow-up we just sent into a task we opened. It hands the task back to the worker
-/// at dispatch, not on the reply, so a lost reply or request leaves no record parked on us with
-/// the check-in clock stopped.
+/// Record a follow-up we just sent into a task we opened, with the `mesh:seq` it carried. It
+/// hands the task back to the worker at dispatch, not on the reply, so a lost reply or request
+/// leaves no record parked on us with the check-in clock stopped. The seq is consumed here and
+/// nowhere before, so a follow-up that was never sent leaves the counter where it was.
 pub(crate) fn note_follow_up_sent(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     task_id: &TaskId,
     peer_key: &AuthorKey,
-    now: Instant,
+    (seq, now): (u64, Instant),
 ) {
-    if tasks
-        .get(task_id)
-        .is_none_or(|rec| rec.role != TaskRole::Initiator)
-    {
+    let Some(rec) = tasks
+        .get_mut(task_id)
+        .filter(|rec| rec.role == TaskRole::Initiator)
+    else {
         return;
-    }
+    };
+    rec.seq = rec.seq.max(seq);
     apply(
         tasks,
         &LegInfo {
@@ -1996,7 +1998,7 @@ mod tests {
             &mut tasks,
             &tid(),
             &peer_key("calm-otter"),
-            later(start, Duration::from_secs(10)),
+            (2, later(start, Duration::from_secs(10))),
         );
         assert_eq!(
             tasks[&tid()].state,
@@ -2413,7 +2415,7 @@ mod tests {
             &mut tasks,
             &tid(),
             &peer_key("calm-otter"),
-            later(start, CHECKIN),
+            (2, later(start, CHECKIN)),
         );
         let resumed = &tasks[&tid()];
         assert_eq!(

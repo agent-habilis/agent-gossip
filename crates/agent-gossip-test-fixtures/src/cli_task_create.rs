@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use crate::{MSG_TIMEOUT, await_peer_card_cli, cli_task_create_attempt, is_rpc_timeout};
+use crate::{
+    MSG_TIMEOUT, await_peer_card_cli, cli_task_create_attempt, is_rpc_timeout, test_cmd,
+    unconfirmed_task_id,
+};
 
 /// Create a task on a **known** peer and return its task id
 /// (parsed from the JSON-RPC response the call prints on stdout). Panics on
@@ -33,6 +36,11 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
         if !is_rpc_timeout(&body) || Instant::now() >= deadline {
             break attempt;
         }
+        // The task that the attempt left unconfirmed must not outlive the retry. The worker may
+        // not hold it, and then the cancel is refused, which is fine.
+        if let Some(task_id) = unconfirmed_task_id(&body) {
+            cancel_attempt(mesh, nickname, to, task_id);
+        }
     };
     // stdout, not just stderr: a rejected JSON-RPC call reports itself in the
     // response body it prints on stdout, so a stderr-only message renders as a
@@ -51,4 +59,13 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
         .as_str()
         .expect("the call returned a Task id")
         .to_string()
+}
+
+/// Cancel the task that a call left unconfirmed, so that the call can be re-issued.
+fn cancel_attempt(mesh: &str, nickname: &str, to: &str, task_id: &str) {
+    let params = serde_json::json!({ "id": task_id }).to_string();
+    let _ = test_cmd()
+        .args(["a2a", "call", "--gossip", mesh, "--nickname", nickname])
+        .args(["--to", to, "--method", "CancelTask", "--params", &params])
+        .output();
 }

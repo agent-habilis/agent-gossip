@@ -22,7 +22,7 @@ use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
-use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
+use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, Opening, UnsentLeg};
 use crate::a2a::extensions::META_SEQ;
 use crate::a2a::rpc_error::{PeerRef, RpcError, is_send_message};
 use crate::a2a::session_request::SessionRequest;
@@ -1791,8 +1791,9 @@ struct CallPeer {
 
 /// Stamp the `SendMessage` in `params` as the initiator. An opening gets a task id that this node
 /// mints, `mesh:seq` 1, and a record in `submitted` that exists from now on, so a call that times
-/// out leaves a task to follow. A follow-up gets the next `mesh:seq` of the record it names.
-/// Returns the id of the task that the call opened.
+/// out leaves a task to follow. A follow-up gets the next `mesh:seq` of the record it names, which
+/// the record counts only once the follow-up was sent. Returns the id of the task that the call
+/// opened.
 ///
 /// # Errors
 /// An opening over the quota or to a peer with no name, and a follow-up for a task that this node
@@ -1831,7 +1832,7 @@ fn stamp_send_message(
             .as_str()
             .and_then(crate::a2a::TaskId::from_uuid_str);
         let held = named.as_ref().and_then(|task_id| {
-            app.tasks.get_mut(task_id).filter(|rec| {
+            app.tasks.get(task_id).filter(|rec| {
                 rec.role == task_record::TaskRole::Initiator && rec.peer_key == peer.key
             })
         });
@@ -1840,10 +1841,11 @@ fn stamp_send_message(
                 "SendMessage names a taskId with no task on this node",
             ));
         };
-        rec.seq += 1;
+        // The record takes the seq when the follow-up was sent, not before: a failed send
+        // consumes none.
         (
             named.unwrap_or_else(crate::a2a::TaskId::random),
-            rec.seq,
+            rec.seq + 1,
             None,
         )
     };
@@ -1876,7 +1878,7 @@ async fn prepare_call(
     params: &mut serde_json::Value,
     state: &EventLoopState,
     app: &mut A2aApp,
-) -> Result<Option<crate::a2a::TaskId>, RpcError> {
+) -> Result<Option<Opening>, RpcError> {
     let PreparedCall {
         mesh,
         author,
@@ -1885,6 +1887,7 @@ async fn prepare_call(
         peer_key,
         file,
     } = call;
+    let has_file = file.is_some();
     let opening = if is_send_message(method) {
         let name = match peer {
             PeerRef::Nickname(nickname) => Some(nickname.clone()),
@@ -1894,7 +1897,10 @@ async fn prepare_call(
             key: peer_key,
             name,
         };
-        stamp_send_message(params, &call_peer, app)?
+        stamp_send_message(params, &call_peer, app)?.map(|task_id| Opening {
+            task_id,
+            file: has_file,
+        })
     } else {
         None
     };
@@ -2032,6 +2038,7 @@ pub(crate) async fn broadcast_a2a_call(
         peer_key,
         corr: &sent_corr,
         opening: opening.as_ref(),
+        seq: params["message"]["metadata"][META_SEQ].as_u64(),
     };
     settle_dispatch(sent, &dispatched, &params, app);
 }
@@ -2056,7 +2063,9 @@ struct DispatchedCall<'caller> {
     method: &'caller str,
     peer_key: AuthorKey,
     corr: &'caller habilis_network::protocol::CorrId,
-    opening: Option<&'caller crate::a2a::TaskId>,
+    opening: Option<&'caller Opening>,
+    /// The `mesh:seq` that the request carried.
+    seq: Option<u64>,
 }
 
 /// Book the outcome of sending a call's request. A follow-up hands the task back to the worker at
@@ -2074,20 +2083,24 @@ fn settle_dispatch(
         peer_key,
         corr,
         opening,
+        seq,
     } = *call;
     match sent {
         Ok(()) => {
             if is_send_message(method)
                 && opening.is_none()
-                && let Some(task_id) = params["message"]["taskId"]
-                    .as_str()
-                    .and_then(crate::a2a::TaskId::from_uuid_str)
+                && let (Some(task_id), Some(seq)) = (
+                    params["message"]["taskId"]
+                        .as_str()
+                        .and_then(crate::a2a::TaskId::from_uuid_str),
+                    seq,
+                )
             {
                 task_record::note_follow_up_sent(
                     &mut app.tasks,
                     &task_id,
                     &peer_key,
-                    Instant::now(),
+                    (seq, Instant::now()),
                 );
             }
         }
@@ -2685,12 +2698,14 @@ mod open_task_gate_tests {
 
 #[cfg(test)]
 mod stamp_tests {
+    use std::time::Instant;
+
     use habilis_network::protocol::{AuthorKey, Nickname};
 
     use super::{CallPeer, stamp_send_message};
     use crate::a2a::a2a_app::A2aApp;
-    use crate::a2a::task_record::TaskRole;
-    use crate::a2a::tuning::TASKS_PER_PEER_CAP;
+    use crate::a2a::task_record::{self, TaskRole};
+    use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     use crate::a2a::{META_LABEL, TaskId, TaskState};
 
     fn bob() -> CallPeer {
@@ -2741,7 +2756,8 @@ mod stamp_tests {
         assert_eq!(rec.seq, 1, "the record counts the opening");
     }
 
-    /// Each follow-up takes the next seq, and the record holds the last one stamped.
+    /// Each follow-up takes the next seq once the one before it was sent, and the record holds the
+    /// last one sent.
     #[test]
     fn each_follow_up_takes_the_next_seq() {
         let mut app = A2aApp::new();
@@ -2762,10 +2778,42 @@ mod stamp_tests {
                 follow_up["message"]["metadata"]["mesh:seq"], expected,
                 "the seq counts up"
             );
+            task_record::note_follow_up_sent(
+                &mut app.tasks,
+                &task_id,
+                &bob().key,
+                (expected, Instant::now()),
+            );
         }
         assert_eq!(
             app.tasks[&task_id].seq, 3,
-            "the record holds the last seq stamped"
+            "the record holds the last seq sent"
+        );
+    }
+
+    /// A seq is consumed by a leg that was sent: a follow-up whose send failed leaves the record
+    /// where it was, and the next one takes the same seq.
+    #[test]
+    fn a_follow_up_that_was_not_sent_consumes_no_seq() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+        let follow_up = serde_json::json!({ "messageId": "m2", "taskId": task_id.as_str() });
+
+        let mut failed = send(&follow_up);
+        stamp_send_message(&mut failed, &bob(), &mut app).expect("the follow-up is stamped");
+        let mut retry = send(&follow_up);
+        stamp_send_message(&mut retry, &bob(), &mut app).expect("the retry is stamped");
+
+        assert_eq!(
+            retry["message"]["metadata"]["mesh:seq"], 2,
+            "a follow-up that never left gave its seq back"
+        );
+        assert_eq!(
+            app.tasks[&task_id].seq, 1,
+            "the record counts sent legs only"
         );
     }
 
@@ -2812,6 +2860,40 @@ mod stamp_tests {
         assert_eq!(
             app.tasks[&task_id].seq, 1,
             "the refused follow-up took no seq"
+        );
+    }
+
+    /// The registry cap binds the initiator too: with every slot held by a task of another peer,
+    /// an opening is refused at dispatch, and it leaves no record.
+    #[test]
+    fn an_opening_over_the_registry_cap_is_refused() {
+        let mut app = A2aApp::new();
+        for index in 0..TASKS_CAP {
+            let mut bytes = [0xc0_u8; 32];
+            bytes[..8].copy_from_slice(&u64::try_from(index).expect("the cap fits").to_le_bytes());
+            let peer = CallPeer {
+                key: AuthorKey::from(bytes),
+                name: Some(Nickname::from("peer")),
+            };
+            let mut params = send(&serde_json::json!({ "messageId": "m" }));
+            stamp_send_message(&mut params, &peer, &mut app)
+                .expect("an opening under the registry cap is admitted");
+        }
+        let mut over = send(&serde_json::json!({ "messageId": "over" }));
+
+        let error = stamp_send_message(&mut over, &bob(), &mut app)
+            .expect_err("every slot of the registry is held");
+
+        assert_eq!(error.code, -32004, "the refusal is the quota code");
+        assert!(
+            error.message.contains("maximum"),
+            "the reason names the registry cap, got {}",
+            error.message
+        );
+        assert_eq!(
+            app.tasks.len(),
+            TASKS_CAP,
+            "the refused opening made no record"
         );
     }
 

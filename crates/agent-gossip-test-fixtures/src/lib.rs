@@ -117,7 +117,7 @@ pub use self::followup_params::FollowupParams;
 pub use self::in_proc_node::InProcNode;
 pub use self::init_test_tracing::init_test_tracing;
 pub use self::ipc_raw::ipc_raw;
-pub(crate) use self::is_rpc_timeout::is_rpc_timeout;
+pub(crate) use self::is_rpc_timeout::{is_rpc_timeout, unconfirmed_task_id};
 pub use self::mdns_multicast_available::mdns_multicast_available;
 pub use self::meta_slot_of::meta_slot_of;
 pub use self::msg_timeout::MSG_TIMEOUT;

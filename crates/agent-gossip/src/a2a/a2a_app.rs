@@ -447,12 +447,14 @@ impl A2aApp {
     /// Take back the record that an opening call made at dispatch, because the worker was never
     /// reached or refused the task. The file of the call, held under the task id, goes to the next
     /// sweep.
-    pub(crate) fn drop_opening(&mut self, opening: Option<&TaskId>) {
-        let Some(task_id) = opening else {
+    pub(crate) fn drop_opening(&mut self, opening: Option<&Opening>) {
+        let Some(Opening { task_id, file }) = opening else {
             return;
         };
         self.tasks.remove(task_id);
-        self.orphan_blob(ContentId::new(task_id.as_str()));
+        if *file {
+            self.orphan_blob(ContentId::new(task_id.as_str()));
+        }
     }
 
     /// Take the parked call that `corr` names, so the caller can answer it now.
@@ -602,7 +604,7 @@ impl A2aApp {
 
     /// The reply of an opening that timed out, when its record still exists.
     fn unconfirmed_reply(&self, waiter: &A2aWaiter) -> Option<String> {
-        let task_id = waiter.opening.as_ref()?;
+        let task_id = &waiter.opening.as_ref()?.task_id;
         let rec = self.tasks.get(task_id)?;
         let task = rpc_error::unconfirmed_task(task_id, rec, &waiter.mesh);
         Some(serde_json::json!({ "result": { "task": task } }).to_string())
@@ -613,6 +615,15 @@ impl A2aApp {
         for waiter in std::mem::take(&mut self.a2a_waiters) {
             waiter.responder.send_timeout();
         }
+    }
+
+    /// A peer left the mesh gracefully. Waiters first: an opening that waits on the peer takes its
+    /// record back, so the caller who is told that the peer left never sees a `task_timeout` for a
+    /// task id it never got. The tasks that remain are then ended.
+    pub(crate) fn peer_left(&mut self, (peer_key, peer): (&AuthorKey, &Nickname)) {
+        self.fail_a2a_waiters_for_peer((peer_key, peer));
+        let out = self.output.clone();
+        task_record::fail_tasks_for_departed_peer(&mut self.tasks, peer_key, &out);
     }
 
     /// Resolve every parked A2A call to `peer` with a peer-left error, now —
@@ -726,6 +737,14 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, RpcError> {
     Ok(value["result"].clone())
 }
 
+/// The task that an opening call made at dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Opening {
+    pub(crate) task_id: TaskId,
+    /// Whether the call attached a file, which the blob group named by the task holds.
+    pub(crate) file: bool,
+}
+
 /// An outstanding gossip A2A call, waiting for a response frame with a matching
 /// correlation id `corr` from `peer`, or for `deadline` to elapse.
 pub(crate) struct A2aWaiter {
@@ -737,7 +756,7 @@ pub(crate) struct A2aWaiter {
     pub(crate) responder: A2aResponder,
     /// The task this call opened, whose record exists from dispatch: an error reply takes it
     /// back. A follow-up opens none.
-    pub(crate) opening: Option<TaskId>,
+    pub(crate) opening: Option<Opening>,
     /// The mesh of the call, for the task that a timed-out opening answers with.
     pub(crate) mesh: MeshId,
 }
@@ -1296,7 +1315,10 @@ mod tests {
             ),
         );
         let mut parked = waiter(corr);
-        parked.opening = Some(task_id.clone());
+        parked.opening = Some(super::Opening {
+            task_id: task_id.clone(),
+            file: true,
+        });
         app.a2a_waiters.push(parked);
         task_id
     }
@@ -1330,6 +1352,25 @@ mod tests {
             app.take_orphan_blobs(),
             vec![ContentId::new(task_id.as_str())],
             "the file of a refused opening goes to the next sweep"
+        );
+    }
+
+    /// A refused opening that attached no file has no group to release.
+    #[test]
+    fn a_refused_opening_without_a_file_releases_no_group() {
+        let mut app = super::A2aApp::new();
+        let task_id = dispatch_opening(&mut app, "corr-plain");
+        app.a2a_waiters[0].opening = Some(super::Opening {
+            task_id,
+            file: false,
+        });
+        let refusal = serde_json::json!({ "error": { "code": -32004, "message": "full" } });
+
+        fulfill(&mut app, "corr-plain", &bob_key(), &refusal.to_string());
+
+        assert!(
+            app.take_orphan_blobs().is_empty(),
+            "no file went with the call, so no group waits for the sweep"
         );
     }
 
@@ -1553,17 +1594,39 @@ mod tests {
     }
 
     /// A worker that left cannot answer: the opening that waits on it is refused, and its record
-    /// goes with it.
+    /// goes with it, before the tasks of the peer are ended. The caller never got that task id, so
+    /// no `task_timeout` may name it.
     #[test]
-    fn a_peer_that_left_takes_the_record_of_its_opening() {
-        let mut app = super::A2aApp::new();
+    fn a_peer_that_left_takes_the_record_of_its_opening_without_a_task_timeout() {
+        let mut app = super::A2aApp::new_with_io(super::SurfacedIo::new(Output::silent()));
         let task_id = dispatch_opening(&mut app, "corr-left");
+        app.tasks.insert(
+            TaskId::random(),
+            TaskRecord::open(
+                (bob_key(), Nickname::from("bob")),
+                TaskRole::Initiator,
+                TaskState::Working,
+                Instant::now(),
+            ),
+        );
 
-        app.fail_a2a_waiters_for_peer((&bob_key(), &Nickname::from("bob")));
+        app.peer_left((&bob_key(), &Nickname::from("bob")));
 
         assert!(
             !app.tasks.contains_key(&task_id),
             "the caller was told that the peer left, so no task of it remains"
+        );
+        app.drain_surfaced_ring();
+        let timeouts = app
+            .surfaced
+            .poll_since(None)
+            .events
+            .iter()
+            .filter(|item| matches!(item.event, OutputEvent::TaskTimeout { .. }))
+            .count();
+        assert_eq!(
+            timeouts, 1,
+            "the task that the caller knew is timed out for the peer that left, and the opening is not"
         );
     }
 }

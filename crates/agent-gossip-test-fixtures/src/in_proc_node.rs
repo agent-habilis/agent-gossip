@@ -15,7 +15,10 @@ use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
+use crate::{
+    MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name,
+    unconfirmed_task_id,
+};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
 ///
@@ -590,6 +593,17 @@ impl InProcNode {
                 .expect("a2a_call transport");
             if !is_rpc_timeout(&response) || Instant::now() >= deadline {
                 return response;
+            }
+            // The task that the attempt left unconfirmed must not outlive the retry. The worker
+            // may not hold it, and then the cancel is refused, which is fine.
+            if let Some(task_id) = unconfirmed_task_id(&response) {
+                let cancel = A2aCallParams::new(
+                    peer.clone(),
+                    "CancelTask".to_owned(),
+                    serde_json::json!({ "id": task_id }),
+                    RPC_ATTEMPT,
+                );
+                let _ = self.session.a2a_call(cancel).await;
             }
         }
     }
