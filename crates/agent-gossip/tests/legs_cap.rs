@@ -6,8 +6,8 @@ use common::Node;
 
 /// A cap of 0 makes the first leg refuse, so the test needs no peer that hangs. The refusal comes
 /// from the real send path of the daemon: `a2a status` reaches it through the event loop. The
-/// offer of a call is not an own leg (the initiator learns its task from the reply), so the leg
-/// here is the status of a worker.
+/// opening of a call is not an own leg (the initiator opens its record when it dispatches the
+/// call), so the leg here is the status of a worker.
 #[test]
 fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
     let _serial = common::serial_guard();

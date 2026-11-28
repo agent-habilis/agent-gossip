@@ -1130,7 +1130,7 @@ fn apply_remote_leg(
             // the quota keeps `app.tasks` bounded and, just as importantly, keeps the sweep's
             // per-expiry work bounded: it awaits a sealed unicast per expired task while holding
             // the event loop, so an unbounded registry is a stall as well as a leak.
-            if task_record::is_stale_at(sent_at) {
+            if task_record::clock_skew(sent_at).is_some() {
                 return Err(RpcError::invalid_params(
                     "the opening is older than the task timeout (or the clocks differ)",
                 ));

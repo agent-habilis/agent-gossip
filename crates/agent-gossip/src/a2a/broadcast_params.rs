@@ -1118,7 +1118,7 @@ pub(crate) async fn broadcast_task_status(
         app,
     } = params;
     let seq = task_record::next_seq(&app.tasks, task_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown task '{task_id}'"))?;
+        .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
     let update = worker_status_leg(StatusLegParams {
         mesh,
         task_id,
@@ -1304,7 +1304,7 @@ pub(crate) async fn broadcast_task_artifact(
     )
     .await?;
     let seq = task_record::next_seq(&app.tasks, task_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown task '{task_id}'"))?;
+        .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
     let update = status_update_params::artifact_update_parts(mesh, task_id, parts, seq);
     let plain = status_update_params::payload_body(&update)?;
     let to = *peer_key;

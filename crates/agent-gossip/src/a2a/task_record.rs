@@ -554,15 +554,50 @@ fn quarter_changed(held: Option<Progress>, new: Option<Progress>) -> bool {
 /// old beat after the peer died. The bound is coarse on purpose, to tolerate
 /// clock skew between hosts.
 fn is_stale(frame: &Message) -> bool {
-    is_stale_at(frame.timestamp)
+    match clock_skew(frame.timestamp) {
+        Some(ClockSkew::Behind) => true,
+        Some(ClockSkew::Ahead) => {
+            tracing::warn!(
+                target: "agent_gossip::a2a",
+                author = %frame.author,
+                "a beat from a clock that is ahead of ours by more than the tolerance was ignored: \
+                 the clocks of the two hosts differ"
+            );
+            true
+        }
+        None => false,
+    }
 }
 
-/// Whether something sent at `sent_at` is off our clock by more than one idle timeout: older, so
-/// that a relay could be replaying it, or ahead, so that it would pin the order of the beats that
-/// come after it.
-pub(crate) fn is_stale_at(sent_at: UnixSecs) -> bool {
-    let now = UnixSecs::now();
-    now.since(sent_at).max(sent_at.since(now)).as_secs() > task_timeout_secs()
+/// How far a sender's clock is off ours, when it is off by more than the tolerance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClockSkew {
+    /// What was sent is older than one idle timeout.
+    Behind,
+    /// What was sent is ahead of our clock by more than [`SKEW_FLOOR_SECS`] or one idle timeout,
+    /// whichever is larger.
+    Ahead,
+}
+
+/// The least that a clock may run ahead of ours before what it sends is ignored, whatever the idle
+/// timeout: a host a minute off is healthy, and a low `--task-timeout-secs` must not turn it away.
+const SKEW_FLOOR_SECS: u64 = 120;
+
+/// Whether something sent at `sent_at` is older than one idle timeout, so that a relay could be
+/// replaying it, or ahead of our clock, so that it would pin the order of what comes after it.
+pub(crate) fn clock_skew(sent_at: UnixSecs) -> Option<ClockSkew> {
+    skew_between(sent_at, UnixSecs::now(), task_timeout_secs())
+}
+
+/// [`clock_skew`] for a given `now` and idle timeout `timeout_secs`.
+fn skew_between(sent_at: UnixSecs, now: UnixSecs, timeout_secs: u64) -> Option<ClockSkew> {
+    if now.since(sent_at).as_secs() > timeout_secs {
+        Some(ClockSkew::Behind)
+    } else if sent_at.since(now).as_secs() > timeout_secs.max(SKEW_FLOOR_SECS) {
+        Some(ClockSkew::Ahead)
+    } else {
+        None
+    }
 }
 
 /// Whether the check-in clock runs: only while the worker holds the ball. A
@@ -868,7 +903,7 @@ pub(crate) fn note_follow_up_sent(
 /// The seq that the next leg of `task_id` takes, when we hold the task. Nothing is consumed until
 /// [`take_seq`], so a leg that fails before it leaves leaves the counter where it was.
 pub(crate) fn next_seq(tasks: &HashMap<TaskId, TaskRecord>, task_id: &TaskId) -> Option<u64> {
-    tasks.get(task_id).map(|rec| rec.seq + 1)
+    tasks.get(task_id)?.seq.checked_add(1)
 }
 
 /// Count `seq` as sent: the leg that carries it is about to leave.
@@ -883,7 +918,7 @@ pub(crate) fn give_back_seq(tasks: &mut HashMap<TaskId, TaskRecord>, task_id: &T
     if let Some(rec) = tasks.get_mut(task_id)
         && rec.seq == seq
     {
-        rec.seq = seq - 1;
+        rec.seq = seq.saturating_sub(1);
     }
 }
 
@@ -1022,7 +1057,11 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) -> bool {
         }
         // The worker asks a question → the initiator owes the answer.
         LegKind::Status(TaskState::InputRequired)
-            if from_worker && matches!(rec.state, TaskState::Submitted | TaskState::Working) =>
+            if from_worker
+                && matches!(
+                    rec.state,
+                    TaskState::Submitted | TaskState::Working | TaskState::InputRequired
+                ) =>
         {
             rec.state = TaskState::InputRequired;
             rec.review = false;
@@ -1039,10 +1078,16 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) -> bool {
             }
             true
         }
-        // The result arrived → park for the initiator's review. (From `Submitted` too: a worker
-        // may run a trivial task without an explicit accept first.)
+        // The result arrived → park for the initiator's review. From `Submitted` too: a worker may
+        // run a trivial task without an explicit accept first. From `input-required` too: a worker
+        // that was parked may send a corrected result, or ask another question, before any
+        // follow-up of the initiator.
         LegKind::Artifact
-            if from_worker && matches!(rec.state, TaskState::Submitted | TaskState::Working) =>
+            if from_worker
+                && matches!(
+                    rec.state,
+                    TaskState::Submitted | TaskState::Working | TaskState::InputRequired
+                ) =>
         {
             rec.state = TaskState::InputRequired;
             rec.review = true;
@@ -1107,7 +1152,7 @@ async fn send_cancels(
     for (task_id, peer_key, reason) in cancels {
         let mut metadata = serde_json::json!({ META_REASON: reason });
         if let Some(rec) = tasks.get_mut(task_id) {
-            rec.seq += 1;
+            rec.seq = rec.seq.saturating_add(1);
             metadata[META_SEQ] = rec.seq.into();
         }
         let update = status_update_params::status_update(
@@ -4140,6 +4185,60 @@ mod tests {
             reminders.first().map(|due| due.text.clone()),
             Some(None),
             "a blank text would be an empty body"
+        );
+    }
+
+    /// A worker that was parked for review may send a corrected result, or ask another question,
+    /// before any follow-up: the sender takes it in, and the review stands.
+    #[test]
+    fn a_worker_in_review_can_send_another_result_or_question() {
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        assert!(
+            receive(&mut tasks, &artifact_leg(next_test_seq())).news,
+            "the first result parks the task"
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the task waits for the review"
+        );
+
+        assert!(
+            receive(&mut tasks, &artifact_leg(next_test_seq())).news,
+            "a corrected result surfaces, though no follow-up came between the two"
+        );
+        assert!(tasks[&tid()].review, "the review stands for the new result");
+        assert!(
+            receive(&mut tasks, &status_frame(TaskState::InputRequired, None)).news,
+            "a question after the result surfaces too"
+        );
+        assert!(
+            !tasks[&tid()].review,
+            "a question leaves nothing to approve"
+        );
+    }
+
+    /// A clock that runs a minute ahead is healthy even when the idle timeout is a few seconds,
+    /// and one far ahead is not; a clock behind by more than the timeout is stale.
+    #[test]
+    fn the_clock_tolerance_has_a_floor() {
+        let now = UnixSecs::now();
+        let ahead = |secs: u64| now + Duration::from_secs(secs);
+        assert_eq!(
+            super::skew_between(ahead(60), now, 3),
+            None,
+            "a minute ahead is inside the floor, whatever the idle timeout"
+        );
+        assert_eq!(
+            super::skew_between(ahead(600), now, 3),
+            Some(super::ClockSkew::Ahead),
+            "ten minutes ahead is beyond it"
+        );
+        assert_eq!(
+            super::skew_between(now - Duration::from_secs(10), now, 3),
+            Some(super::ClockSkew::Behind),
+            "older than the idle timeout is stale, as before"
         );
     }
 
