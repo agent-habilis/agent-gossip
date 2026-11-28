@@ -424,12 +424,12 @@ COMMANDS
                     opening, the next integer on each follow-up (and on the
                     cancel) of the initiator. Your daemon stamps both; a
                     caller may not set mesh:seq. Each party counts its own
-                    legs: the worker numbers its status and artifact legs
-                    from 1, its beat carries the number of its last leg
-                    whose state it holds and takes none, and the beat of the initiator has none. A
-                    leg that arrives with no mesh:seq, a replayed leg, and a
-                    leg that is behind a newer one are dropped whole, not
-                    applied in part. A raw --params
+                    legs: the worker numbers its status and artifact legs from
+                    1, its beat carries the number of its last leg whose state
+                    it holds and takes none, and the beat of the initiator has
+                    none. A leg that arrives with no mesh:seq, a replayed leg,
+                    and a leg that is behind a newer one are dropped whole,
+                    not applied in part. A raw --params
                     SendMessage that names an id this node holds no task for
                     is refused locally (-32602 "SendMessage names a taskId
                     with no task on this node"). The worker refuses, all
@@ -1611,24 +1611,23 @@ JSON EVENTS
               catch-up found the task already ended, and the reader handles
               it as the event of that state.
 
-              When the beat of a worker shows a leg that the sender never
-              got, the daemon of the sender asks the worker for the task
-              and takes the snapshot in. There is one ask in flight for each
-              task, and it is asked again after a reply or after 45
-              seconds. A lost
+              When the beat of a worker shows a leg that the sender never got,
+              the daemon of the sender asks the worker for the task and takes
+              the snapshot in. There is one ask in flight for each task, and
+              it is asked again after a reply or after 45 seconds. A lost
               result is not repaired by the daemon. The snapshot moves the
-              mesh:seq of the worker, as the sender sees it, up to the seq
-              of the snapshot, so a leg of the worker still on its way with
-              a seq at or below that is dropped whole when it arrives. This
-              is a known limit. When the task waits for review with no
-              result, send a follow-up on the task asking the worker to
-              resend its result. A task that ended takes no follow-up: when
-              it ended with no result, open a new task to the worker that
-              asks it to resend the result of the task with that id. A peer
-              that keeps beating on a task that this node ended gets the end
-              again. A beat that is ahead of the clock of the receiver by
-              more than the task timeout, or 120 seconds if that is more, is
-              ignored with a warning.
+              mesh:seq of the worker, as the sender sees it, up to the seq of
+              the snapshot, so a leg of the worker still on its way with a seq
+              at or below that is dropped whole when it arrives. This is a
+              known limit. When the task waits for review with no result, send
+              a follow-up on the task asking the worker to resend its result.
+              A task that ended takes no follow-up: when it ended with no
+              result, open a new task to the worker that asks it to resend the
+              result of the task with that id. A peer that keeps beating on a
+              task that this node ended gets the end again. A beat that is
+              ahead of the clock of the receiver by more than the task
+              timeout, or 120 seconds if that is more, is ignored with a
+              warning.
 
        state  The gossip's shared state changed (see the state command). Carries
               the view of the state AFTER the change: one slice for each member,
