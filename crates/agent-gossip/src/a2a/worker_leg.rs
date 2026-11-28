@@ -47,8 +47,8 @@ impl WorkerLeg {
     /// Parse the fields of a status request.
     ///
     /// # Errors
-    /// A `working` leg with no text or no progress, and a progress or a waiting flag on any
-    /// other state.
+    /// A `working` leg with no text or no progress, a progress or a waiting flag on any other
+    /// state, and a state that a worker never sends (`submitted`, `auth-required`, `unspecified`).
     pub fn parse(
         state: TaskState,
         note: Option<String>,
@@ -56,6 +56,12 @@ impl WorkerLeg {
         // `true` when the worker waits on its own user.
         waiting_user: bool,
     ) -> Result<Self, WorkerLegError> {
+        if matches!(
+            state,
+            TaskState::Submitted | TaskState::AuthRequired | TaskState::Unspecified
+        ) {
+            return Err(WorkerLegError::NotAWorkerState);
+        }
         if state == TaskState::Working {
             let trimmed: Option<String> = note.map(|raw| raw.trim().to_owned());
             let text = trimmed.filter(|text| !text.is_empty());
@@ -210,6 +216,24 @@ mod tests {
                 percent.to_string(),
                 "progress requires state working",
                 "a progress needs the working state"
+            );
+        }
+    }
+
+    /// A worker never sends `submitted` (the opening), `auth-required` or `unspecified`.
+    #[test]
+    fn a_state_that_a_worker_never_sends_is_refused() {
+        for state in [
+            TaskState::Submitted,
+            TaskState::AuthRequired,
+            TaskState::Unspecified,
+        ] {
+            let error = WorkerLeg::parse(state, Some("note".to_owned()), None, false)
+                .expect_err("a worker has no such state to report");
+            assert_eq!(
+                error.to_string(),
+                "state must be working, input-required, completed, failed, canceled or rejected",
+                "{state:?} is named as a state no worker sends"
             );
         }
     }

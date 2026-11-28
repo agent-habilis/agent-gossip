@@ -1843,11 +1843,11 @@ fn stamp_send_message(
         };
         // The record takes the seq when the follow-up was sent, not before: a failed send
         // consumes none.
-        (
-            named.unwrap_or_else(crate::a2a::TaskId::random),
-            rec.seq + 1,
-            None,
-        )
+        let seq = rec
+            .seq
+            .checked_add(1)
+            .ok_or_else(|| RpcError::invalid_params("the task has used every seq"))?;
+        (named.unwrap_or_else(crate::a2a::TaskId::random), seq, None)
     };
     message["taskId"] = serde_json::Value::from(task_id.as_str());
     if !message["metadata"].is_object() {
@@ -2814,6 +2814,37 @@ mod stamp_tests {
         assert_eq!(
             app.tasks[&task_id].seq, 1,
             "the record counts sent legs only"
+        );
+    }
+
+    /// A counter at its end cannot take another follow-up: the call is refused, and the record
+    /// stays as it was.
+    #[test]
+    fn a_follow_up_past_the_last_seq_is_refused() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+        app.tasks
+            .get_mut(&task_id)
+            .expect("the opening made the record")
+            .seq = u64::MAX;
+        let mut follow_up =
+            send(&serde_json::json!({ "messageId": "m2", "taskId": task_id.as_str() }));
+
+        let error = stamp_send_message(&mut follow_up, &bob(), &mut app)
+            .expect_err("a counter at its end has no next seq");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert_eq!(
+            app.tasks[&task_id].seq,
+            u64::MAX,
+            "the record stays as it was"
+        );
+        assert!(
+            follow_up["message"]["metadata"].is_null(),
+            "the refused message is not stamped"
         );
     }
 

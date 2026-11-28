@@ -1089,6 +1089,17 @@ fn apply_remote_leg(
         // The requester is signature-verified, but signature ≠ party: without this check any mesh
         // member could drive and read a task they are not part of.
         (Some(holder), _) if holder != *requester_key => return Err(unknown()),
+        // The task of a peer that holds it as the initiator is not ours to serve: only the
+        // initiator sends messages into a task, so this requester drives a task that it serves
+        // itself, and that must not move our counters.
+        (Some(_), _)
+            if app
+                .tasks
+                .get(&task_id)
+                .is_some_and(|rec| rec.role != task_record::TaskRole::Receiver) =>
+        {
+            return Err(unknown());
+        }
         // The opening again: the caller gets the snapshot and nothing else happens.
         (Some(_), 1) => {
             return Ok(RemoteLeg {
@@ -1241,6 +1252,7 @@ mod classify_tests {
     };
     use crate::a2a::a2a_app::A2aApp;
     use crate::a2a::rpc_error::RpcError;
+    use crate::a2a::task_record::{TaskRecord, TaskRole};
     use crate::a2a::{TaskId, TaskState, status_update_params, tuning, wire};
     use crate::emission::OutputEvent;
 
@@ -1733,6 +1745,46 @@ mod classify_tests {
             app.tasks[&held].peer,
             Nickname::from("initiator"),
             "the owner is unchanged"
+        );
+    }
+
+    /// A requester that the record names as its counterparty may still not drive the task, when
+    /// this node opened it: the answer is that of an unknown id, and no counter moves.
+    #[test]
+    fn a_message_for_a_task_that_we_opened_is_refused_like_an_unknown_id() {
+        let mut app = A2aApp::new();
+        let opened = TaskId::random();
+        app.tasks.insert(
+            opened.clone(),
+            TaskRecord::open(
+                (key("worker"), Nickname::from("worker")),
+                TaskRole::Initiator,
+                TaskState::Submitted,
+                Instant::now(),
+            ),
+        );
+        let unknown = serve(
+            &mut app,
+            &stamped(Some(&TaskId::random()), Some(2)),
+            "worker",
+        )
+        .expect_err("an unheld id is refused");
+
+        for seq in [1, 2, u64::MAX] {
+            let refused = serve(&mut app, &stamped(Some(&opened), Some(seq)), "worker")
+                .expect_err("a task that we opened is not ours to serve");
+            assert_eq!(
+                refused.code, unknown.code,
+                "seq {seq}: the code is the same"
+            );
+            assert_eq!(
+                refused.message, unknown.message,
+                "seq {seq}: the text is the same"
+            );
+        }
+        assert_eq!(
+            app.tasks[&opened].seq, 0,
+            "the refused message took no seq in"
         );
     }
 

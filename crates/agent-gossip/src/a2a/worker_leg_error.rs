@@ -10,6 +10,8 @@ pub enum WorkerLegError {
     ProgressNotWorking,
     /// The flag that the worker waits on its user goes only with the `working` state.
     WaitingNotWorking,
+    /// A worker never sends this state: `submitted` is the opening, and the others are not used.
+    NotAWorkerState,
 }
 
 impl fmt::Display for WorkerLegError {
@@ -18,6 +20,9 @@ impl fmt::Display for WorkerLegError {
             Self::CheckinIncomplete => "working requires a text and a progress",
             Self::ProgressNotWorking => "progress requires state working",
             Self::WaitingNotWorking => "waiting-on-user requires state working",
+            Self::NotAWorkerState => {
+                "state must be working, input-required, completed, failed, canceled or rejected"
+            }
         })
     }
 }
