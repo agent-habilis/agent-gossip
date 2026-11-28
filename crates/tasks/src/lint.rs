@@ -3,8 +3,7 @@ use crate::util::Invocation;
 
 pub(crate) fn run() -> TaskOutcome {
     // `--features adversarial` so the adversarial suite + shim are linted too
-    // (they are `required-features`-gated, else clippy skips them) — and so this
-    // task matches `ci`'s clippy invocation. Without it, code reachable only
+    // (they are `required-features`-gated, else clippy skips them). Without it, code reachable only
     // under the feature (e.g. `Message::new_state`, the extra `handle_session_request`
     // arms and their gated `expect`) trips false dead-code / too-many-lines errors.
     // The feature stays qualified (`agent-gossip/adversarial`) because a

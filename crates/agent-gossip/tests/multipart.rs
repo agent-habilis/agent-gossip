@@ -6,9 +6,9 @@
 //! the body surfaces **once**, as the whole logical message, never as raw shards.
 
 use agent_gossip::a2a::status_update_params;
-use agent_gossip::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
+use agent_gossip::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskState};
 use agent_gossip_test_fixtures as common;
-use common::{BIG_BODY_TIMEOUT, InProcNode, MSG_TIMEOUT, chat_text};
+use common::{BIG_BODY_TIMEOUT, InProcNode, MSG_TIMEOUT, chat_text, task_id_of};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_message_reassembles_into_one() {
@@ -238,11 +238,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
 
     // Alice creates a task on bob (native SendMessage); bob mints the id.
     let response = alice.create_task("mp-ex-bob", "produce a big report").await;
-    let task_id: TaskId = response["result"]["task"]["id"]
-        .as_str()
-        .expect("the worker returned a Task id")
-        .parse()
-        .expect("valid task id");
+    let task_id = task_id_of(&response);
 
     // Bob (the worker) emits a large artifact — it must shard and reassemble
     // once on Alice's side.

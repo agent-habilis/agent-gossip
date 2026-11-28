@@ -112,7 +112,7 @@ impl CardRewriter {
     /// Wait for the header block, then dispatch on its content. `false` means
     /// more bytes are needed before progress can continue.
     fn advance_head(&mut self, out: &mut Vec<u8>) -> (State, bool) {
-        let Some(end) = find_header_end(&self.pending) else {
+        let Some(blank_line) = find_head_end(&self.pending) else {
             let next = if self.pending.len() > MAX_HEAD_BYTES {
                 State::Raw
             } else {
@@ -120,7 +120,7 @@ impl CardRewriter {
             };
             return (next, false);
         };
-        let header: Vec<u8> = self.pending.drain(..end).collect();
+        let header: Vec<u8> = self.pending.drain(..blank_line + 4).collect();
         (Self::dispatch_header(header, out), true)
     }
 
@@ -187,13 +187,9 @@ impl CardRewriter {
     }
 }
 
-/// The one past-the-end index of the `\r\n\r\n` that terminates the header
-/// block, if present.
-fn find_header_end(bytes: &[u8]) -> Option<usize> {
-    bytes
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|start| start + 4)
+/// Index of the blank line that ends the head (the offset of its `\r\n\r\n`).
+pub(super) fn find_head_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 /// The header facts the framer needs.
@@ -314,27 +310,24 @@ fn is_card(map: &serde_json::Map<String, Value>) -> bool {
 }
 
 fn rewrite_card_object(map: &mut serde_json::Map<String, Value>, local_base: &str) -> bool {
-    let mut changed = false;
-    if let Some(Value::String(url)) = map.get("url")
-        && let Some(rewritten) = rewrite_url(url, local_base)
-    {
-        map.insert("url".to_owned(), Value::String(rewritten));
-        changed = true;
-    }
+    let mut changed = rewrite_url_field(map, local_base);
     if let Some(Value::Array(interfaces)) = map.get_mut("additionalInterfaces") {
-        for interface in interfaces.iter_mut() {
-            let Some(entry) = interface.as_object_mut() else {
-                continue;
-            };
-            if let Some(Value::String(url)) = entry.get("url")
-                && let Some(rewritten) = rewrite_url(url, local_base)
-            {
-                entry.insert("url".to_owned(), Value::String(rewritten));
-                changed = true;
-            }
+        for entry in interfaces.iter_mut().filter_map(Value::as_object_mut) {
+            changed |= rewrite_url_field(entry, local_base);
         }
     }
     changed
+}
+
+fn rewrite_url_field(map: &mut serde_json::Map<String, Value>, local_base: &str) -> bool {
+    let Some(Value::String(url)) = map.get("url") else {
+        return false;
+    };
+    let Some(rewritten) = rewrite_url(url, local_base) else {
+        return false;
+    };
+    map.insert("url".to_owned(), Value::String(rewritten));
+    true
 }
 
 /// Swap an absolute `http(s)://authority` for `local_base`, preserving the
@@ -361,13 +354,12 @@ mod tests {
     const HTTPS_PATH_ORIGIN: &str = "https://origin:9999/path?q=1";
 
     use super::{CardRewriter, rewrite_url};
-
-    const BASE: &str = "http://127.0.0.1:8080";
+    use crate::tunnel::tests as fixtures;
 
     /// Drive the whole `body` through in one feed plus a finish, returning the
     /// forwarded bytes.
     fn run(response: &[u8]) -> Vec<u8> {
-        let mut rewriter = CardRewriter::new(BASE.to_owned());
+        let mut rewriter = CardRewriter::new(LOCAL_BASE.to_owned());
         let mut out = rewriter.feed(response);
         out.extend(rewriter.finish());
         out
@@ -376,25 +368,13 @@ mod tests {
     /// Same, but fed one byte at a time — the framing must not depend on how
     /// the stream is chunked.
     fn run_bytewise(response: &[u8]) -> Vec<u8> {
-        let mut rewriter = CardRewriter::new(BASE.to_owned());
+        let mut rewriter = CardRewriter::new(LOCAL_BASE.to_owned());
         let mut out = Vec::new();
         for byte in response {
             out.extend(rewriter.feed(&[*byte]));
         }
         out.extend(rewriter.finish());
         out
-    }
-
-    fn card_response(url: &str) -> Vec<u8> {
-        let body =
-            serde_json::json!({"protocolVersion": "0.3.0", "name": "x", "url": url, "skills": []})
-                .to_string();
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .into_bytes()
     }
 
     fn body_of(response: &[u8]) -> String {
@@ -405,7 +385,7 @@ mod tests {
 
     #[test]
     fn rewrites_the_card_url_preserving_path() {
-        let out = run(&card_response("http://origin.internal:9999/a2a"));
+        let out = run(&fixtures::card_response("http://origin.internal:9999/a2a"));
         let body = body_of(&out);
         assert!(
             body.contains(&format!(
@@ -418,7 +398,7 @@ mod tests {
 
     #[test]
     fn corrects_the_content_length_after_rewrite() {
-        let out = run(&card_response(
+        let out = run(&fixtures::card_response(
             "http://a-very-long-origin-hostname.example:9999/a2a",
         ));
         let text = String::from_utf8_lossy(&out);
@@ -437,7 +417,7 @@ mod tests {
 
     #[test]
     fn rewrites_the_url_when_streamed_one_byte_at_a_time() {
-        let out = run_bytewise(&card_response("http://origin.internal:9999/rpc"));
+        let out = run_bytewise(&fixtures::card_response("http://origin.internal:9999/rpc"));
         assert!(
             body_of(&out).contains(LOCAL_RPC),
             "the rpc url is rewritten to the local base"
@@ -447,24 +427,14 @@ mod tests {
     #[test]
     fn passes_a_non_card_json_response_through_unchanged() {
         let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"taskId": "abc", "status": "working"}}).to_string();
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .into_bytes();
+        let response = fixtures::json_response(&body);
         assert_eq!(run(&response), response, "non-card JSON is byte-identical");
     }
 
     #[test]
     fn rewrites_the_extended_card_inside_a_json_rpc_envelope() {
         let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "0.3.0", "name": "x", "url": "http://origin:9999/rpc", "capabilities": {}}}).to_string();
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .into_bytes();
+        let response = fixtures::json_response(&body);
         let out = run(&response);
         assert!(
             body_of(&out).contains(LOCAL_RPC),
@@ -492,7 +462,7 @@ mod tests {
     fn pairs_two_keep_alive_responses() {
         // A card, then a plain 204 — the second must not be swallowed by the
         // first's body framing.
-        let mut first = card_response("http://origin:9999/a2a");
+        let mut first = fixtures::card_response("http://origin:9999/a2a");
         first.extend_from_slice(b"HTTP/1.1 204 No Content\r\n\r\n");
         let out = run(&first);
         let text = String::from_utf8_lossy(&out);
@@ -502,7 +472,7 @@ mod tests {
 
     #[test]
     fn flushes_an_unfinished_card_verbatim_on_finish() {
-        let response = card_response("http://origin:9999/a2a");
+        let response = fixtures::card_response("http://origin:9999/a2a");
         let truncated = &response[..response.len() - 5];
         assert_eq!(run(truncated), truncated, "partial card is not dropped");
     }
@@ -511,7 +481,7 @@ mod tests {
     fn streams_everything_after_a_chunked_response_verbatim() {
         let mut response =
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".to_vec();
-        response.extend(card_response("http://origin:9999/a2a"));
+        response.extend(fixtures::card_response("http://origin:9999/a2a"));
         assert_eq!(run(&response), response, "the raw latch never releases");
     }
 
@@ -520,8 +490,8 @@ mod tests {
         let mut response = b"HTTP/1.1 200 OK\r\nX-Pad: ".to_vec();
         response.extend(vec![b'a'; super::MAX_HEAD_BYTES + 1]);
         response.extend(b"\r\n\r\n");
-        response.extend(card_response("http://origin:9999/a2a"));
-        let mut rewriter = CardRewriter::new(BASE.to_owned());
+        response.extend(fixtures::card_response("http://origin:9999/a2a"));
+        let mut rewriter = CardRewriter::new(LOCAL_BASE.to_owned());
         let mut out = rewriter.feed(&response[..super::MAX_HEAD_BYTES + 100]);
         out.extend(rewriter.feed(&response[super::MAX_HEAD_BYTES + 100..]));
         out.extend(rewriter.finish());
@@ -531,17 +501,17 @@ mod tests {
     #[test]
     fn rewrite_url_leaves_non_http_targets_alone() {
         assert_eq!(
-            rewrite_url(GRPC_ORIGIN, BASE),
+            rewrite_url(GRPC_ORIGIN, LOCAL_BASE),
             None,
             "a non-http origin is not rewritten"
         );
         assert_eq!(
-            rewrite_url(HTTP_ORIGIN, BASE).as_deref(),
+            rewrite_url(HTTP_ORIGIN, LOCAL_BASE).as_deref(),
             Some(LOCAL_BASE),
             "an http origin is rewritten to the local base"
         );
         assert_eq!(
-            rewrite_url(HTTPS_PATH_ORIGIN, BASE).as_deref(),
+            rewrite_url(HTTPS_PATH_ORIGIN, LOCAL_BASE).as_deref(),
             Some(LOCAL_PATH),
             "the query and path survive the rewrite"
         );

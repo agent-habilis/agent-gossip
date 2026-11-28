@@ -4,7 +4,6 @@
 use clap::Parser;
 use habilis_network::protocol::MeshName;
 
-use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
 use super::tuning_opts::TuningOpts;
 
@@ -37,9 +36,6 @@ pub(crate) struct DiscoverOpts {
     /// which it would silently ignore.
     #[command(flatten)]
     pub tuning: TuningOpts,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]
@@ -50,29 +46,10 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
 
     fn discover_opts(args: &[&str]) -> super::DiscoverOpts {
-        match Cli::parse_from(args).command {
-            Commands::Discover { options } => options,
-            Commands::Create { .. }
-            | Commands::Join { .. }
-            | Commands::Topic { .. }
-            | Commands::Poll { .. }
-            | Commands::Ping { .. }
-            | Commands::Mcp { .. }
-            | Commands::Man
-            | Commands::Peers { .. }
-            | Commands::State { .. }
-            | Commands::Meta { .. }
-            | Commands::Topology { .. }
-            | Commands::A2a { .. }
-            | Commands::Ready { .. }
-            | Commands::Plug { .. }
-            | Commands::Unplug { .. }
-            | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Invite { .. }
-            | Commands::Session { .. }
-            | Commands::BellCheck { .. } => panic!("expected Discover"),
-        }
+        let Commands::Discover { options } = Cli::parse_from(args).command else {
+            panic!("expected Discover")
+        };
+        options
     }
 
     #[test]

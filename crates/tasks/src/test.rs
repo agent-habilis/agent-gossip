@@ -17,9 +17,7 @@ pub(crate) fn run() -> TaskOutcome {
     output::status("Building", "test binaries (ci profile)");
     // `cargo build` as well as `cargo test --no-run`, under the same profile:
     // `cargo test` builds test targets plus the bins an integration test execs,
-    // and the suite's subprocess layer runs the real `agent-gossip` binary. The
-    // C-ABI cdylib this line also used to produce left with the engine — its
-    // conformance suite lives in the `habilis-network` repo now.
+    // and the suite's subprocess layer runs the real `agent-gossip` binary.
     Invocation::cargo(["build", "--workspace", "--profile", "ci"])
         .quiet()
         .run()?;

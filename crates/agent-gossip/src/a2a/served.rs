@@ -1,30 +1,24 @@
-//! The **gossip request/response** server gate: the safe subset of A2A
-//! operations a peer serves to other peers over gossip (`A2aReq` → `A2aResp`).
-//!
-//! Unlike the localhost JSON-RPC binding (`--a2a-serve`), which is
-//! bearer-authenticated and exposes the full [`handle_op`](super::rpc_error::handle_op)
-//! surface to a trusted local client, a gossip request is only
-//! mesh-member-signed. So the gate here refuses anything that would make the
-//! **serving** peer author state under its own identity on the caller's behalf
-//! (identity laundering): no `mesh/state.merge`, no `mesh/meta.merge`, no
-//! **broadcast** `message/send`. It serves only reads, a party-checked
-//! `tasks/cancel`, and a `message/send` **directed at the serving peer** (the
-//! caller asks the peer to take work; the peer ingests it and answers).
-
 use habilis_network::protocol::{AuthorKey, Channel};
 use habilis_network::util::consts;
 use serde_json::Value;
 
-use super::TaskId;
-use super::rpc_error::{A2aOp, RpcError};
+use super::rpc_error::{A2aOp, RpcError, message_param, task_id_param};
 use crate::a2a::a2a_app::A2aApp;
 
 /// The internal method `peers` uses to ask a peer whether it has a reader.
 pub(crate) const READER_GET: &str = "mesh/reader.get";
 
-/// What a classified gossip request resolves to. Kept separate from
-/// execution so the safe-set decision is a pure, unit-testable function; the
-/// receive path (`gossip::recv`) runs the resulting action.
+/// What a classified gossip request resolves to.
+///
+/// The localhost JSON-RPC binding (`--a2a-serve`) is bearer-authenticated and
+/// exposes the full [`handle_op`](super::rpc_error::handle_op) surface to a
+/// trusted local client. A gossip request is only mesh-member-signed, so the
+/// gate refuses anything that would make the **serving** peer author state
+/// under its own identity on the caller's behalf (identity laundering): no
+/// `mesh/state.merge`, no `mesh/meta.merge`, no **broadcast** `message/send`.
+/// Kept separate from execution so the safe-set decision is a pure,
+/// unit-testable function; the receive path (`handle_a2a_req`) runs the
+/// resulting action.
 pub(crate) enum Served {
     /// A read (or party-checked cancel) to run through `handle_op`.
     Op(A2aOp),
@@ -33,7 +27,7 @@ pub(crate) enum Served {
     /// The peer is the terminal recipient and never re-broadcasts.
     Ingest(super::Message),
     /// A `shard/repair` ask: re-deliver the named cached shard frames of one
-    /// of our big outbound groups (see `reassembly::ShardCache`).
+    /// of our big outbound groups (see `EventLoopState::shard_cache_mut`).
     ShardRepair {
         group: habilis_network::protocol::ShardGroup,
         missing: Vec<u32>,
@@ -55,36 +49,33 @@ pub(crate) fn classify(
     requester: &AuthorKey,
     app: &A2aApp,
 ) -> Served {
-    let task_id = || {
-        params["id"]
-            .as_str()
-            .and_then(TaskId::from_uuid_str)
-            .ok_or_else(|| RpcError::invalid_params("params.id must be a task id (uuid)"))
-    };
-    // Only a task's own peer may read it. A read is not harmless here: the
-    // response carries the id, counterparty, role and state of a task the
-    // caller may have no part in, and that id set is the handle every other
-    // task-plane attack needs. `CancelTask` has always made this check; the
-    // reads did not, which left the reconnaissance step open.
-    let party_only: Box<dyn Fn(TaskId, A2aOp) -> Served + '_> = Box::new(|wanted, op| {
-        let owner: Option<&AuthorKey> = app.tasks.get(&wanted).map(|rec| &rec.peer_key);
-        let owner = owner.or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer_key));
-        let is_peer: bool = owner.is_some_and(|peer| peer == requester);
-        if is_peer {
-            Served::Op(op)
-        } else {
-            // Same shape whether the task is absent or someone else's, so the
-            // response cannot be used to probe which ids exist.
-            Served::Reject(RpcError::task_not_found(&wanted))
-        }
-    });
     match method {
         // `SubscribeToTask` returns the same snapshot as `GetTask`; the worker's
         // status/artifact frames already flood + heal to the task's parties (the
         // push plane IS the stream), so the caller keeps receiving the pushed
         // frames after the snapshot — connectionless, no held socket.
-        "GetTask" | "SubscribeToTask" => match task_id() {
-            Ok(task_id) => party_only(task_id.clone(), A2aOp::GetTask { task_id }),
+        "GetTask" | "SubscribeToTask" => match task_id_param(params) {
+            Ok(task_id) => {
+                // Only a task's own peer may read it. A read is not harmless here: the
+                // response carries the id, counterparty, role and state of a task the
+                // caller may have no part in, and that id set is the handle every other
+                // task-plane attack needs. `CancelTask` has always made this check; the
+                // reads did not, which left the reconnaissance step open.
+                let live = app.tasks.get(&task_id).map(|rec| &rec.peer_key);
+                let closed = || {
+                    app.closed_tasks
+                        .get(&task_id)
+                        .map(|closed| &closed.peer_key)
+                };
+                let owner: Option<&AuthorKey> = live.or_else(closed);
+                if owner.is_some_and(|peer| peer == requester) {
+                    Served::Op(A2aOp::GetTask { task_id })
+                } else {
+                    // Same shape whether the task is absent or someone else's, so the
+                    // response cannot be used to probe which ids exist.
+                    Served::Reject(RpcError::task_not_found(&task_id))
+                }
+            }
             Err(error) => Served::Reject(error),
         },
         // Scoped to the caller's own tasks — the local binding, whose caller
@@ -98,7 +89,7 @@ pub(crate) fn classify(
         "mesh/meta.get" => Served::Op(A2aOp::ChannelGet {
             channel: Channel::Meta,
         }),
-        "CancelTask" => match task_id() {
+        "CancelTask" => match task_id_param(params) {
             Ok(task_id) => {
                 // Party check: only a task's own peer may cancel it, so the
                 // caller can't cancel work it isn't part of.
@@ -120,13 +111,9 @@ pub(crate) fn classify(
         // initiator then receives the worker's pushed status/artifact frames as
         // the stream. No held connection over gossip.
         "SendMessage" | "SendStreamingMessage" => {
-            let message: super::Message = match serde_json::from_value(params["message"].clone()) {
+            let message = match message_param(params) {
                 Ok(message) => message,
-                Err(error) => {
-                    return Served::Reject(RpcError::invalid_params(&format!(
-                        "params.message is not an A2A Message: {error}"
-                    )));
-                }
+                Err(error) => return Served::Reject(error),
             };
             // A gossip peer is the terminal recipient — it serves only a
             // message directed at itself, never a broadcast (which would make
@@ -215,7 +202,6 @@ mod tests {
                 peer: Some(&Nickname::from(peer)),
                 kind: Offer,
                 mine: false,
-                fraction: None,
             },
             std::time::Instant::now(),
         );
@@ -307,7 +293,7 @@ mod tests {
                 &caller,
                 &st
             )),
-            "a request from a non-member is rejected"
+            "a state merge would author under the serving peer's identity"
         );
         assert!(
             is_reject(&classify(
@@ -316,7 +302,7 @@ mod tests {
                 &caller,
                 &st
             )),
-            "a request for another caller's task is rejected"
+            "a meta merge would author under the serving peer's identity"
         );
         // A broadcast message/send (declares the mesh-broadcast extension) is
         // refused — the peer must not re-author it under its own identity.
@@ -328,7 +314,7 @@ mod tests {
         }});
         assert!(
             is_reject(&classify("SendMessage", &broadcast, &caller, &st)),
-            "an unknown method is rejected"
+            "a broadcast send over gossip is refused"
         );
     }
 
@@ -346,7 +332,7 @@ mod tests {
                 classify("SendMessage", &directed, &caller, &st),
                 Served::Ingest(_)
             ),
-            "a malformed task id is rejected"
+            "a send directed at the serving peer opens work on it"
         );
     }
 
@@ -394,7 +380,7 @@ mod tests {
         assert_eq!(
             reject(TASK_B),
             reject(TASK_A),
-            "rejects for different tasks differ"
+            "an absent id and a foreign id answer alike"
         );
     }
 
@@ -423,7 +409,7 @@ mod tests {
         else {
             panic!("expected ListTasks");
         };
-        assert_eq!(locally, None, "a locally held task is not reported");
+        assert_eq!(locally, None, "the local binding lists every task");
     }
 
     #[test]
@@ -438,7 +424,7 @@ mod tests {
                 &caller,
                 &st
             )),
-            "a request without a caller is rejected"
+            "the caller is no party to a task this peer does not hold"
         );
     }
 
@@ -456,7 +442,7 @@ mod tests {
                 ),
                 Served::ShardRepair { missing, .. } if missing == vec![0, 3, 7]
             ),
-            "an unauthorized state merge is refused"
+            "a well-formed repair ask keeps its missing indexes"
         );
         // A non-uuid group or an empty missing list is malformed.
         assert!(
@@ -466,7 +452,7 @@ mod tests {
                 &caller,
                 &st
             )),
-            "a meta merge from a peer is rejected"
+            "a group that is not a uuid is malformed"
         );
         assert!(
             is_reject(&classify(
@@ -475,7 +461,7 @@ mod tests {
                 &caller,
                 &st
             )),
-            "a foreign task is rejected"
+            "an empty missing list is malformed"
         );
     }
 
@@ -485,7 +471,7 @@ mod tests {
         let st = state();
         assert!(
             is_reject(&classify("message/stream", &json!({}), &caller, &st)),
-            "a mesh control request is rejected"
+            "a method outside the served set is refused"
         );
     }
 

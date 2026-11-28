@@ -12,10 +12,9 @@
 //! for a quick smoke; default 100 MB.
 //!
 //! Why deterministic-and-verified rather than asserting 100% delivery:
-//! the gossip path is best-effort and the message log only keeps the most
-//! recent ~200 ids, so across tens of thousands of messages anti-entropy
-//! cannot backfill an early drop. We therefore verify each chunk that
-//! *does* arrive and report the delivery ratio (≈100% on loopback).
+//! the gossip path is best-effort and the engine keeps no log of a
+//! broadcast, so nothing sends a dropped chunk again. We therefore verify
+//! each chunk that *does* arrive and report the delivery ratio (≈100% on loopback).
 use std::time::{Duration, Instant};
 
 use agent_gossip::api::{CreateConfig, JoinConfig, MeshSession};

@@ -13,7 +13,7 @@
 pub(crate) const BROADCAST: &str = "a2a_broadcast";
 
 /// The extension URI a broadcast payload must carry, from the app crate's
-/// `a2a/extensions.rs`. Here rather than beside its one use in `driver.rs`, so
+/// `a2a/extensions.rs`. Here rather than beside its one use in `gossip_driver.rs`, so
 /// the whole duplicated set is in one file and the `agent-gossip-core`
 /// extraction cannot miss it.
 pub(crate) const EXT_MESH_BROADCAST: &str = "https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1";

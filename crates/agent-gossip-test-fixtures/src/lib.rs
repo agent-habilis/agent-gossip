@@ -2,7 +2,7 @@
 //!
 //! This is a library crate, not a `tests/common/` module, for one reason: each
 //! integration binary is its own compilation unit, so a shared `mod common;`
-//! makes every helper it does not personally call look dead. Sixteen binaries
+//! makes every helper it does not personally call look dead. Binaries
 //! with wildly different needs (`man_contract` uses one helper; `gossip_network`
 //! uses two dozen) made that unavoidable, and the blanket `#![allow(dead_code)]`
 //! it forced also hid genuinely dead helpers. A library's `pub` surface is
@@ -44,7 +44,6 @@ mod cli_poll;
 mod cli_poll_long;
 mod cli_task_artifact;
 mod cli_task_create;
-mod cli_task_create_attempt;
 mod cli_task_create_raw;
 mod cli_task_followup;
 mod cli_task_status;
@@ -52,11 +51,16 @@ mod connect_timeout;
 mod counter;
 mod flag_args;
 mod followup_params;
+mod http_get;
+mod http_request;
 mod in_proc_node;
 mod init_test_tracing;
 mod ipc_raw;
 mod is_rpc_timeout;
+mod kill_on_drop;
 mod mdns_multicast_available;
+mod merged_slices;
+mod meshed_pair;
 mod meta_slot_of;
 mod msg_timeout;
 mod names_lookup;
@@ -69,15 +73,18 @@ mod rpc_attempt;
 mod scan_create_log;
 mod serial_gate;
 mod serial_guard;
+mod short_evict;
 mod socket_path;
+mod task_create_command;
+mod task_id_of;
 mod test_cmd;
 mod test_log_dir;
 mod test_mesh_name;
 mod three_peers;
 mod tmp_log;
 mod trace_log;
+mod wait_a2a;
 mod wait_bell_output;
-mod wait_total;
 mod wait_until;
 mod warm_up;
 
@@ -86,7 +93,7 @@ pub use self::assert_bell_parked::assert_bell_parked;
 pub use self::await_link_cli::await_link_cli;
 pub use self::await_mutual_cards::await_mutual_cards;
 pub use self::await_peer_card_cli::await_peer_card_cli;
-pub use self::bell_grace::BELL_GRACE;
+pub(crate) use self::bell_grace::BELL_GRACE;
 pub use self::big_body_timeout::BIG_BODY_TIMEOUT;
 pub use self::bin::bin;
 pub use self::channel_subcommand::channel_subcommand;
@@ -106,7 +113,6 @@ pub use self::cli_poll::cli_poll;
 pub use self::cli_poll_long::cli_poll_long;
 pub use self::cli_task_artifact::cli_task_artifact;
 pub use self::cli_task_create::cli_task_create;
-pub(crate) use self::cli_task_create_attempt::cli_task_create_attempt;
 pub use self::cli_task_create_raw::cli_task_create_raw;
 pub use self::cli_task_followup::cli_task_followup;
 pub use self::cli_task_status::cli_task_status;
@@ -114,11 +120,16 @@ pub use self::connect_timeout::CONNECT_TIMEOUT;
 pub(crate) use self::counter::COUNTER;
 pub use self::flag_args::flag_args;
 pub use self::followup_params::FollowupParams;
+pub use self::http_get::http_get;
+pub use self::http_request::http_request;
 pub use self::in_proc_node::InProcNode;
 pub use self::init_test_tracing::init_test_tracing;
 pub use self::ipc_raw::ipc_raw;
 pub(crate) use self::is_rpc_timeout::is_rpc_timeout;
+pub use self::kill_on_drop::KillOnDrop;
 pub use self::mdns_multicast_available::mdns_multicast_available;
+pub use self::merged_slices::merged_slices;
+pub use self::meshed_pair::meshed_pair;
 pub use self::meta_slot_of::meta_slot_of;
 pub use self::msg_timeout::MSG_TIMEOUT;
 pub use self::names_lookup::names_lookup;
@@ -131,14 +142,17 @@ pub(crate) use self::rpc_attempt::RPC_ATTEMPT;
 pub(crate) use self::scan_create_log::scan_create_log;
 pub(crate) use self::serial_gate::SERIAL_GATE;
 pub use self::serial_guard::serial_guard;
+pub use self::short_evict::SHORT_EVICT;
 pub use self::socket_path::socket_path;
+pub(crate) use self::task_create_command::task_create_command;
+pub use self::task_id_of::task_id_of;
 pub use self::test_cmd::test_cmd;
 pub use self::test_log_dir::test_log_dir;
 pub(crate) use self::test_mesh_name::test_mesh_name;
 pub use self::three_peers::three_peers;
 pub use self::tmp_log::tmp_log;
 pub use self::trace_log::trace_log;
+pub use self::wait_a2a::wait_a2a;
 pub use self::wait_bell_output::wait_bell_output;
-pub use self::wait_total::wait_total;
 pub use self::wait_until::wait_until;
 pub use self::warm_up::warm_up;

@@ -2,7 +2,7 @@
 
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT};
+use common::{InProcNode, MSG_TIMEOUT, task_id_of};
 
 async fn served_metadata(
     initiator: &InProcNode,
@@ -29,11 +29,7 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
     common::warm_up(&alice, &mut [&mut bob]).await;
 
     let response = alice.create_task("t-wait-bob", "port the parser").await;
-    let task_id: TaskId = response["result"]["task"]["id"]
-        .as_str()
-        .expect("the worker returned a Task with an id")
-        .parse()
-        .expect("the returned id is a valid task id");
+    let task_id = task_id_of(&response);
     assert!(
         bob.wait_task_message(MSG_TIMEOUT).await,
         "bob saw the brief"

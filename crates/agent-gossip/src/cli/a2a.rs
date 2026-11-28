@@ -1,130 +1,48 @@
 use anyhow::Result;
 use habilis_network::ops::blob;
 use habilis_network::ops::blob::BlobTicket;
-use habilis_network::protocol::{MeshId, MeshName, Nickname};
+use habilis_network::protocol::{MessageBody, Nickname};
 
 use super::a2a_call_request::A2aCallRequest;
 use super::a2a_call_sugar::A2aCallSugar;
+use super::a2a_discover::a2a_discover;
 use super::advertised_file_name::advertised_file_name;
-use super::args::A2aAction;
-use super::args::lookup::LookupArgs;
+use super::args::{A2aAction, ArtifactArgs, CallArgs, ExposeArgs, SessionAddress, StatusArgs};
 use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
 use crate::a2a::ipc_command::IpcCommand;
-use crate::a2a::{TaskId, TaskState};
 use crate::tunnel::bridge;
 
-/// Post a message to a mesh via the running server's IPC socket.
 pub(super) async fn a2a(action: A2aAction) -> Result<()> {
     match action {
-        A2aAction::Expose {
-            to,
-            lookups,
-            advertise,
-            password,
-            loopback,
-            legacy_output: _,
-        } => {
-            expose(ExposeArgs {
-                to,
-                lookups,
-                advertise,
-                password,
-                loopback,
-            })
-            .await
-        }
+        A2aAction::Expose(args) => expose(args).await,
         A2aAction::Connect {
             ticket,
             port,
             password,
             allow_anonymous,
-            legacy_output: _,
         } => connect(&ticket, port, password, allow_anonymous).await,
-        A2aAction::Discover {
-            directory,
-            lookups,
-            legacy_output: _,
-        } => discover(directory, lookups).await,
-        A2aAction::Broadcast {
-            gossip,
-            nickname,
-            text,
-        } => broadcast(gossip, &nickname, text).await,
-        A2aAction::Msg {
-            gossip,
-            nickname,
-            to,
-            text,
-        } => send_msg(gossip, &nickname, to, text).await,
-        A2aAction::Call {
-            gossip,
-            nickname,
-            to,
-            method,
-            text,
-            task_id,
-            label,
-            params,
-            timeout_secs,
-            file,
-            file_name,
-            file_mime,
-        } => {
-            call(CallArgs {
-                mesh: gossip,
-                nickname,
+        A2aAction::Discover { directory, lookups } => {
+            Box::pin(a2a_discover(directory, lookups.to_set()?)).await
+        }
+        A2aAction::Broadcast { session, text } => {
+            let command = IpcCommand::Broadcast {
+                mesh: session.gossip,
+                body: message_body(&text)?,
+            };
+            send_and_print_id(&command, &session.nickname, "message").await
+        }
+        A2aAction::Msg { session, to, text } => {
+            let command = IpcCommand::Msg {
+                mesh: session.gossip,
                 to,
-                method,
-                text,
-                task_id,
-                label,
-                params,
-                timeout_secs,
-                file,
-                file_name,
-                file_mime,
-            })
-            .await
+                body: message_body(&text)?,
+            };
+            send_and_print_id(&command, &session.nickname, "message").await
         }
-        A2aAction::Status {
-            gossip,
-            nickname,
-            task_id,
-            state,
-            note,
-            waiting,
-        } => {
-            status(StatusArgs {
-                mesh: gossip,
-                nickname,
-                task_id,
-                state,
-                note,
-                waiting,
-            })
-            .await
-        }
-        A2aAction::Artifact {
-            gossip,
-            nickname,
-            task_id,
-            text,
-            file,
-            file_name,
-            file_mime,
-        } => {
-            artifact(ArtifactArgs {
-                mesh: gossip,
-                nickname,
-                task_id,
-                text,
-                file,
-                file_name,
-                file_mime,
-            })
-            .await
-        }
+        A2aAction::Call(args) => call(args).await,
+        A2aAction::Status(args) => status(args).await,
+        A2aAction::Artifact(args) => artifact(args).await,
         A2aAction::Fetch {
             ticket,
             nickname,
@@ -132,15 +50,6 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             password,
         } => fetch(&ticket, nickname.as_ref(), output, password).await,
     }
-}
-
-/// The fields of an `a2a expose`, grouped so the helper stays within the argument limit.
-struct ExposeArgs {
-    to: String,
-    lookups: LookupArgs,
-    advertise: Option<MeshName>,
-    password: Option<PasswordFlag>,
-    loopback: bool,
 }
 
 async fn expose(args: ExposeArgs) -> Result<()> {
@@ -153,7 +62,7 @@ async fn expose(args: ExposeArgs) -> Result<()> {
     } = args;
     let password = super::password_flag::resolve_password(password)?;
     let advertise = habilis_network::protocol::DirectorySelection::from(advertise);
-    Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
+    Box::pin(crate::tunnel::expose(crate::tunnel::ExposeParams {
         to: &to,
         flags: lookups.to_set()?,
         advertise,
@@ -169,65 +78,27 @@ async fn connect(
     password: Option<PasswordFlag>,
     allow_anonymous: bool,
 ) -> Result<()> {
-    // Error when the ticket needs a password and none was passed
-    // (mirrors the mesh-join UX); otherwise resolve the given flag.
-    let password = match password {
-        None if crate::a2a::ticket_requires_password(ticket) => {
-            Some(super::password_flag::require_password("ticket")?)
-        }
-        other => super::password_flag::resolve_password(other)?,
-    };
+    let password = super::password_flag::resolve_password(password)?;
     bridge::connect(ticket, port, password, allow_anonymous).await
 }
 
-async fn discover(directory: Option<MeshName>, lookups: LookupArgs) -> Result<()> {
-    Box::pin(super::discover_params::discover(
-        super::discover_params::DiscoverParams {
-            directory,
-            lookups: lookups.to_set()?,
-        },
-    ))
-    .await
+fn message_body(text: &str) -> Result<MessageBody> {
+    MessageBody::try_new(text).map_err(|error| anyhow::anyhow!("{error}"))
 }
 
-async fn broadcast(mesh: MeshId, nickname: &Nickname, text: String) -> Result<()> {
-    let body = habilis_network::protocol::MessageBody::try_new(&text)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let response = super::send::send(&IpcCommand::Broadcast { mesh, body }, nickname).await?;
-    let id = finish_send(&response, "message")?;
+async fn send_and_print_id(command: &IpcCommand, nickname: &Nickname, what: &str) -> Result<()> {
+    let response = super::send::send(command, nickname).await?;
+    let id = finish_send(&response, what)?;
     println!("{id}");
     Ok(())
-}
-
-async fn send_msg(mesh: MeshId, nickname: &Nickname, to: Nickname, text: String) -> Result<()> {
-    let body = habilis_network::protocol::MessageBody::try_new(&text)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let response = super::send::send(&IpcCommand::Msg { mesh, to, body }, nickname).await?;
-    let id = finish_send(&response, "message")?;
-    println!("{id}");
-    Ok(())
-}
-
-/// The fields of an `a2a call`, grouped so the helper stays within the argument limit.
-struct CallArgs {
-    mesh: MeshId,
-    nickname: Nickname,
-    to: Nickname,
-    method: String,
-    text: Option<String>,
-    task_id: Option<TaskId>,
-    label: Option<String>,
-    params: Option<String>,
-    timeout_secs: u64,
-    file: Option<std::path::PathBuf>,
-    file_name: Option<String>,
-    file_mime: Option<String>,
 }
 
 async fn call(args: CallArgs) -> Result<()> {
     let CallArgs {
-        mesh,
-        nickname,
+        session: SessionAddress {
+            gossip: mesh,
+            nickname,
+        },
         to,
         method,
         text,
@@ -278,23 +149,15 @@ async fn call(args: CallArgs) -> Result<()> {
     Ok(())
 }
 
-/// The fields of an `a2a status`, grouped so the helper stays within the argument limit.
-struct StatusArgs {
-    mesh: MeshId,
-    nickname: Nickname,
-    task_id: TaskId,
-    state: TaskState,
-    note: Option<String>,
-    waiting: Option<String>,
-}
-
 async fn status(args: StatusArgs) -> Result<()> {
     let StatusArgs {
-        mesh,
-        nickname,
+        session: SessionAddress {
+            gossip: mesh,
+            nickname,
+        },
         task_id,
         state,
-        note,
+        text,
         waiting,
     } = args;
     crate::a2a::broadcast_params::WorkerLeg::parse(state, waiting.as_deref())
@@ -303,30 +166,18 @@ async fn status(args: StatusArgs) -> Result<()> {
         mesh,
         task_id,
         state,
-        note,
+        note: text,
         waiting,
     };
-    let response = super::send::send(&command, &nickname).await?;
-    let id = finish_send(&response, "task status")?;
-    println!("{id}");
-    Ok(())
-}
-
-/// The fields of an `a2a artifact`, grouped so the helper stays within the argument limit.
-struct ArtifactArgs {
-    mesh: MeshId,
-    nickname: Nickname,
-    task_id: TaskId,
-    text: Option<String>,
-    file: Option<std::path::PathBuf>,
-    file_name: Option<String>,
-    file_mime: Option<String>,
+    send_and_print_id(&command, &nickname, "task status").await
 }
 
 async fn artifact(args: ArtifactArgs) -> Result<()> {
     let ArtifactArgs {
-        mesh,
-        nickname,
+        session: SessionAddress {
+            gossip: mesh,
+            nickname,
+        },
         task_id,
         text,
         file,
@@ -346,10 +197,7 @@ async fn artifact(args: ArtifactArgs) -> Result<()> {
         file_name,
         file_mime,
     };
-    let response = super::send::send(&command, &nickname).await?;
-    let id = finish_send(&response, "task artifact")?;
-    println!("{id}");
-    Ok(())
+    send_and_print_id(&command, &nickname, "task artifact").await
 }
 
 async fn fetch(

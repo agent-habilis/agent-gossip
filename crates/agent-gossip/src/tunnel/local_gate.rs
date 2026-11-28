@@ -20,7 +20,7 @@ pub(super) struct Refusal(pub(super) &'static str);
 /// The local half of the bridge's access control.
 ///
 /// The bridge presents the ticket credential on the client's behalf
-/// (`connect::forward_one`), so an ungated port hands the ticket-holder's
+/// (`bridge::forward_one`), so an ungated port hands the ticket-holder's
 /// access to whoever opens a TCP connection to it. That is any other process on
 /// the machine, and any page the user visits while the bridge is up: a `fetch`
 /// with a CORS-safelisted content type fires no preflight, so the write lands

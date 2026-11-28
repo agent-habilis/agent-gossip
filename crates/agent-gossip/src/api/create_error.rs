@@ -42,7 +42,8 @@ impl std::error::Error for CreateError {
 /// Why [`MeshSession::join`](super::MeshSession::join) failed.
 ///
 /// The symmetric counterpart to [`CreateError`]. `Resolve` is a malformed id; `Setup` is an
-/// endpoint/gossip failure. The MCP server maps both to an internal error.
+/// endpoint/gossip failure. The MCP server maps `Resolve` to an `invalid_params` error and `Setup`
+/// to an internal one.
 #[derive(Debug)]
 #[must_use]
 #[non_exhaustive]

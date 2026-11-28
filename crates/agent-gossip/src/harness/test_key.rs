@@ -15,7 +15,7 @@ use habilis_network::protocol::{
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
 pub use habilis_network::util::consts::{
-    REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
+    REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
 };
 use habilis_network::x25519_dalek::PublicKey;
 

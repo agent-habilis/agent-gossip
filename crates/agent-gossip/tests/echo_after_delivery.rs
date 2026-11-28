@@ -5,13 +5,7 @@ use std::time::Duration;
 use agent_gossip::a2a::status_update_params;
 use agent_gossip::output_event::OutputEvent;
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT, Node};
-
-const SHORT_EVICT: [(&str, &str); 3] = [
-    ("--alive-timeout-secs", "3"),
-    ("--sweep-interval-secs", "1"),
-    ("--heal-interval-secs", "3"),
-];
+use common::{MSG_TIMEOUT, Node, SHORT_EVICT, meshed_pair};
 
 fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
     events.iter().any(|event| {
@@ -21,16 +15,6 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
                 if status_update_params::chat_text(message).as_deref() == Some(text)
         )
     })
-}
-
-/// The warmup proves that the mesh formed, and the peer card is what a
-/// directed msg is sealed to: without both, the first send can fail.
-async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
-    let alice = InProcNode::create_with_nick(name, &format!("{name}-alice")).await;
-    let mut bob = InProcNode::join(&alice.mesh, bob_nick).await;
-    common::warm_up(&alice, &mut [&mut bob]).await;
-    alice.await_peer_card(bob_nick).await;
-    (alice, bob)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

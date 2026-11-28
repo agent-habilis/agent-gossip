@@ -28,7 +28,7 @@ pub(crate) fn plug(agents: &[Agent], paths: &[PathBuf]) -> Result<()> {
     for agent in resolve(&home, agents, paths, Op::Install) {
         install(agent, &home)?;
     }
-    for path in dedup_paths(paths) {
+    for path in dedup(paths) {
         install_root(&path)?;
         status("Installed", &format!("{} (path)", home_path(&path)));
     }
@@ -50,7 +50,7 @@ pub(crate) fn unplug(agents: &[Agent], paths: &[PathBuf]) -> Result<()> {
             acted += 1;
         }
     }
-    for path in dedup_paths(paths) {
+    for path in dedup(paths) {
         if remove_root(&path)? {
             status("Unplugging", &format!("{} (path)", home_path(&path)));
             acted += 1;
@@ -86,23 +86,12 @@ fn resolve(home: &Path, agents: &[Agent], paths: &[PathBuf], op: Op) -> Vec<Agen
         .collect()
 }
 
-/// `agents` with duplicates removed, preserving order.
-fn dedup(agents: &[Agent]) -> Vec<Agent> {
-    let mut out: Vec<Agent> = Vec::new();
-    for &agent in agents {
-        if !out.contains(&agent) {
-            out.push(agent);
-        }
-    }
-    out
-}
-
-/// `paths` with duplicates removed, preserving order.
-fn dedup_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-    for path in paths {
-        if !out.contains(path) {
-            out.push(path.clone());
+/// `items` with duplicates removed, preserving order.
+fn dedup<T: Clone + PartialEq>(items: &[T]) -> Vec<T> {
+    let mut out: Vec<T> = Vec::new();
+    for item in items {
+        if !out.contains(item) {
+            out.push(item.clone());
         }
     }
     out

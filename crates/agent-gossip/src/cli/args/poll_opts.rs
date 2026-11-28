@@ -4,13 +4,12 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy_output::LegacyOutput;
 use super::poll_identity::PollIdentity;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
     /// Gossip identifier
-    #[arg(long, alias = "room", required_unless_present = "state_file")]
+    #[arg(long, required_unless_present = "state_file")]
     pub gossip: Option<MeshId>,
 
     /// Nickname of the local agent (must have a running join/create session)
@@ -54,9 +53,6 @@ pub(crate) struct PollOpts {
     /// ends first and the agent re-arms it without a notice.
     #[arg(long, value_name = "SECS", requires = "long")]
     pub max_secs: Option<u64>,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 impl PollOpts {
@@ -228,8 +224,8 @@ mod tests {
         );
     }
 
-    /// `--after` is hidden from help but must keep parsing — it is the
-    /// debug/recovery replay and the old-protocol compatibility path.
+    /// `--after` is hidden from help but must keep parsing: it is the
+    /// debug and recovery replay, which the receive loop of the skills uses.
     #[test]
     fn hidden_after_still_parses() {
         let cli = parse(&[

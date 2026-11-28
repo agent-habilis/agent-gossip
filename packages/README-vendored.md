@@ -5,7 +5,6 @@ The runtime and design system the `/room/` app is built on.
 | package | what it is |
 |---|---|
 | `visage-dom` | the runtime — generator components, signals, JSX. No dependencies. |
-| `visage-router` | routing. Depends on `visage-dom`. |
 | `visage-style` | scoped `@scope` styles + tokens. |
 | `moonspace` | the monospace grid and glyph constants. |
 | `moonspace-theme` | the superstylin palette as 16 semantic colour roles. |

@@ -2,16 +2,20 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
+use habilis_network::runtime::state_file;
 use habilis_network::runtime::state_file::{read_identity, read_session_entry};
-use habilis_network::runtime::{ipc, state_file};
-use habilis_network::util::process;
+use habilis_network::util::{process, tuning};
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
-use super::bell;
 use super::discovery::Discovery;
 use super::target::Target;
-use crate::a2a::ipc_command::IpcCommand::Info;
+use super::{bell, info_response};
 use crate::runtime_base;
+
+/// Seconds to wait for a signalled daemon to drop its state file and stop
+/// answering its socket before reporting it unconfirmed. Outlasts the engine's
+/// own leave budget.
+pub(super) const LEAVE_CONFIRM_SECS: u64 = tuning::NODE_LEAVE.as_secs() + 2;
 
 /// Walk every state file under [`runtime_base`](fn@runtime_base) and resolve it to a live
 /// daemon or clean it up. Covers both per-mesh files
@@ -140,45 +144,23 @@ struct Owner {
     pid: u32,
 }
 
-/// Ask every daemon socket on this machine to identify itself.
-///
-/// Best-effort by design: a stale socket left by a `SIGKILL`ed daemon simply
-/// fails to answer and is skipped, which is exactly the case this is here to
-/// tell apart from a live one.
 async fn live_owners() -> Vec<Owner> {
-    let mut owners = Vec::new();
-    for path in ipc::active_socket_paths(&runtime_base()) {
-        let Ok(response) = ipc::send_to_path(&path, &Info).await else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
-            continue;
-        };
-        let pid = value["pid"]
-            .as_u64()
-            .and_then(|pid| u32::try_from(pid).ok());
-        let (Some(gossip), Some(nickname), Some(pid)) =
-            (value["gossip"].as_str(), value["nickname"].as_str(), pid)
-        else {
-            continue;
-        };
-        owners.push(Owner {
-            gossip: gossip.to_owned(),
-            nickname: nickname.to_owned(),
-            pid,
-        });
-    }
-    owners
+    info_response::live_daemons()
+        .await
+        .into_iter()
+        .map(|info| Owner {
+            gossip: info.gossip,
+            nickname: info.nickname,
+            pid: info.pid,
+        })
+        .collect()
 }
 
 /// Does a live daemon actually answer for this target's mesh *at this pid*?
 ///
 /// Both halves matter. Matching only the mesh would still signal the wrong
 /// process when a stale file's pid has been reissued; matching only the pid
-/// would signal a live daemon that has nothing to do with the mesh named. A
-/// daemon predating this check answers without a `pid` and is treated as
-/// unconfirmed, which costs a stale entry a cleanup rather than risking a
-/// stranger's process.
+/// would signal a live daemon that has nothing to do with the mesh named.
 fn confirm_owner(owners: &[Owner], target: &Target) -> bool {
     owners.iter().any(|owner| {
         owner.pid == target.pid
@@ -232,8 +214,6 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         gossip: mesh,
         nickname,
         session_pid,
-        confirm_timeout_secs,
-        legacy_output: _,
     } = options;
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
@@ -246,8 +226,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
             0,
         )
     } else {
-        let anchor = session_pid.unwrap_or_else(default_session_pid);
-        split_owned(live, |target| owned_by(target, anchor))
+        owned_sessions(live, session_pid)
     };
 
     let owners = live_owners().await;
@@ -277,13 +256,16 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     // identity, the new one announcing `joined` before the old one broadcast
     // `left`. Requiring silence on the socket too makes the report agree with
     // the predicate `run_session` refuses to start against.
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(confirm_timeout_secs);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(LEAVE_CONFIRM_SECS);
     let mut outcomes: Vec<(Target, bool, bool)> = left
         .into_iter()
         .map(|(target, signalled)| (target, signalled, false))
         .collect();
-    loop {
+    // A scan of every socket on the host is not free, so it runs only while a signalled daemon can still serve.
+    while outcomes
+        .iter()
+        .any(|(_, signalled, gone)| *signalled && !*gone)
+    {
         let still_serving = live_owners().await;
         let mut waiting = false;
         for (target, signalled, gone) in &mut outcomes {
@@ -321,10 +303,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
 }
 
 pub(crate) fn session(options: &SessionOpts) {
-    let SessionOpts {
-        session_pid,
-        legacy_output: _,
-    } = options;
+    let SessionOpts { session_pid } = options;
     let Discovery { live, cleaned } = discover();
     let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
