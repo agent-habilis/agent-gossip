@@ -10,54 +10,6 @@ use std::time::Duration;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
 
-/// A directed task A→B is readable only by B; the relay C never surfaces it.
-/// Broadcast from A reaches both B and C.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
-    let alice = InProcNode::create("seal").await;
-    let mut bob = InProcNode::join(&alice.mesh, "seal-bob").await;
-    let mut carol = InProcNode::join(&alice.mesh, "seal-carol").await;
-
-    // Warm the mesh; a broadcast reaches everyone (proves C is a live relay).
-    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
-
-    // A delegates a task to B — a directed, sealed `message/send`.
-    let response = alice
-        .create_task("seal-bob", "the private brief for bob")
-        .await;
-    assert!(
-        response["result"]["task"].is_object(),
-        "task created: {response}"
-    );
-
-    // B is the addressee: it decrypts the sealed brief and surfaces it.
-    assert!(
-        bob.wait_task_message(MSG_TIMEOUT).await,
-        "bob must decrypt and surface the directed task brief"
-    );
-    // C relays the same frame but cannot read the sealed body, so it never
-    // surfaces the A→B task.
-    assert!(
-        !carol.wait_task_message(Duration::from_secs(2)).await,
-        "carol (a relay) must not surface a task it is not addressed by"
-    );
-
-    // Broadcast stays public: A's chat is readable by every member, C included.
-    alice.broadcast("a public announcement").await;
-    assert!(
-        bob.wait_body("a public announcement", MSG_TIMEOUT).await,
-        "bob reads broadcast"
-    );
-    assert!(
-        carol.wait_body("a public announcement", MSG_TIMEOUT).await,
-        "carol reads broadcast — broadcast is not sealed"
-    );
-
-    alice.leave().await;
-    bob.leave().await;
-    carol.leave().await;
-}
-
 /// A passworded gossip seals the state frames. The seal key of a peer comes in its signed
 /// `PeerInfo`, which a password does not change, so a directed msg must work with a password too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

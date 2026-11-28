@@ -4,7 +4,7 @@
 //! back — with no app logic in the daemon.
 //!
 //! The view of a channel holds one signed slice for each author, keyed by the hex of
-//! the author key. The tests write disjoint keys, so `merged` folds the slices into
+//! the author key. The tests write disjoint keys, so `merged_slices` folds the slices into
 //! one document that a test can compare.
 //!
 //! Every behavior runs against **both channels** (`state` and `meta`): each test
@@ -26,71 +26,17 @@
 //! `meta_and_state_channels_are_independent` is the one inherently cross-channel
 //! test and stays standalone.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT};
+use common::{InProcNode, MSG_TIMEOUT, RECOVERY_TIMEOUT, channel_subcommand, merged_slices};
 use serde_json::{Value, json};
-
-/// `state` / `meta`, for naming meshes and assert messages (the crate's
-/// `Channel::label` is `pub(crate)`, not reachable from this test crate).
-fn label(channel: Channel) -> &'static str {
-    match channel {
-        Channel::State => "state",
-        Channel::Meta => "meta",
-        _ => panic!("the test has no label for this channel"),
-    }
-}
 
 /// A per-channel mesh name so the `state` and `meta` variants of one behavior
 /// never share a name when they run concurrently.
 fn mesh_name(channel: Channel, base: &str) -> String {
-    format!("{base}-{}", label(channel))
-}
-
-/// A single-key merge object `{key: value}` — for keys computed at runtime, which
-/// the `json!` macro can't take as a literal key.
-fn one(key: String, value: Value) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert(key, value);
-    Value::Object(map)
-}
-
-/// The slices of a channel view folded into one document. The tests write disjoint keys, so the
-/// union of the keys of all slices is the document that the members agree on.
-fn merged(view: &Value) -> Value {
-    let mut document = serde_json::Map::new();
-    for slice in view
-        .as_object()
-        .into_iter()
-        .flat_map(serde_json::Map::values)
-    {
-        for (key, value) in slice.as_object().into_iter().flatten() {
-            document.insert(key.clone(), value.clone());
-        }
-    }
-    Value::Object(document)
-}
-
-/// Poll a node's derived document for `channel` until `pred` holds or `timeout`
-/// elapses.
-async fn wait_doc(
-    node: &InProcNode,
-    channel: Channel,
-    timeout: Duration,
-    mut pred: impl FnMut(&Value) -> bool,
-) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if pred(&node.get(channel).await) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(POLL).await;
-    }
+    format!("{base}-{}", channel_subcommand(channel))
 }
 
 /// The `state` and `meta` channels are fully independent: a write to one
@@ -106,7 +52,7 @@ async fn meta_and_state_channels_are_independent() {
     let alice_slot = alice.key_seen_by(&bob).await.to_string();
     alice.meta_merge(json!({"model": "Opus 4.8"})).await;
     assert!(
-        wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        bob.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             doc.pointer(&format!("/{alice_slot}/model")) == Some(&json!("Opus 4.8"))
         })
         .await,
@@ -127,11 +73,10 @@ async fn meta_and_state_channels_are_independent() {
     // A state write propagates to bob's state doc; meta is unchanged by it.
     alice.state_merge(json!({"turn": "a"})).await;
     assert!(
-        wait_doc(
-            &bob,
+        bob.wait_view(
             Channel::State,
             RECOVERY_TIMEOUT,
-            |doc| merged(doc)["turn"] == json!("a")
+            |doc| merged_slices(doc)["turn"] == json!("a")
         )
         .await,
         "bob never saw the state write: {}",
@@ -168,9 +113,10 @@ async fn patches_converge_for(channel: Channel) {
     let want = json!({"a": 1, "b": 2, "c": 3});
     for (node, who) in [(&alice, "alice"), (&bob, "bob"), (&carol, "carol")] {
         assert!(
-            wait_doc(node, channel, RECOVERY_TIMEOUT, |doc| merged(doc) == want).await,
+            node.wait_view(channel, RECOVERY_TIMEOUT, |doc| merged_slices(doc) == want)
+                .await,
             "{who} never converged on {}: {}",
-            label(channel),
+            channel_subcommand(channel),
             node.get(channel).await
         );
     }
@@ -203,10 +149,11 @@ async fn peer_change_wakes_for(channel: Channel) {
 
     // F8: bob is woken with the document.
     assert!(
-        bob.wait_change(channel, MSG_TIMEOUT, |doc| merged(doc)["turn"] == "bob")
+        bob.wait_change(channel, MSG_TIMEOUT, |doc| merged_slices(doc)["turn"]
+            == "bob")
             .await,
         "a peer's {} change must wake the agent with the derived document (F8)",
-        label(channel)
+        channel_subcommand(channel)
     );
     // F5: alice was never woken by her OWN merge (a peer's change wakes her
     // with `self:false`, so filter on the flag).
@@ -217,7 +164,7 @@ async fn peer_change_wakes_for(channel: Channel) {
     assert!(
         self_wakes.is_empty(),
         "an agent must not be woken on its own {} merge (F5), got {self_wakes:?}",
-        label(channel)
+        channel_subcommand(channel)
     );
 
     alice.leave().await;
@@ -256,30 +203,32 @@ async fn late_joiner_gets_the_slices_for(channel: Channel) {
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
-    let want = merged(&alice.get(channel).await);
+    let want = merged_slices(&alice.get(channel).await);
     assert_eq!(
         want.as_object().map(serde_json::Map::len),
         Some(WRITES * KEYS_PER_WRITE),
         "creator's own {} view holds every key it set",
-        label(channel)
+        channel_subcommand(channel)
     );
 
     // The early (meshed) peer converges via the live path.
     assert!(
-        wait_doc(&early, channel, RECOVERY_TIMEOUT, |doc| merged(doc) == want).await,
+        early
+            .wait_view(channel, RECOVERY_TIMEOUT, |doc| merged_slices(doc) == want)
+            .await,
         "early peer never converged on the live {} path",
-        label(channel)
+        channel_subcommand(channel)
     );
 
     // The late joiner arrives after all traffic and gets the latest slice of the creator.
     let late = InProcNode::join(&alice.mesh, "bf-late").await;
     assert!(
-        wait_doc(&late, channel, Duration::from_secs(150), |doc| merged(doc)
+        late.wait_view(channel, Duration::from_secs(150), |doc| merged_slices(doc)
             == want)
-        .await,
+            .await,
         "late joiner never got the {} slices ({} of {} keys)",
-        label(channel),
-        merged(&late.get(channel).await)
+        channel_subcommand(channel),
+        merged_slices(&late.get(channel).await)
             .as_object()
             .map_or(0, serde_json::Map::len),
         WRITES * KEYS_PER_WRITE
@@ -303,7 +252,9 @@ async fn meta_late_joiner_gets_the_slice_of_every_member() {
 /// The number of moves recorded in the shared document (one `/m{k}` key
 /// each).
 fn move_count(doc: &Value) -> usize {
-    merged(doc).as_object().map_or(0, serde_json::Map::len)
+    merged_slices(doc)
+        .as_object()
+        .map_or(0, serde_json::Map::len)
 }
 
 /// Reaction + convergence end-to-end (the chess narrative, no engine): two
@@ -331,13 +282,13 @@ async fn ping_pong_for(channel: Channel) {
     // holds `target - 1` moves) — a real wake — then records its own.
     for target in 2..=MOVES {
         let author = if target % 2 == 0 { "bob" } else { "alice" };
-        let merge = one(format!("m{target}"), json!(author));
+        let merge = json!({ format!("m{target}"): author });
         if target % 2 == 0 {
             assert!(
                 bob.wait_change(channel, MSG_TIMEOUT, |doc| move_count(doc) == target - 1)
                     .await,
                 "bob not woken to make move {target} on {}",
-                label(channel)
+                channel_subcommand(channel)
             );
             bob.merge(channel, merge).await;
         } else {
@@ -346,7 +297,7 @@ async fn ping_pong_for(channel: Channel) {
                     .wait_change(channel, MSG_TIMEOUT, |doc| move_count(doc) == target - 1)
                     .await,
                 "alice not woken to make move {target} on {}",
-                label(channel)
+                channel_subcommand(channel)
             );
             alice.merge(channel, merge).await;
         }
@@ -356,20 +307,20 @@ async fn ping_pong_for(channel: Channel) {
     // doubled move — the wake-driven alternation produced one move per step).
     let converged = |doc: &Value| move_count(doc) == MOVES;
     assert!(
-        wait_doc(&alice, channel, RECOVERY_TIMEOUT, converged).await,
+        alice.wait_view(channel, RECOVERY_TIMEOUT, converged).await,
         "alice did not converge to {MOVES} moves on {}",
-        label(channel)
+        channel_subcommand(channel)
     );
     assert!(
-        wait_doc(&bob, channel, RECOVERY_TIMEOUT, converged).await,
+        bob.wait_view(channel, RECOVERY_TIMEOUT, converged).await,
         "bob did not converge to {MOVES} moves on {}",
-        label(channel)
+        channel_subcommand(channel)
     );
     assert_eq!(
-        merged(&alice.get(channel).await),
-        merged(&bob.get(channel).await),
+        merged_slices(&alice.get(channel).await),
+        merged_slices(&bob.get(channel).await),
         "both agents must derive the byte-identical {} document",
-        label(channel)
+        channel_subcommand(channel)
     );
 
     alice.leave().await;
@@ -405,7 +356,7 @@ async fn graceful_leave_removes_the_slice_of_the_leaver() {
     host.meta_merge(json!({"model": "host-model"})).await;
     leaver.meta_merge(json!({"model": "test-model"})).await;
     assert!(
-        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        host.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             doc.pointer(&format!("/{leaver_slot}/model")) == Some(&json!("test-model"))
         })
         .await,
@@ -424,7 +375,7 @@ async fn graceful_leave_removes_the_slice_of_the_leaver() {
     leaver.leave().await;
 
     assert!(
-        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        host.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             doc.pointer(&format!("/{leaver_slot}")).is_none()
         })
         .await,
@@ -448,7 +399,7 @@ async fn graceful_leave_removes_the_slice_of_the_leaver() {
     }
     assert!(meshed, "late joiner never meshed");
     assert!(
-        wait_doc(&late, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        late.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             doc.pointer(&format!("/{host_slot}/model")).is_some()
                 && doc.pointer(&format!("/{leaver_slot}")).is_none()
         })
@@ -473,7 +424,7 @@ async fn meta_entry_returns_after_rejoin() {
     let first_slot = leaver.key_seen_by(&host).await.to_string();
     leaver.meta_merge(json!({"nickname": "rejoin-peer"})).await;
     assert!(
-        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        host.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             doc.pointer(&format!("/{first_slot}/nickname")).is_some()
         })
         .await,
@@ -487,7 +438,7 @@ async fn meta_entry_returns_after_rejoin() {
     );
     leaver.leave().await;
     assert!(
-        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        host.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             doc.pointer(&format!("/{first_slot}")).is_none()
         })
         .await,
@@ -516,7 +467,7 @@ async fn meta_entry_returns_after_rejoin() {
         .meta_merge(json!({"nickname": "rejoin-peer"}))
         .await;
     assert!(
-        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+        host.wait_view(Channel::Meta, RECOVERY_TIMEOUT, |doc| {
             common::meta_slot_of(doc, "rejoin-peer").is_some_and(|slot| slot != first_slot)
         })
         .await,

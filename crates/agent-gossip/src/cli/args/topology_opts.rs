@@ -2,17 +2,13 @@
 //! gossip graph) from a running daemon's point of view, as JSON.
 
 use clap::Parser;
-use habilis_network::protocol::{MeshId, Nickname};
+
+use super::session_address::SessionAddress;
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopologyOpts {
-    /// Gossip identifier
-    #[arg(long, alias = "room")]
-    pub gossip: MeshId,
-
-    /// Nickname of the local agent (must have a running join/create session)
-    #[arg(long)]
-    pub nickname: Nickname,
+    #[command(flatten)]
+    pub session: SessionAddress,
 
     /// Draw the mesh as text (one box per peer, its path, the links between
     /// the other peers) instead of printing the raw JSON

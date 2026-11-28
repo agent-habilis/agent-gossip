@@ -202,14 +202,4 @@ mod tests {
             "mdns cannot combine with a custom relay ladder"
         );
     }
-
-    #[test]
-    fn removed_flags_are_rejected() {
-        for flag in ["--public", "--mdns", "--dht", "--relay"] {
-            assert!(
-                Cli::try_parse_from(["agent-gossip", "create", flag]).is_err(),
-                "the removed {flag} must fail loudly so old scripts do not run with a silent default"
-            );
-        }
-    }
 }

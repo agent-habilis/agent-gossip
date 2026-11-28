@@ -14,3 +14,12 @@ pub(crate) struct SendResult {
     #[serde(serialize_with = "serialize_message_view")]
     pub(crate) message: Authored,
 }
+
+impl From<Authored> for SendResult {
+    fn from(message: Authored) -> Self {
+        Self {
+            id: message.id.clone(),
+            message,
+        }
+    }
+}

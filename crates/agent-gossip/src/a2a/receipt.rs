@@ -24,18 +24,16 @@ pub(crate) struct Receipt {
 /// not expose the mesh id or our nickname, and the frame needs both.
 ///
 /// Fire-and-forget: a receipt never echoes, never retains, and never answers a
-/// receipt, so a failure only costs the sender a proof.
+/// receipt, so a failure only costs the sender a proof and is only logged.
 pub(crate) async fn send_receipt(
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
     to: &AuthorKey,
     receipt: &Receipt,
-) -> anyhow::Result<()> {
-    let outcome = send_sealed(state, context, to, receipt).await;
-    if let Err(error) = &outcome {
+) {
+    if let Err(error) = send_sealed(state, context, to, receipt).await {
         tracing::debug!(target: "agent_gossip::a2a", %error, "receipt not sent");
     }
-    outcome
 }
 
 /// Send a `read` receipt for each directed frame that a foreground read with
@@ -52,7 +50,7 @@ pub(crate) async fn send_read_receipts(
             ref_id,
             state: ReceiptState::Read,
         };
-        let _ = send_receipt(state, context, &to, &receipt).await;
+        send_receipt(state, context, &to, &receipt).await;
     }
 }
 

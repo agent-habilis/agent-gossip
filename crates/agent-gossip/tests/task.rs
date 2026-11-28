@@ -15,46 +15,25 @@ use std::time::Duration;
 use agent_gossip::output_event::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT, three_peers};
+use common::{InProcNode, MSG_TIMEOUT, task_id_of, three_peers};
 
-const TASK_WAIT: Duration = MSG_TIMEOUT;
-
-/// Parse the `Task` id out of a `SendMessage` response (v1.0
-/// `SendMessageResponse` oneof: `{"result":{"task":<Task>}}`).
-fn task_id_of(response: &serde_json::Value) -> TaskId {
-    response["result"]["task"]["id"]
-        .as_str()
-        .expect("the worker returned a Task with an id")
-        .parse()
-        .expect("the returned id is a valid task id")
-}
-
-/// Creating a task is a directed `message/send` with no `taskId`: the worker
-/// mints a fresh **server** id and returns a `submitted` `Task`, and surfaces
-/// the incoming message to its own skill.
+/// A brief of about 20 KB seals past the single-frame cap, so the request splits into shard
+/// frames. The worker must still serve it as one logical request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn creation_mints_server_id_and_returns_submitted_task() {
-    let alice = InProcNode::create("t-create").await;
-    let mut bob = InProcNode::join(&alice.mesh, "t-create-bob").await;
+async fn a_multi_frame_brief_is_served_as_one_request() {
+    let alice = InProcNode::create("t-big").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-big-bob").await;
     common::warm_up(&alice, &mut [&mut bob]).await;
 
-    let response = alice.create_task("t-create-bob", "review src/net").await;
-    assert!(response["result"]["task"].is_object(), "got: {response}");
-    assert_eq!(
-        response["result"]["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
-        "a new task starts in the submitted state"
-    );
-    // The id is server-minted — a fresh uuid, not derived from our message.
-    let task_id = task_id_of(&response);
+    let big_brief = format!("big brief {}", "data ".repeat(4 * 1024));
+    let response = alice.create_task("t-big-bob", &big_brief).await;
     assert!(
-        !task_id.as_str().is_empty(),
-        "the server mints a non-empty task id"
+        response["result"]["task"].is_object(),
+        "the multi-frame (sharded) call was not served: {response}"
     );
-
-    // The worker's skill sees the incoming brief as a `message`-kind task event.
     assert!(
-        bob.wait_task_message(TASK_WAIT).await,
-        "the worker never surfaced the incoming task message"
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "the worker never saw the multi-frame task brief"
     );
 
     alice.leave().await;
@@ -78,7 +57,7 @@ async fn task_label_reaches_the_worker_and_is_absent_when_unset() {
             Some("review: agent-gossip project"),
         )
         .await;
-    assert!(bob.wait_task_message(TASK_WAIT).await, "brief surfaced");
+    assert!(bob.wait_task_message(MSG_TIMEOUT).await, "brief surfaced");
     assert_eq!(
         bob.task_message_label(),
         Some(Some("review: agent-gossip project".to_owned())),
@@ -88,7 +67,7 @@ async fn task_label_reaches_the_worker_and_is_absent_when_unset() {
     let mut carol = InProcNode::join(&alice.mesh, "t-label-carol").await;
     common::warm_up(&alice, &mut [&mut carol]).await;
     alice.create_task("t-label-carol", "unlabeled brief").await;
-    assert!(carol.wait_task_message(TASK_WAIT).await, "brief surfaced");
+    assert!(carol.wait_task_message(MSG_TIMEOUT).await, "brief surfaced");
     assert_eq!(
         carol.task_message_label(),
         Some(None),
@@ -112,13 +91,16 @@ async fn full_lifecycle_worker_completes_after_approval() {
 
     let response = alice.create_task("t-life-bob", "port the parser").await;
     let task_id = task_id_of(&response);
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
 
     // Worker accepts (working) → initiator sees it.
     bob.task_status(&task_id, TaskState::Working, Some("on it"))
         .await;
     assert!(
-        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "initiator never saw the worker accept"
     );
     // …and so does the worker's own record. Asserting only at completion would
@@ -134,7 +116,7 @@ async fn full_lifecycle_worker_completes_after_approval() {
     bob.task_artifact(&task_id, "here is the port").await;
     assert!(
         alice
-            .wait_task_state(TaskState::InputRequired, TASK_WAIT)
+            .wait_task_state(TaskState::InputRequired, MSG_TIMEOUT)
             .await,
         "initiator never saw the result / review park"
     );
@@ -150,7 +132,9 @@ async fn full_lifecycle_worker_completes_after_approval() {
     bob.task_status(&task_id, TaskState::Completed, Some("done"))
         .await;
     assert!(
-        alice.wait_task_state(TaskState::Completed, TASK_WAIT).await,
+        alice
+            .wait_task_state(TaskState::Completed, MSG_TIMEOUT)
+            .await,
         "initiator never saw the worker complete the task"
     );
 
@@ -177,11 +161,14 @@ async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
 
     let response = alice.create_task("t-left-bob", "doomed work").await;
     let task_id = task_id_of(&response);
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
     bob.task_status(&task_id, TaskState::Working, Some("on it"))
         .await;
     assert!(
-        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "initiator never saw the worker accept"
     );
 
@@ -189,7 +176,7 @@ async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
 
     assert!(
         alice
-            .wait_for(TASK_WAIT, |events| {
+            .wait_for(MSG_TIMEOUT, |events| {
                 events.iter().any(|event| {
                     matches!(
                         event,
@@ -261,7 +248,10 @@ async fn own_sharded_status_leg_completes_the_workers_own_record() {
     common::warm_up(&alice, &mut [&mut bob]).await;
 
     let task_id = task_id_of(&alice.create_task("t-shard-bob", "big note").await);
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
 
     // A worker cannot close a task it never accepted, so take the offer first —
     // the sharded leg under test is the `completed` one.
@@ -296,7 +286,10 @@ async fn cancel_advances_the_cancellers_own_record_and_response() {
     common::warm_up(&alice, &mut [&mut bob]).await;
 
     let task_id = task_id_of(&alice.create_task("t-cancel-bob", "never mind").await);
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
 
     // `CancelTask` is served by whoever *receives* the RPC, so alice is the
     // canceller: she emits the `canceled` status and answers from her own record.
@@ -354,7 +347,7 @@ async fn not_surfaced_to_third_party() {
     let task_id = task_id_of(&response);
     bob.task_status(&task_id, TaskState::Working, None).await;
     assert!(
-        bob.wait_task_message(TASK_WAIT).await,
+        bob.wait_task_message(MSG_TIMEOUT).await,
         "the worker is a party and sees the task"
     );
 
@@ -388,7 +381,10 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
     let mut bob = InProcNode::join(&alice.mesh, "t-twin-bob").await;
     common::warm_up(&alice, &mut [&mut bob]).await;
     let task_id = task_id_of(&alice.create_task("t-twin-bob", "port the parser").await);
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
 
     let mut twin = InProcNode::join(&alice.mesh, alice.nickname.as_str()).await;
     twin.broadcast("twin warmup").await;
@@ -401,13 +397,13 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
         .await;
 
     assert!(
-        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "the key that opened the task never saw the leg"
     );
     bob.task_artifact(&task_id, "here is the port").await;
     assert!(
         alice
-            .wait_task_state(TaskState::InputRequired, TASK_WAIT)
+            .wait_task_state(TaskState::InputRequired, MSG_TIMEOUT)
             .await,
         "the key that opened the task never saw the result"
     );
@@ -434,10 +430,13 @@ async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares
     let mut bob = InProcNode::join(&alice.mesh, "t-fu-bob").await;
     common::warm_up(&alice, &mut [&mut bob]).await;
     let task_id = task_id_of(&alice.create_task("t-fu-bob", "port the parser").await);
-    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
     bob.task_status(&task_id, TaskState::Working, None).await;
     assert!(
-        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "the task is running"
     );
 

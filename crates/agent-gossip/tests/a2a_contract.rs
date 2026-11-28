@@ -9,44 +9,17 @@
 //! `mesh-state` extension methods, and the cross-binding property: a JSON-RPC
 //! send on one node surfaces on a plain gossip peer.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::time::Instant;
 
 use agent_gossip_test_fixtures as common;
-use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, Node, POLL, wait_until};
+use common::{
+    CONNECT_TIMEOUT, MSG_TIMEOUT, Node, POLL, http_get, http_request, wait_a2a, wait_until,
+};
 use serde_json::Value;
-
-/// One-shot HTTP/1.1 request against the local binding; returns
-/// `(status, body)`.
-fn http(port: u16, request: &str) -> (u16, String) {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to a2a port");
-    stream
-        .write_all(request.as_bytes())
-        .expect("the server stays up until the client has sent its request");
-    let mut raw = String::new();
-    stream.read_to_string(&mut raw).expect("read response");
-    let status_code = raw.split_whitespace().nth(1);
-    let status: u16 = status_code
-        .and_then(|code| code.parse().ok())
-        .expect("a well-formed HTTP response starts with a status line carrying a numeric code");
-    let body = raw
-        .split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_string())
-        .unwrap_or_default();
-    (status, body)
-}
-
-fn get(port: u16, path: &str) -> (u16, String) {
-    http(
-        port,
-        &format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"),
-    )
-}
 
 fn post(port: u16, path: &str, token: &str, body: &Value) -> (u16, Value) {
     let payload = body.to_string();
-    let (status, raw) = http(
+    let (status, raw) = http_request(
         port,
         &format!(
             "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\
@@ -91,30 +64,6 @@ fn rpc(call: RpcCall<'_>) -> Value {
         response["error"]
     );
     response["result"].clone()
-}
-
-/// Poll the session state file until it reports `ready` with a bound A2A
-/// endpoint; returns `(port, token)`.
-fn wait_a2a(state_file: &std::path::Path) -> (u16, String) {
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Ok(raw) = std::fs::read_to_string(state_file)
-            && let Ok(parsed) = serde_json::from_str::<Value>(&raw)
-            && parsed["ready"] == true
-            && let (Some(port), Some(token)) =
-                (parsed["a2a_port"].as_u64(), parsed["a2a_token"].as_str())
-        {
-            return (
-                u16::try_from(port).expect("port fits u16"),
-                token.to_string(),
-            );
-        }
-        std::thread::sleep(POLL);
-    }
-    panic!(
-        "daemon never reported a bound a2a endpoint in {}",
-        state_file.display()
-    );
 }
 
 /// One live A2A binding and the two nodes behind it.
@@ -165,7 +114,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
 
 /// The card is served unauthenticated and self-describes the binding.
 fn serves_card(pair: &BindingPair) -> Value {
-    let (status, card) = get(pair.port, "/.well-known/agent-card.json");
+    let (status, card) = http_get(pair.port, "/.well-known/agent-card.json");
     assert_eq!(status, 200, "well-known card must not require auth");
     let card: Value =
         serde_json::from_str(&card).expect("the card endpoint serves a JSON document by contract");
@@ -248,7 +197,7 @@ fn echoes_and_delivers(pair: &BindingPair) {
 /// relaying endpoint (we relay JSON-RPC to that gossip-only peer).
 fn advertises_peer_relay(pair: &BindingPair) {
     let (peer_card_status, peer_card) =
-        get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
+        http_get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
     assert_eq!(peer_card_status, 200, "peer card must be served");
     let peer_card: Value = serde_json::from_str(&peer_card)
         .expect("a relayed peer card keeps the JSON form it was published in");
@@ -275,7 +224,7 @@ fn advertises_peer_relay(pair: &BindingPair) {
 /// The relay address in a peer card works: a `SendMessage` posted to it creates a task on the
 /// member that the card names.
 fn creates_a_task_at_the_relay_address_of_the_card(pair: &BindingPair) {
-    let (_status, card) = get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
+    let (_status, card) = http_get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
     let card: Value = serde_json::from_str(&card).expect("a peer card is JSON");
     let interfaces = card["supportedInterfaces"].as_array();
     let relay = interfaces.and_then(|all| {

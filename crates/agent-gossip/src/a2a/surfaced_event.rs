@@ -258,7 +258,6 @@ fn event_bytes(event: &OutputEvent) -> usize {
         OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskStalled { .. }
@@ -361,9 +360,8 @@ impl PollResponder {
 /// What a parked long-poll waits to be exceeded before it fires.
 #[derive(Clone, Copy)]
 pub(crate) enum PollBaseline {
-    /// Legacy explicit cursor: fire once `latest_seq() > seq`. Any push —
-    /// waking or not — counts, preserving the pre-cursor `--after N --long`
-    /// contract for old clients.
+    /// An explicit cursor, from an MCP reader or `poll --after N --long`: fire
+    /// once `latest_seq() > seq`. Any push — waking or not — counts.
     Seq(u64),
     /// The bell: fire once `latest_waking_seq() > last_served`, both read
     /// LIVE at fulfillment time. The dynamic baseline is what closes the
@@ -475,7 +473,6 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::NicknameHeld { .. }
@@ -527,7 +524,6 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::Presence { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::NicknameHeld { .. }
@@ -537,12 +533,6 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::TaskStalled { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
-    }
-}
-
-impl Default for SurfacedState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -684,10 +674,10 @@ impl SurfacedState {
     ///   event (or a gap) exists, else park a [`PollBaseline::Served`] waiter.
     ///   Never advances the cursor — a bell's output is discarded.
     ///
-    /// Explicit-`after` calls keep the legacy stateless contract:
+    /// Explicit-`after` calls are stateless:
     /// - not `long`: serve past `after`; also advances `last_served` (via
-    ///   `max`) so an old-protocol client's foreground reads keep a new
-    ///   daemon's bell from re-firing forever;
+    ///   `max`) so the foreground reads of a reader that keeps its own cursor
+    ///   keep the bell from re-firing forever;
     /// - `long`: immediate on any event past `after`, else park a
     ///   [`PollBaseline::Seq`] waiter.
     ///
@@ -700,7 +690,7 @@ impl SurfacedState {
             responder,
         } = params;
         // Only a cursor-less long poll is the bell. An explicit `after` is an
-        // MCP read, even when it parks. The legacy CLI `poll --after N --long`
+        // MCP read, even when it parks. The CLI `poll --after N --long`
         // also passes here; that is harmless, because every CLI `--long` poll
         // holds the bell lock, so the bell is already armed and the task is
         // not stalled.
@@ -737,7 +727,7 @@ impl SurfacedState {
     }
 
     /// Deliver to every parked waiter whose baseline has been exceeded —
-    /// `latest_seq()` for a legacy [`PollBaseline::Seq`], the live
+    /// `latest_seq()` for a [`PollBaseline::Seq`], the live
     /// `latest_waking_seq() > last_served` condition for the bell. Called
     /// right after a drain each loop iteration; the batch is computed via
     /// [`poll_since`](Self::poll_since) so the response cap + logging match
@@ -1609,8 +1599,8 @@ mod tests {
     }
 
     /// An explicit-`after` replay (hidden debug flag) advances via `max`, so
-    /// `--after 0` cannot regress the cursor, while an old-protocol client's
-    /// foreground reads still move it forward.
+    /// `--after 0` cannot regress the cursor, while the foreground reads of a
+    /// reader that keeps its own cursor still move it forward.
     #[tokio::test]
     async fn explicit_after_advances_by_max_never_regresses() {
         let mut surfaced = SurfacedState::new();

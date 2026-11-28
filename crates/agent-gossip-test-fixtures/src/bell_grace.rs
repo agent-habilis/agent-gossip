@@ -5,4 +5,4 @@ use std::time::Duration;
 /// It is comfortably
 /// over the CLI's `POLL_LONG_MIN_CYCLE_MS` re-issue cycle, so a bell that fired
 /// on the very first round has exited by the time we look.
-pub const BELL_GRACE: Duration = Duration::from_secs(3);
+pub(crate) const BELL_GRACE: Duration = Duration::from_secs(3);

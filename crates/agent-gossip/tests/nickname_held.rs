@@ -83,6 +83,17 @@ fn both_members_of_one_nickname_print_a_nickname_held_line_on_stdout() {
         Node::join_args(&mesh, SHARED, &["--state-file", &state], &[])
     };
     let first = join_as_member("first");
+    // Both daemons use one socket path, because the path comes from the mesh and the nickname. Two daemons that
+    // start at the same time each remove and bind that path, and the loser ends with an error before it joins.
+    let ready_deadline = Instant::now() + MSG_TIMEOUT;
+    while !first.log_contents().contains(r#""event":"ready""#) {
+        assert!(
+            Instant::now() < ready_deadline,
+            "the first daemon never became ready: {}",
+            first.log_tail(20)
+        );
+        std::thread::sleep(POLL);
+    }
     let second = join_as_member("second");
 
     let deadline = Instant::now() + MSG_TIMEOUT;

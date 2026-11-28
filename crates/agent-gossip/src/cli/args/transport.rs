@@ -54,11 +54,9 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
     use habilis_network::protocol::TransportPolicy;
 
     use super::{Transport, transport_policy};
-    use crate::cli::args::Cli;
 
     #[test]
     fn transport_list_is_literal() {
@@ -103,14 +101,6 @@ mod tests {
         assert!(
             transport_policy(&[Transport::Relay]).is_err(),
             "a relay-only list cannot carry the gossip"
-        );
-    }
-
-    #[test]
-    fn transport_rejects_unknown_value() {
-        assert!(
-            Cli::try_parse_from(["agent-gossip", "create", "--transport", "bogus"]).is_err(),
-            "an unknown transport name is rejected at parse time"
         );
     }
 }

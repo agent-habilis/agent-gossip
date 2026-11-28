@@ -9,7 +9,7 @@
     "start": "bun scripts/build.ts && bun web/server.ts",
     "dev": "portless",
     "test": "bun test",
-    "type-check": "tsc -p tsconfig.json && tsc --noEmit -p visage-dom && tsc --noEmit -p visage-style && tsc --noEmit -p visage-router && tsc --noEmit -p moonspace && tsc --noEmit -p moonspace-theme && tsc --noEmit -p moonspace-dom && tsc --noEmit -p web && tsc --noEmit -p web/webapp",
+    "type-check": "tsc -p tsconfig.json && tsc --noEmit -p visage-dom && tsc --noEmit -p visage-style && tsc --noEmit -p moonspace && tsc --noEmit -p moonspace-theme && tsc --noEmit -p moonspace-dom && tsc --noEmit -p web && tsc --noEmit -p web/webapp",
     "media": "bun scripts/encode-media.ts",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
@@ -33,7 +33,6 @@
   "dependencies": {
     "visage-dom": "workspace:*",
     "visage-style": "workspace:*",
-    "visage-router": "workspace:*",
     "moonspace": "workspace:*",
     "moonspace-theme": "workspace:*",
     "moonspace-dom": "workspace:*",

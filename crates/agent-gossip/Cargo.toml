@@ -1,6 +1,6 @@
 [package]
 name = "agent-gossip"
-version = "0.16.0"
+version = "0.17.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
@@ -25,25 +25,18 @@ name = "agent-gossip"
 path = "src/main.rs"
 
 [features]
-# Off by default. Exposes `src/harness/bench.rs` so `benches/hot_paths.rs` can
+# Off by default. Exposes `src/harness/bench_config.rs` so `benches/hot_paths.rs` can
 # build its fixtures; never enabled in a normal or release build, so the public
 # API surface is unchanged. Forwards to the engine's `test-fixtures` (not a
 # `bench` feature of its own — the engine gates no hot path on one).
 bench = ["habilis-network/test-fixtures"]
 # Off by default. Forwards to the engine's `adversarial` feature and exposes
-# `src/harness/{adversarial,session}.rs` — the crafted-message injector and the
+# `src/harness/{test_key,session}.rs` — the crafted-message injector and the
 # `MeshSession` testkit — so the adversarial suite (`tests/adversarial.rs`) can
 # inject malicious wire messages a correct client never would. The testkit lives
 # in `harness`, not `api`, so the feature cannot widen the public surface (nor
 # put an `iroh` type on it). `cargo task test`/`ci` enable it.
 adversarial = ["habilis-network/adversarial"]
-# Off by default. Installs dhat's heap-profiling global allocator + a profiler
-# in `main`, and makes the CLI quit path return cleanly (instead of
-# `process::exit`) so the profiler flushes `dhat-heap.json` on shutdown. For
-# localizing the gossip-churn per-connection retention: build with this feature,
-# run a churning daemon (`--active-view-capacity 5`), SIGTERM it, inspect the
-# profile. Never in a normal build.
-dhat-heap = ["dep:dhat", "habilis-network/dhat-heap"]
 
 [build-dependencies]
 # `build.rs` renders the multi-file `skills/` sources into the single-file
@@ -57,8 +50,6 @@ vergen-gitcl = { version = "9", features = ["build"] }
 
 [dependencies]
 habilis-network = { workspace = true, features = ["blob"] }
-# Optional: only compiled in under the `dhat-heap` feature (heap profiling).
-dhat = { version = "0.3", optional = true }
 tokio.workspace = true
 futures-util.workspace = true
 clap = { version = "4", features = ["derive"] }
@@ -74,7 +65,6 @@ unicode-width = "0.2"
 anyhow.workspace = true
 rustix = { version = "1", default-features = false, features = ["process"] }
 uuid.workspace = true
-sha2.workspace = true
 bytes.workspace = true
 bs58.workspace = true
 serde.workspace = true
@@ -116,6 +106,7 @@ habilis-network = { workspace = true, features = ["blob", "test-fixtures"] }
 agent-gossip-test-fixtures = { path = "../agent-gossip-test-fixtures" }
 proptest.workspace = true
 insta.workspace = true
+sha2.workspace = true
 # The in-process harness (`agent_gossip_test_fixtures::InProcNode`) drives
 # `api::MeshSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version. `test-util` is for
@@ -138,7 +129,7 @@ divan.workspace = true
 netwatch = { version = "0.19.1", git = "https://github.com/agent-habilis/net-tools", rev = "e02960255ef2f5b2ba4aa3d4cf195e0b8673f370" }
 
 # Offline microbenchmarks of the pure hot paths. Needs `bench` for the
-# `harness::bench` shim that reaches `pub(crate)` internals.
+# `harness` shim that reaches `pub(crate)` internals.
 [[bench]]
 name = "hot_paths"
 harness = false

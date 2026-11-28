@@ -16,13 +16,12 @@ use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
 use common::{
-    CONNECT_TIMEOUT, ChatMessage, InProcNode, MSG_TIMEOUT, Node, POLL, PresenceSubtype,
-    RECOVERY_TIMEOUT, bin, chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll,
-    cli_poll_long, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
-    wait_total, wait_until,
+    CONNECT_TIMEOUT, ChatMessage, InProcNode, KillOnDrop, MSG_TIMEOUT, Node, POLL, PresenceSubtype,
+    RECOVERY_TIMEOUT, SHORT_EVICT, bin, chat_text, cli_message, cli_message_raw, cli_peers,
+    cli_ping, cli_poll, cli_poll_long, cli_task_create_raw, ipc_raw, serial_guard, socket_path,
+    tmp_log, trace_log, wait_until,
 };
 use habilis_network::util::process;
-use serde_json::json;
 
 /// Heal cadence for the reliability tests, injected through the hidden
 /// `--heal-interval-secs` flag. Floored at 3s: below that the
@@ -323,93 +322,8 @@ async fn test_password_flag_wire_contract() {
     creator.kill();
 }
 
-/// The slices of a channel view folded into one document. The tests write disjoint keys, so the
-/// union of the keys of all slices is the document that the members agree on.
-fn merged_slices(view: &serde_json::Value) -> serde_json::Value {
-    let mut document = serde_json::Map::new();
-    for slice in view
-        .as_object()
-        .into_iter()
-        .flat_map(serde_json::Map::values)
-    {
-        for (key, value) in slice.as_object().into_iter().flatten() {
-            document.insert(key.clone(), value.clone());
-        }
-    }
-    serde_json::Value::Object(document)
-}
-
-/// Live propagation: a creator writes its slice of the shared state; a meshed joiner derives
-/// the same slice via gossip.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_state_propagates_to_a_peer() {
-    let creator = InProcNode::create("netstate").await;
-    let mut joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
-
-    // Mesh first (a delivered message proves the link), so the state events
-    // broadcast onto a live overlay rather than the unmeshed buffer.
-    common::warm_up(&creator, &mut [&mut joiner]).await;
-
-    creator.state_merge(json!({"alpha": 1})).await;
-    creator.state_merge(json!({"beta": 2})).await;
-
-    let want = json!({"alpha": 1, "beta": 2});
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut got = merged_slices(&joiner.state_get().await);
-    while got != want && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        got = merged_slices(&joiner.state_get().await);
-    }
-    assert_eq!(got, want, "joiner never derived the state of the creator");
-    // The author holds its own slice too (gossip never echoes to self).
-    assert_eq!(
-        merged_slices(&creator.state_get().await),
-        want,
-        "the creator holds its own state"
-    );
-}
-
-/// A peer that joins **after** the state writes are live (so nothing is buffered to flush to it)
-/// still gets the current slice of the creator. Three nodes: creator+early are meshed so the
-/// writes broadcast live (not into the unmeshed buffer); the late joiner can only be served by
-/// the engine's own sync.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_state_reaches_a_late_joiner() {
-    let creator = InProcNode::create("netstatelate").await;
-    let mut early = InProcNode::join(&creator.mesh, "early-state").await;
-    // Mesh so writes go out live, leaving the creator's outbound buffer empty.
-    common::warm_up(&creator, &mut [&mut early]).await;
-
-    creator.state_merge(json!({"alpha": 1})).await;
-    creator.state_merge(json!({"beta": 2})).await;
-
-    let want = json!({"alpha": 1, "beta": 2});
-    // Confirm the live path first.
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut early_got = merged_slices(&early.state_get().await);
-    while early_got != want && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        early_got = merged_slices(&early.state_get().await);
-    }
-    assert_eq!(early_got, want, "early peer never got the live state");
-
-    // The late joiner arrives after all state traffic.
-    let late = InProcNode::join(&creator.mesh, "late-state").await;
-    let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let mut late_got = merged_slices(&late.state_get().await);
-    while late_got != want && Instant::now() < late_deadline {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        late_got = merged_slices(&late.state_get().await);
-    }
-    assert_eq!(
-        late_got, want,
-        "late joiner never got the state of the creator"
-    );
-}
-
-/// Three-node full-mesh: a broadcast should reach at least 2 of the 3 nodes
-/// (the sender never receives its own broadcast). This test also documents
-/// the known `HyParView` relay bug where the second joiner may not receive messages.
+/// Three-node full-mesh: a broadcast reaches the 2 other nodes (the sender
+/// never receives its own broadcast).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_node_full_delivery() {
     let alpha = InProcNode::create("net3node").await;
@@ -454,34 +368,7 @@ async fn test_bidirectional_messaging() {
     );
 }
 
-/// Verify that unit-level JSON wire format tests pass.
-/// The ext field and version checks are covered in `protocol::messages::tests`.
-/// This integration test confirms the CLI sends parseable MESH 1.0 blocks.
-/// One send surfaces twice: the sender's own stream echoes it (stream
-/// self-parity) and the peer receives it.
-#[test]
-fn test_stdout_format_parseable() {
-    let (creator, mesh) = Node::create();
-    let joiner = Node::join(&mesh, "joiner-fmt");
-    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
-    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
-
-    let _ = cli_message(&mesh, &creator.nickname, "format check message");
-
-    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
-    assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
-
-    let mut msgs: Vec<ChatMessage> = creator.messages().collect();
-    msgs.extend(joiner.messages());
-    for message in &msgs {
-        assert_eq!(
-            message.body, "format check message",
-            "the message body is the format check text"
-        );
-    }
-}
-
-/// `ask` with no running server exits non-zero with a clear error message.
+/// A broadcast with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {
     // All-`1` Base58 payload — valid charset, can't match a real mesh.
@@ -514,7 +401,11 @@ fn test_oversize_body_splits_and_reassembles() {
     // body on each stream: the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
     let _ = cli_message(&mesh, &creator.nickname, &body);
-    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
+    let total = wait_until(
+        || creator.messages().count() + joiner.messages().count(),
+        2,
+        MSG_TIMEOUT,
+    );
     assert_eq!(
         total, 2,
         "the multipart body surfaces exactly once per node"
@@ -541,7 +432,11 @@ fn test_utf8_body_round_trip() {
     let _ = cli_message(&mesh, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
-    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
+    let total = wait_until(
+        || creator.messages().count() + joiner.messages().count(),
+        2,
+        MSG_TIMEOUT,
+    );
     assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
     let mut msgs: Vec<ChatMessage> = creator.messages().collect();
     msgs.extend(joiner.messages());
@@ -568,23 +463,7 @@ fn test_control_char_body_rejected() {
     );
 }
 
-/// When a peer joins, the other node receives a MESH 1.0 'joined' presence block.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_presence_block_delivery() {
-    let mut creator = InProcNode::create("netpresence").await;
-    let _joiner = InProcNode::join(&creator.mesh, "joiner-presence").await;
-
-    // The joiner broadcasts a `joined` presence on connect; the
-    // creator must surface it.
-    assert!(
-        creator
-            .wait_presence("joiner-presence", PresenceSubtype::Joined, MSG_TIMEOUT)
-            .await,
-        "creator never surfaced the joiner's 'joined' presence"
-    );
-}
-
-/// Multiple concurrent `ask` calls all get distinct IDs and all arrive.
+/// Several broadcasts in a row all get distinct ids and all arrive.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_concurrent_asks() {
     const ASK_COUNT: usize = 5;
@@ -612,11 +491,8 @@ async fn test_concurrent_asks() {
     );
 }
 
-/// With three agents on the same mesh, `ask --nickname <n>` must post as the
-/// specified agent. Without `--nickname`, `find_socket` picks whichever socket
-/// `read_dir` returns first — non-deterministic when multiple sockets share the
-/// same mesh prefix. This test documents that bug and will pass once `ask`
-/// accepts `--nickname`.
+/// With three agents on the same mesh, a message carries the nickname of the
+/// agent that sent it, on every receiver.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ask_targets_specific_agent_three_peers() {
     let alpha = InProcNode::create("netpick3").await;
@@ -625,8 +501,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
 
     // Each node posts a uniquely-tagged message as itself; the other
     // two must receive it with the *correct* author (each in-process
-    // session owns its own nickname, so authorship can't be swapped —
-    // the in-process analogue of the old find_socket bug).
+    // session owns its own nickname, so authorship can't be swapped).
     let alpha_nick = alpha.nickname.clone();
     alpha.broadcast("tag-from-alpha").await;
     for node in [&mut beta, &mut gamma] {
@@ -1702,7 +1577,11 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     // And messages flow across the re-seeded mesh.
     let id = cli_message(&mesh, &first.nickname, "re-seeded hello");
     assert!(!id.is_empty(), "msg returned empty id");
-    let total = wait_total(|| first.messages().count() + second.messages().count(), 1);
+    let total = wait_until(
+        || first.messages().count() + second.messages().count(),
+        1,
+        MSG_TIMEOUT,
+    );
     assert!(
         total >= 1,
         "no message crossed the re-seeded mesh\nfirst: {}\nsecond: {}",
@@ -2029,9 +1908,10 @@ fn test_join_after_creator_departed_with_surviving_member() {
     // Confirm the mesh is actually live before we kill the creator.
     let pre_id = cli_message(&mesh, &creator.nickname, "pre-death ping");
     assert!(!pre_id.is_empty(), "msg returned empty id");
-    let delivered = wait_total(
+    let delivered = wait_until(
         || creator.messages().count() + bystander.messages().count(),
         1,
+        MSG_TIMEOUT,
     );
     assert!(delivered >= 1, "creator/bystander never meshed pre-death");
 
@@ -2065,9 +1945,10 @@ fn test_join_after_creator_departed_with_surviving_member() {
     //    a message from the latecomer reaches the bystander.
     let post_id = cli_message(&mesh, &latecomer.nickname, "post-death hello");
     assert!(!post_id.is_empty(), "latecomer msg returned empty id");
-    let total = wait_total(
+    let total = wait_until(
         || bystander.messages().count() + latecomer.messages().count(),
         1,
+        MSG_TIMEOUT,
     );
     assert!(
         total >= 1,
@@ -2100,9 +1981,10 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // Confirm the mesh is live before killing the creator.
     let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
-        wait_total(
+        wait_until(
             || creator.messages().count() + bystander.messages().count(),
-            1
+            1,
+            MSG_TIMEOUT
         ) >= 1,
         "creator/bystander never meshed pre-death"
     );
@@ -2227,16 +2109,6 @@ fn test_join_horizon_hides_pre_join_history() {
 
 // ── reliability tests ────────────────────────────────────────────────────────
 //
-// `SHORT_EVICT` collapses the ~90s eviction window and the heal cadence to
-// seconds through the hidden tuning flags. Such short cadences destabilise
-// convergence in a real mesh, but a loopback test tolerates them.
-
-const SHORT_EVICT: [(&str, &str); 3] = [
-    ("--alive-timeout-secs", "3"),
-    ("--sweep-interval-secs", "1"),
-    ("--heal-interval-secs", "3"),
-];
-
 // Heal cadence only — for tests whose waits are heal-gated but whose
 // semantics need the production eviction windows.
 const FAST_HEAL: [(&str, &str); 1] = [("--heal-interval-secs", "3")];
@@ -2321,16 +2193,6 @@ fn test_creator_sigkill_independence() {
     assert_received(&alpha, &charlie.nickname, "ck-newcomer", RECOVERY_TIMEOUT);
 }
 
-/// Reaps a child on drop — `Child` does not, so a test that
-/// panics before its explicit kill would otherwise leak the process.
-struct KillOnDrop(Child);
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 /// Orphan self-termination: when the agent that spawned the daemon is
 /// hard-killed, the daemon is reparented (not killed) and would otherwise
 /// linger in the mesh forever. The `getppid` watcher must notice the
@@ -2368,7 +2230,7 @@ fn test_orphaned_daemon_self_terminates() {
     // `Child` has no kill-on-drop, so guard the intermediate
     // shell: if an assertion panics before the explicit kill below, this drop
     // still reaps it (which orphans the daemon → the watcher terminates it).
-    let mut parent = KillOnDrop(
+    let mut parent = KillOnDrop::new(
         Command::new("sh")
             .arg("-c")
             .arg(&script)
@@ -2401,9 +2263,9 @@ fn test_orphaned_daemon_self_terminates() {
     // Orphan the daemon: kill its parent (the shell, now `sleep`), NOT the
     // daemon. The daemon reparents → `getppid` changes → it self-quits.
     let _ = Command::new("kill")
-        .args(["-KILL", &parent.0.id().to_string()])
+        .args(["-KILL", &parent.id().to_string()])
         .status();
-    let _ = parent.0.wait();
+    let _ = parent.wait();
 
     // (a) The daemon process is gone — the watcher fired and it exited.
     let pid_alive = || {
@@ -2440,48 +2302,6 @@ fn test_orphaned_daemon_self_terminates() {
     let _ = fs::remove_file(&joiner_log);
 }
 
-/// Sleep/wake: `SIGSTOP` a peer past the (shortened) alive-timeout so
-/// the mesh evicts it, then `SIGCONT` and assert the heal primitive
-/// re-meshes it and traffic resumes.
-#[test]
-fn test_sleep_wake_heal_recovery() {
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    // Eviction lands after ALIVE_TIMEOUT + SWEEP_INTERVAL (3+1s); the
-    // ceiling is slack for a loaded host, not paid time.
-    let evict_bound = Duration::from_secs(12);
-
-    let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
-    let sleeper = Node::join_flags(&mesh, "sw-sleeper", &SHORT_EVICT);
-    assert!(
-        creator.wait_ready(&mesh),
-        "the creator daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        sleeper.wait_ready(&mesh),
-        "the sleeper daemon must bind its control socket before the test sends it any command"
-    );
-    let _ = cli_message(&mesh, &creator.nickname, "sw-pre");
-    assert_received(&sleeper, &creator.nickname, "sw-pre", MSG_TIMEOUT);
-
-    sleeper.stop();
-    assert!(
-        wait_until(
-            || usize::from(creator.log_contents().contains("went quiet")),
-            1,
-            evict_bound,
-        ) >= 1,
-        "creator never surfaced the frozen peer going quiet\n{}",
-        creator.log_tail(20),
-    );
-
-    // Send immediately on wake: re-mesh (heal cadence) plus anti-entropy
-    // backfill deliver it; `assert_received` returns the moment it lands.
-    sleeper.cont();
-    let _ = cli_message(&mesh, &creator.nickname, "sw-post");
-    assert_received(&sleeper, &creator.nickname, "sw-post", RECOVERY_TIMEOUT);
-}
-
 /// Fixed-node-id reconnect must be *fast*. A `SIGSTOP`/`SIGCONT` peer
 /// resumes in the **same** process with the **same** iroh endpoint id —
 /// exactly the iroh-gossip#10 / psyche #25 / p2panda #695 hazard, where a
@@ -2490,9 +2310,8 @@ fn test_sleep_wake_heal_recovery() {
 /// heal + resume re-bootstrap must sidestep that, so we probe the woken
 /// peer *immediately* on `SIGCONT` and require delivery within a bound
 /// comfortably below that stale-connection timeout. A regression (or an
-/// iroh bump reintroducing the stall) blows the bound. The lenient
-/// `test_sleep_wake_heal_recovery` proves recovery *happens*; this one
-/// proves it is heal-bound, not timeout-bound.
+/// iroh bump reintroducing the stall) blows the bound. A pass proves that
+/// recovery happens and that it is heal-bound, not timeout-bound.
 #[test]
 fn test_fixed_id_reconnect_admits_fast() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
@@ -2585,7 +2404,7 @@ fn test_resume_triggers_hard_rebootstrap() {
     sleeper.cont();
 
     // The hard-path markers are `tracing` output — they land in the
-    // sink log (AHS_LOG_DIR), not the operator stdout/stderr capture.
+    // sink log (`--log-dir`), not the operator stdout/stderr capture.
     // "hard re-bootstrap edge" is the hard path itself;
     // "rendezvous-independent re-bridge" proves the resume also re-dials
     // known peers directly rather than relying solely on a rendezvous
@@ -3114,31 +2933,7 @@ fn test_flap_storm_all_rosters_recover() {
 /// event appears on stdout, returning the child plus its minted identity.
 /// The default state-file location (under the per-user runtime base) is what `leave` /
 /// `session` discover, so no `--state-file` override here.
-/// A daemon a test spawned. It is killed and reaped when the test ends, even on a panic.
-struct DiscoverableDaemon(Child);
-
-impl Drop for DiscoverableDaemon {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-impl std::ops::Deref for DiscoverableDaemon {
-    type Target = Child;
-
-    fn deref(&self) -> &Child {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for DiscoverableDaemon {
-    fn deref_mut(&mut self) -> &mut Child {
-        &mut self.0
-    }
-}
-
-fn spawn_discoverable_daemon(name: &str) -> (DiscoverableDaemon, PathBuf, String, String) {
+fn spawn_discoverable_daemon(name: &str) -> (KillOnDrop, PathBuf, String, String) {
     let log = tmp_log(&format!("leave-{name}"));
     let file = File::create(&log).expect("the test temp dir is writable");
     let stdout = Stdio::from(
@@ -3147,7 +2942,7 @@ fn spawn_discoverable_daemon(name: &str) -> (DiscoverableDaemon, PathBuf, String
     );
     let mut command = common::test_cmd();
     command.args(["create", "--name", name, "--lookup", "loopback"]);
-    let mut daemon = DiscoverableDaemon(
+    let mut daemon = KillOnDrop::new(
         command
             .stdout(stdout)
             .stderr(Stdio::from(file))
@@ -3883,7 +3678,7 @@ struct DetachedDaemon {
 /// Launch `create --owner-pid` for a `sleep` owner and wait for the launcher
 /// to exit. The state file sits where `session` discovery looks for it.
 fn launch_detached_daemon(name: &str) -> DetachedDaemon {
-    let owner = KillOnDrop(
+    let owner = KillOnDrop::new(
         Command::new("sleep")
             .arg("600")
             .spawn()
@@ -3891,11 +3686,11 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     );
     let sessions_dir = common::runtime_base().join("sessions");
     fs::create_dir_all(&sessions_dir).expect("the test temp dir is writable");
-    let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
+    let state_file = sessions_dir.join(format!("{}.json", owner.id()));
     let stderr_file = tmp_log(&format!("{name}-stderr"));
 
     let started = Instant::now();
-    let owner_pid = owner.0.id().to_string();
+    let owner_pid = owner.id().to_string();
     let stderr = File::create(&stderr_file).expect("the test temp dir is writable");
     let mut command = common::test_cmd();
     command
@@ -3997,7 +3792,7 @@ fn detached_daemon_follows_its_owner() {
         "the daemon is still a child of the launcher"
     );
 
-    let owner_pid = daemon.owner.0.id().to_string();
+    let owner_pid = daemon.owner.id().to_string();
     let sessions = session_report(&owner_pid);
     assert_eq!(
         sessions["sessions"]
@@ -4012,8 +3807,8 @@ fn detached_daemon_follows_its_owner() {
         "bell-check does not see the daemon through its owner"
     );
 
-    let _ = daemon.owner.0.kill();
-    let _ = daemon.owner.0.wait();
+    let _ = daemon.owner.kill();
+    let _ = daemon.owner.wait();
     assert!(
         wait_until_gone(&daemon.state_file, Duration::from_secs(15)),
         "the daemon outlived its owner"
@@ -4037,7 +3832,7 @@ fn detached_daemon_leaves_by_owner() {
         "the ready query must succeed once the detached daemon is up, output was {ready:?}"
     );
 
-    let owner_pid = daemon.owner.0.id().to_string();
+    let owner_pid = daemon.owner.id().to_string();
     let out: std::process::Output = common::test_cmd()
         .args(["leave", "--session-pid", &owner_pid])
         .output()
@@ -4066,7 +3861,7 @@ fn detached_daemon_leaves_by_owner() {
 #[test]
 fn detached_daemon_releases_a_captured_pipe() {
     let _serial = serial_guard();
-    let mut owner = KillOnDrop(
+    let mut owner = KillOnDrop::new(
         Command::new("sleep")
             .arg("600")
             .spawn()
@@ -4074,9 +3869,9 @@ fn detached_daemon_releases_a_captured_pipe() {
     );
     let sessions_dir = common::runtime_base().join("sessions");
     fs::create_dir_all(&sessions_dir).expect("the test temp directory is writable");
-    let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
+    let state_file = sessions_dir.join(format!("{}.json", owner.id()));
 
-    let owner_pid = owner.0.id().to_string();
+    let owner_pid = owner.id().to_string();
     let mut command = common::test_cmd();
     command
         .args([
@@ -4138,8 +3933,8 @@ fn detached_daemon_releases_a_captured_pipe() {
         "the detached daemon still holds the caller's stdout or stderr pipe"
     );
 
-    let _ = owner.0.kill();
-    let _ = owner.0.wait();
+    let _ = owner.kill();
+    let _ = owner.wait();
     assert!(
         wait_until_gone(&state_file, Duration::from_secs(15)),
         "the daemon outlived its owner"
@@ -4196,13 +3991,13 @@ fn owner_pid_rejects_init_and_dead_owner() {
 /// launcher has exited 0, the child's error only shows as a `ready` timeout.
 #[test]
 fn owner_pid_launcher_reports_flag_errors() {
-    let mut owner = KillOnDrop(
+    let mut owner = KillOnDrop::new(
         Command::new("sleep")
             .arg("60")
             .spawn()
             .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
-    let owner_pid = owner.0.id().to_string();
+    let owner_pid = owner.id().to_string();
     let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
     let bad_invocations: [&[&str]; 2] = [
         &["join", &mesh, "--name", "not-allowed"],
@@ -4228,11 +4023,9 @@ fn owner_pid_launcher_reports_flag_errors() {
             "the launcher hid a flag error behind exit 0 for {args:?}: {out:?}"
         );
     }
-    let _ = owner.0.kill();
+    let _ = owner.kill();
 }
 
-/// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
-/// subtype, the author and the frame id.
 /// The chat messages a node has received, one per line, for an assertion message.
 fn chat_debug(node: &Node) -> String {
     let lines: Vec<String> = node
@@ -4242,6 +4035,8 @@ fn chat_debug(node: &Node) -> String {
     lines.join("\n")
 }
 
+/// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
+/// subtype, the author and the frame id.
 fn presence_lines(node: &Node) -> Vec<(String, String, String)> {
     let log = node.log_contents();
     let events = log

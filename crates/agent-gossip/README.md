@@ -23,8 +23,8 @@ public surface entirely: a join target is a mesh id parsed from a string, so
 iroh version bumps never reach a library consumer.
 
 This crate re-exports the curated engine surface — `MeshId`, `Message`,
-`MessageBody`, `Nickname`, `InviteTicket`, `RosterSnapshot`, `Lane`,
-`JoinTarget`, the tunables in `util::consts` — so downstream code names
+`MessageBody`, `Nickname`, `RosterSnapshot`, `Lane`, `JoinTarget`, the
+tunables in `util::consts` — so downstream code names
 `agent_gossip::MeshId` and never depends on the engine directly.
 
 ## Three frontends, one event loop
@@ -44,7 +44,7 @@ use agent_gossip::MessageBody;
 
 let session = MeshSession::join(JoinConfig::new("<hash>".parse()?)).await?;
 let mut rx = session.messages();
-session.send(MessageBody::new("hello")?).await?;
+session.broadcast(MessageBody::try_new("hello")?).await?;
 while let Ok(msg) = rx.recv().await {
     println!("{} : {}", msg.author, msg.body);
 }
@@ -59,24 +59,26 @@ pair.
 
 ## Module map
 
-Public: `a2a`, `api`, `events`. Everything else is `pub(crate)`.
+Public: `a2a`, `api`, `output_event`, `status`. Everything else is
+`pub(crate)`.
 
 - **`a2a`** — the agent-communication data model, public on purpose because it
   is what both *bindings* carry: the always-on gossip binding and the
   flag-gated localhost JSON-RPC binding. (Bindings are how A2A travels;
   frontends are how a caller drives it. Different axes.) `model` holds the
   A2A v1.0 ProtoJSON types
-  (`AgentCard`, `Task`, `TaskState`, `Message`, `Part`, `Role`, `Artifact`,
+  (`AgentCard`, `TaskState`, `Message`, `Part`, `Role`, `Artifact`,
   `PROTOCOL_VERSION`); `extensions` holds the `mesh/*` extension URIs
   (broadcast, seal, blob, state, rpc). Inside it, `node` implements the engine's
-  `NodeApp`/`NodeDriver` seam, `task` the task state machine, `send` the
-  outbound paths, `surfaced` the surfacing rules, `gossip_rpc`/`rpc` the
-  request/response plane, and `ipc` the Unix-socket command set.
-- **`bridge`** — the A2A HTTP tunnel behind `a2a expose` / `a2a connect`:
+  `NodeApp`/`NodeDriver` seam, `task_record` the task state machine,
+  `broadcast_params` the outbound paths, `surfaced_event` the surfacing rules,
+  `served`/`rpc_error` the request/response plane, and `ipc_command` the
+  Unix-socket command set.
+- **`tunnel`** — the A2A HTTP tunnel behind `a2a expose` / `a2a connect`:
   tickets, Agent Card URL rewriting so discovery resolves through the
   bridge, and its own ALPN. A bridge subsystem, not A2A core.
-- **`output`** — the stdout event stream. `events::OutputEvent` is the typed
-  event; `emission::json` serializes it.
+- **`emission`** — the stdout event stream. `output_event::OutputEvent` is the
+  typed event; `emission::simple_event` serializes it.
 - **`harness`** — `#[doc(hidden)]`, feature-gated. The testkit and the
   crafted-message injector live here rather than in `api` so a test feature
   cannot widen the public surface (nor put an `iroh` type on it).
@@ -138,7 +140,7 @@ cargo task run create   # cargo run -- create
   `agent_gossip_test_fixtures::InProcNode`. Real iroh mesh, no subprocess —
   sub-second.
 - **Every-run subprocess.** The wire-contract suite (CLI / stdout /
-  `--output json` / Unix socket / MCP stdio) plus reliability invariants that
+  JSON event stream / Unix socket / MCP stdio) plus reliability invariants that
   need real OS processes and signals — SIGKILL beacon migration, SIGSTOP/CONT
   heal recovery, anti-entropy backfill. Mostly `tests/gossip_network.rs`.
 - **Adversarial** (`--features adversarial`, `tests/adversarial.rs`). An
@@ -151,10 +153,8 @@ All three share one harness:
 that depends back on this crate (cargo permits the cycle because the back-edge
 is a dev-dependency).
 
-Three features, all off by default and never in a release build: `bench`
-(exposes the engine's hot paths to `benches/hot_paths.rs`), `adversarial`, and
-`dhat-heap` (installs dhat's allocator and makes the CLI quit path return
-cleanly so the profiler flushes).
+Two features, both off by default and never in a release build: `bench`
+(exposes the engine's hot paths to `benches/hot_paths.rs`) and `adversarial`.
 
 > **Almost no environment-variable config.** Every knob is a `const` in the engine's
 > `util::consts` — edit and commit to experiment. The few the suite must vary
@@ -166,4 +166,4 @@ cleanly so the profiler flushes).
 Daemon logs land in `<log_dir>/<mesh_prefix>-<nick>.log` (default: the
 `agent-gossip/logs` subdir of the OS temp dir; `cargo task logs` prints the
 path). **Message bodies are redacted by default** so a log is safe to share.
-The `--output json` stdout stream is a separate path and is always raw.
+The JSON event stream on stdout is a separate path and is always raw.

@@ -13,7 +13,7 @@ pub(crate) fn rejoin_existing(
     same_mesh: bool,
 ) -> Result<CallToolResult, McpError> {
     let same_nickname =
-        requested_nickname.is_none_or(|candidate| candidate == existing.nickname().as_str());
+        requested_nickname.is_none_or(|candidate| candidate == existing.core.nickname().as_str());
     if same_mesh && same_nickname {
         return ok_json(MeshRef::from(existing));
     }

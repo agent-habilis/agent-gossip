@@ -19,9 +19,6 @@ cargo-zigbuild = "0.23"
 # crate's clap tree (`cli_command`) through `clap_mangen`. This makes the
 # swarm lib a build dependency of the task runner.
 agent-gossip = { path = "../agent-gossip" }
-# `plan` spawns `create` nodes and asks the same question the test harness does:
-# whether the arguments name a lookup.
-agent-gossip-test-fixtures = { path = "../agent-gossip-test-fixtures" }
 clap_mangen = "0.2"
 
 [lints]

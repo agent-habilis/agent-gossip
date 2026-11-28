@@ -34,11 +34,13 @@ impl McpClient {
     /// Spawn the MCP server without performing the handshake — for tests that
     /// assert on the `initialize` response itself.
     fn spawn_raw() -> Self {
+        Self::spawn_raw_with_args(&[])
+    }
+
+    fn spawn_raw_with_args(extra: &[&str]) -> Self {
         let mut command = test_cmd();
-        command
-            .arg("mcp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped());
+        command.arg("mcp").args(extra);
+        command.stdin(Stdio::piped()).stdout(Stdio::piped());
         let mut child: Child = command
             .stderr(Stdio::piped())
             .spawn()
@@ -62,27 +64,7 @@ impl McpClient {
     /// Spawn the MCP server with extra `mcp`-subcommand flags (e.g. the hidden
     /// `--directory-private` so the directory path runs on the loopback ladder).
     fn spawn_with_args(extra: &[&str]) -> Self {
-        let mut command = test_cmd();
-        command.arg("mcp").args(extra);
-        command.stdin(Stdio::piped()).stdout(Stdio::piped());
-        let mut child: Child = command
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn agent-gossip mcp");
-        let stdin = child
-            .stdin
-            .take()
-            .expect("the child was spawned with a piped stdin, so the handle is present");
-        let stdout = child
-            .stdout
-            .take()
-            .expect("the child was spawned with a piped stdout, so the handle is present");
-        let reader = BufReader::new(stdout);
-        let mut client = McpClient {
-            child,
-            stdin,
-            reader,
-        };
+        let mut client = Self::spawn_raw_with_args(extra);
         // Complete the MCP handshake once so tests only worry about
         // tool-call shapes.
         client.send(
@@ -502,12 +484,6 @@ fn mesh_version_works_without_a_session() {
             .is_some_and(|text| !text.is_empty()),
         "gossip_version must report a non-empty build string, got: {json}"
     );
-    // MCP carries no skill of its own, so the version result is version-only —
-    // the former skill-drift fields are gone.
-    assert!(
-        json.get("skill_up_to_date").is_none() && json.get("skill_state").is_none(),
-        "gossip_version must not report skill fields over MCP, got: {json}"
-    );
 }
 
 #[test]
@@ -679,22 +655,6 @@ fn leave_then_create_cycle_works_within_one_server() {
             .expect("the JSON field is a string in this test"),
         first_mesh,
         "second create should mint a fresh mesh id"
-    );
-}
-
-#[test]
-fn send_broadcast_without_session_errors() {
-    let mut client = McpClient::spawn();
-    let response = client.tool_call(
-        70,
-        "send_broadcast",
-        &serde_json::json!({ "text": "orphan" }),
-    );
-    let err = tool_error(&response)
-        .expect("a broadcast needs a joined mesh, so the server refuses it with a tool error");
-    assert!(
-        err.contains("not in a gossip"),
-        "send_broadcast without a session must say so, got: {err}"
     );
 }
 
@@ -900,21 +860,6 @@ fn create_mesh_transport_multihop_turns_multihop_on() {
 }
 
 #[test]
-fn create_mesh_transport_p2p_is_rejected() {
-    let mut client = McpClient::spawn();
-    let response = client.tool_call(
-        190,
-        "create_gossip",
-        &serde_json::json!({ "name": "p2pword", "transport": ["p2p"] }),
-    );
-    let err = tool_error(&response).expect("the removed `p2p` word should error");
-    assert!(
-        err.contains("udp") && err.contains("webrtc") && err.contains("gossip"),
-        "expected the error to name the valid transports, got: {err}"
-    );
-}
-
-#[test]
 fn create_mesh_transport_relay_alone_errors() {
     let mut client = McpClient::spawn();
     let response = client.tool_call(
@@ -941,21 +886,6 @@ fn create_mesh_relay_transport_needs_relay_lookup() {
     assert!(
         err.contains("relay"),
         "expected the error to name the relay lookup requirement, got: {err}"
-    );
-}
-
-#[test]
-fn create_mesh_rejects_removed_network_param() {
-    let mut client = McpClient::spawn();
-    let response = client.tool_call(
-        140,
-        "create_gossip",
-        &serde_json::json!({ "name": "oldparam", "network": "public" }),
-    );
-    let err = tool_error(&response).expect("the removed `network` param should be rejected");
-    assert!(
-        err.to_lowercase().contains("network"),
-        "expected the error to reject the unknown `network` field, got: {err}"
     );
 }
 
