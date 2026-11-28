@@ -67,10 +67,11 @@ async fn await_entries_bounded(left: &InProcNode, right: &InProcNode, deadline: 
 }
 
 /// Convergence budget. A quiet run crosses the entries in ~15-25s. With the heal interval at 5 s,
-/// the engine model ends a contest of 2 holders within 4 periods (20 s), and the action of the last
-/// answer applies up to `HEAL_PROBE` (5 s) later, so the merge is bounded by about 25 s plus the
-/// regraft of the overlay. 75s keeps 3x headroom over the slowest observed healthy run, and a host
-/// that simply cannot converge (no working multicast) burns 150s of CI proving it.
+/// the engine model ends a contest of 2 holders within 4 periods (20 s), or within 7 periods (35 s)
+/// when a holder acts on the answer of the period before. This suite keeps the probe budget at 5 s,
+/// equal to the period, so that case is the expected one here. The regraft of the overlay comes
+/// on top of both numbers. 75s holds over both, and a host that simply cannot converge (no working
+/// multicast) burns 150s of CI proving it: 2 tests of 75s.
 const MERGE_BUDGET: Duration = Duration::from_secs(75);
 
 /// `false` (plus a loud note) when this host cannot send LAN multicast, so the
