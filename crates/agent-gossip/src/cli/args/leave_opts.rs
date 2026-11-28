@@ -1,21 +1,29 @@
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use habilis_network::protocol::{MeshId, Nickname};
 
+/// The gossip to leave is named once: as GOSSIP, or as `--gossip`, the spelling of `peers`,
+/// `topology` and `poll`. The group makes the two conflict and lets `--nickname` follow either.
 #[derive(Parser, Debug)]
+#[command(group = ArgGroup::new("target").args(["gossip", "gossip_flag"]).multiple(false))]
 pub(crate) struct LeaveOpts {
     /// The id of the gossip to leave — the full id or a unique prefix
     /// of it. Omitted: every gossip owned by the calling session.
     pub gossip: Option<MeshId>,
 
+    /// The id of the gossip to leave, as a flag. The same as GOSSIP.
+    #[arg(long = "gossip", id = "gossip_flag", value_name = "GOSSIP")]
+    pub gossip_flag: Option<MeshId>,
+
     /// Leave only the member with this nickname (when this machine hosts
     /// several members of one gossip).
-    #[arg(long, requires = "gossip")]
+    #[arg(long, requires = "target")]
     pub nickname: Option<Nickname>,
 
     /// The agent-session process that owns the daemons: a daemon is
     /// session-owned when this pid is among its process ancestors.
     /// Defaults to this command's parent process; agent skills pass their
-    /// shell's `$PPID` (the agent process itself).
+    /// shell's `$PPID` (the agent process itself). Pid 0 and pid 1 are
+    /// refused: init owns every daemon.
     #[arg(long)]
     pub session_pid: Option<u32>,
 }
@@ -89,5 +97,61 @@ mod tests {
             Cli::try_parse_from(["agent-gossip", "leave", "--nickname", "my-nick"]).is_err(),
             "a nickname without a gossip is rejected"
         );
+    }
+
+    #[test]
+    fn leave_takes_the_gossip_as_a_flag_with_a_nickname() {
+        let cli = Cli::try_parse_from([
+            "agent-gossip",
+            "leave",
+            "--gossip",
+            "AbCdEf1234",
+            "--nickname",
+            "my-nick",
+        ])
+        .expect("peers, topology and poll take the gossip as a flag, so leave does too");
+        let Commands::Leave { options } = cli.command else {
+            panic!("expected Leave command");
+        };
+        assert_eq!(
+            options
+                .gossip_flag
+                .expect("the test arguments set the flag"),
+            habilis_network::protocol::MeshId::from("AbCdEf1234"),
+            "the flag carries the id given"
+        );
+        assert!(
+            options.gossip.is_none(),
+            "the positional stays unset when the flag names the gossip"
+        );
+        assert!(
+            options.nickname.is_some(),
+            "a nickname follows the flag form as it follows the positional"
+        );
+    }
+
+    #[test]
+    fn leave_rejects_the_gossip_named_twice() {
+        for args in [
+            [
+                "agent-gossip",
+                "leave",
+                "AbCdEf1234",
+                "--gossip",
+                "AbCdEf1234",
+            ],
+            [
+                "agent-gossip",
+                "leave",
+                "AbCdEf1234",
+                "--gossip",
+                "ZzZzZz9876",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(args).is_err(),
+                "two spellings of one argument leave no rule for which wins: {args:?}"
+            );
+        }
     }
 }

@@ -8,6 +8,7 @@ use std::time::Duration;
 use agent_gossip::OutputEvent;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, Node, PresenceSubtype, cli_peers, cli_poll, ipc_raw, test_cmd};
+use habilis_network::protocol::AuthorKey;
 
 /// Budget for a pair to see each other at default timings.
 const ROSTER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -317,57 +318,50 @@ fn doctor_members(out: &str, nick: &str) -> Option<u64> {
     after_dot.split_whitespace().next()?.parse().ok()
 }
 
-/// How many peers named `nickname` the roster of `observer` holds.
-fn rows_named(mesh: &str, observer: &str, nickname: &str) -> usize {
-    let raw: serde_json::Value =
-        serde_json::from_str(&cli_peers(mesh, observer)).expect("peers prints JSON");
-    let rows: &Vec<serde_json::Value> = raw["peers"].as_array().expect("peers carries a list");
-    rows.iter()
-        .filter(|row| row["nickname"] == nickname)
-        .count()
+/// The `(key, quiet)` of each row of `observer` that names `nickname`.
+async fn rows_named(observer: &InProcNode, nickname: &str) -> Vec<(AuthorKey, bool)> {
+    let roster = observer
+        .session
+        .peers()
+        .await
+        .expect("the session of the observer stays up for the whole test");
+    let named = roster
+        .peers
+        .iter()
+        .filter(|entry| entry.nickname.as_str() == nickname);
+    named.map(|entry| (entry.key, entry.quiet)).collect()
 }
 
-/// A daemon with a state file of its own, so a member key of its own. Two daemons of one mesh and one nickname
-/// with no state file share one default key: they are one member, and the lock on the key refuses the second.
-fn join_with_own_key(mesh: &str, nickname: &str, state: &std::path::Path) -> Node {
-    let state = state.to_string_lossy().to_string();
-    Node::join_args(mesh, nickname, &["--state-file", &state], &[])
-}
-
-/// Wait until `node` prints the `nickname_held` event on its stdout: the proof that it is a member of its own that
-/// claims a nickname that another member holds, and not a second run of the member that holds it.
-fn await_nickname_held(node: &Node) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let prints_held = |line: &str| {
-            let event: Option<serde_json::Value> = serde_json::from_str(line).ok();
-            event.is_some_and(|event| event["event"] == "nickname_held")
-        };
-        if node.log_contents().lines().any(prints_held) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the daemon never printed nickname_held, so it is not a second member of the nickname: {}",
-            node.log_tail(5)
-        );
-        std::thread::sleep(Duration::from_millis(500));
-    }
+/// Wait until `node` captures the `nickname_held` event: the proof that it is a member of its own that
+/// claims a nickname that another member holds, and not a second run of the member that holds it. The
+/// line that `--output json` prints for the event is pinned by the unit tests in `emission/output.rs`.
+async fn await_nickname_held(node: &mut InProcNode) {
+    let held = node
+        .wait_for(Duration::from_secs(60), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, OutputEvent::NicknameHeld { .. }))
+        })
+        .await;
+    assert!(
+        held,
+        "the node never reported nickname_held, so it is not a second member of the nickname"
+    );
 }
 
 /// Wait until `observer` sees the holder of `nickname`, and check that it sees one, not two: a
 /// second key under a held nickname is not admitted, so the roster never holds the name twice.
-fn await_the_single_holder(mesh: &str, observer: &str, nickname: &str) {
+async fn await_the_single_holder(observer: &InProcNode, nickname: &str) {
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
-    while rows_named(mesh, observer, nickname) == 0 {
+    while rows_named(observer, nickname).await.is_empty() {
         assert!(
             std::time::Instant::now() < deadline,
             "the observer never saw the holder of {nickname}"
         );
-        std::thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
     assert_eq!(
-        rows_named(mesh, observer, nickname),
+        rows_named(observer, nickname).await.len(),
         1,
         "the observer sees a second member under {nickname}: the gate admitted a second key"
     );
@@ -377,191 +371,126 @@ fn await_the_single_holder(mesh: &str, observer: &str, nickname: &str) {
 /// nickname, not two: the nickname gate admits one member, and a session that was admitted before the proof of
 /// the holder came goes out when that proof binds the nickname. (BEFORE the eviction at bind, the late observer
 /// held both rows for the 90 s of the alive timeout, and then one quiet row stayed listed.)
-#[test]
-fn a_late_observer_holds_one_row_for_a_nickname_of_two_members() {
-    let (_creator, mesh) = Node::create_named("churn-late");
-    let _leave = LeaveOnDrop(mesh.clone());
-    let folder =
-        std::env::temp_dir().join(format!("agent-gossip-churn-late-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).expect("the temp folder is writable");
-    let _first = join_with_own_key(&mesh, "churn-late-dup", &folder.join("first.state.json"));
-    let second = join_with_own_key(&mesh, "churn-late-dup", &folder.join("second.state.json"));
-    await_nickname_held(&second);
-    let observer = Node::join(&mesh, "churn-late-obs");
-    assert!(
-        observer.wait_ready(&mesh),
-        "the observer never became ready: {}",
-        observer.log_tail(5)
-    );
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_late_observer_holds_one_row_for_a_nickname_of_two_members() {
+    let creator = InProcNode::create("churn-late").await;
+    let _first = InProcNode::join(&creator.mesh, "churn-late-dup").await;
+    let mut second = InProcNode::join(&creator.mesh, "churn-late-dup").await;
+    await_nickname_held(&mut second).await;
+    let observer = InProcNode::join(&creator.mesh, "churn-late-obs").await;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    let mut rows = rows_named(&mesh, &observer.nickname, "churn-late-dup");
+    let mut rows = rows_named(&observer, "churn-late-dup").await.len();
     while rows != 1 && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_secs(1));
-        rows = rows_named(&mesh, &observer.nickname, "churn-late-dup");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        rows = rows_named(&observer, "churn-late-dup").await.len();
     }
     assert_eq!(
         rows, 1,
         "the late observer holds {rows} rows for a nickname that one member holds"
     );
-    let _ = std::fs::remove_dir_all(&folder);
-}
-
-/// The `(pubkey, quiet)` of each row of `observer` that names `nickname`.
-fn rows_with_keys(mesh: &str, observer: &str, nickname: &str) -> Vec<(String, bool)> {
-    let raw: serde_json::Value =
-        serde_json::from_str(&cli_peers(mesh, observer)).unwrap_or_default();
-    let listed: Vec<serde_json::Value> = raw["peers"].as_array().cloned().unwrap_or_default();
-    let named = listed.iter().filter(|row| row["nickname"] == nickname);
-    named
-        .map(|row| {
-            let key = row["pubkey"].as_str().unwrap_or_default().to_owned();
-            (key, row["quiet"] == true)
-        })
-        .collect()
-}
-
-/// The session key that a daemon with a state file writes there.
-fn pubkey_in(state: &std::path::Path) -> String {
-    let text = std::fs::read_to_string(state).unwrap_or_default();
-    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-    parsed["pubkey"].as_str().unwrap_or_default().to_owned()
 }
 
 /// A member that the nickname gate kept out of a late observer is not out for good: when the member that holds
 /// the nickname leaves, the other member is a live peer of the observer again, whatever the order of the proofs
 /// was. (An evicted honest session was once recorded as one that said goodbye, and stayed out.)
-#[test]
-fn an_evicted_member_is_a_peer_again_when_the_holder_leaves() {
-    let (_creator, mesh) = Node::create_named("churn-return");
-    let _leave = LeaveOnDrop(mesh.clone());
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_evicted_member_is_a_peer_again_when_the_holder_leaves() {
+    let creator = InProcNode::create("churn-return").await;
     let nickname = "churn-return-dup";
-    let folder =
-        std::env::temp_dir().join(format!("agent-gossip-churn-return-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).expect("the temp folder is writable");
-    let states = [
-        folder.join("first.state.json"),
-        folder.join("second.state.json"),
-    ];
-    let mut members = [
-        join_with_own_key(&mesh, nickname, &states[0]),
-        join_with_own_key(&mesh, nickname, &states[1]),
-    ];
-    await_nickname_held(&members[1]);
-    let observer = Node::join(&mesh, "churn-return-obs");
-    assert!(
-        observer.wait_ready(&mesh),
-        "the observer never became ready: {}",
-        observer.log_tail(5)
-    );
+    let first = InProcNode::join(&creator.mesh, nickname).await;
+    let mut second = InProcNode::join(&creator.mesh, nickname).await;
+    await_nickname_held(&mut second).await;
+    let observer = InProcNode::join(&creator.mesh, "churn-return-obs").await;
 
     // The observer admits one holder: the member whose proof it takes first.
     let settle = std::time::Instant::now() + Duration::from_secs(100);
-    let mut rows = rows_with_keys(&mesh, &observer.nickname, nickname);
+    let mut rows = rows_named(&observer, nickname).await;
     while rows.len() != 1 && std::time::Instant::now() < settle {
-        std::thread::sleep(Duration::from_secs(1));
-        rows = rows_with_keys(&mesh, &observer.nickname, nickname);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        rows = rows_named(&observer, nickname).await;
     }
     assert_eq!(
         rows.len(),
         1,
         "the observer never settled on one holder: {rows:?}"
     );
-    let holder_key = rows[0].0.clone();
-    let held = usize::from(pubkey_in(&states[0]) != holder_key);
-    let evicted_key = pubkey_in(&states[1 - held]);
+    let holder_key = rows[0].0;
+    let first_key = first
+        .session
+        .own_key()
+        .await
+        .expect("the session of the first member stays up");
+    let (holder, evicted) = if first_key == holder_key {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    let evicted_key = evicted
+        .session
+        .own_key()
+        .await
+        .expect("the session of the evicted member stays up");
     assert_ne!(
         evicted_key, holder_key,
         "the two members share one session key, so one of them is not a member of its own"
     );
 
-    members[held].sigint();
-    members[held].wait_exit();
+    holder.leave().await;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let mut back = false;
     while !back && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_secs(1));
-        let listed = rows_with_keys(&mesh, &observer.nickname, nickname);
-        back = listed
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        back = rows_named(&observer, nickname)
+            .await
             .iter()
             .any(|(key, quiet)| *key == evicted_key && !quiet);
     }
     assert!(
         back,
         "the member that the gate kept out is not a live peer of the observer after the holder left: {:?}",
-        rows_with_keys(&mesh, &observer.nickname, nickname)
+        rows_named(&observer, nickname).await
     );
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// BEFORE: two daemons under one nickname were both in the roster, and a message to the nickname was
 /// refused as ambiguous. The nickname gate now admits one key for a nickname, so the roster holds the
 /// name once. AFTER: the observer sees one holder and a message to the nickname reaches it. (The test
 /// belongs to the churn work merged in main, #76.)
-#[test]
-fn a_message_to_a_nickname_of_two_daemons_reaches_the_one_holder() {
-    let (_creator, mesh) = Node::create_named("churn-amb");
-    let _leave = LeaveOnDrop(mesh.clone());
-    let folder =
-        std::env::temp_dir().join(format!("agent-gossip-churn-amb-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).expect("the temp folder is writable");
-    let _first = join_with_own_key(&mesh, "churn-amb-dup", &folder.join("first.state.json"));
-    let second = join_with_own_key(&mesh, "churn-amb-dup", &folder.join("second.state.json"));
-    await_nickname_held(&second);
-    let observer = Node::join(&mesh, "churn-amb-obs");
-    std::thread::sleep(Duration::from_secs(10));
-    await_the_single_holder(&mesh, &observer.nickname, "churn-amb-dup");
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_message_to_a_nickname_of_two_daemons_reaches_the_one_holder() {
+    let creator = InProcNode::create("churn-amb").await;
+    let _first = InProcNode::join(&creator.mesh, "churn-amb-dup").await;
+    let mut second = InProcNode::join(&creator.mesh, "churn-amb-dup").await;
+    await_nickname_held(&mut second).await;
+    let observer = InProcNode::join(&creator.mesh, "churn-amb-obs").await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    await_the_single_holder(&observer, "churn-amb-dup").await;
 
-    let sent = test_cmd()
-        .args([
-            "a2a",
-            "msg",
-            "--gossip",
-            &mesh,
-            "--nickname",
-            &observer.nickname,
-        ])
-        .args(["--to", "churn-amb-dup", "--text", "to-the-one-holder"])
-        .output()
-        .expect("a2a msg runs");
-    let reply = format!(
-        "{}{}",
-        String::from_utf8_lossy(&sent.stdout),
-        String::from_utf8_lossy(&sent.stderr)
-    );
+    observer.await_peer_card("churn-amb-dup").await;
+    let sent = observer.try_msg("churn-amb-dup", "to-the-one-holder").await;
     assert!(
-        sent.status.success() && !reply.contains("ambiguous"),
-        "a message to a nickname with one holder was refused: {reply}"
+        sent.is_ok(),
+        "a message to a nickname with one holder was refused: {sent:?}"
     );
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// BEFORE: a task to an ambiguous nickname was refused, not parked on one of its holders. AFTER: the
 /// nickname has one holder, and the task goes to it.
-#[test]
-fn a_task_to_a_nickname_of_two_daemons_reaches_the_one_holder() {
-    let (_creator, mesh) = Node::create_named("churn-task");
-    let _leave = LeaveOnDrop(mesh.clone());
-    let folder =
-        std::env::temp_dir().join(format!("agent-gossip-churn-task-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).expect("the temp folder is writable");
-    let _first = join_with_own_key(&mesh, "churn-task-dup", &folder.join("first.state.json"));
-    let second = join_with_own_key(&mesh, "churn-task-dup", &folder.join("second.state.json"));
-    await_nickname_held(&second);
-    let observer = Node::join(&mesh, "churn-task-obs");
-    std::thread::sleep(Duration::from_secs(10));
-    await_the_single_holder(&mesh, &observer.nickname, "churn-task-dup");
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_task_to_a_nickname_of_two_daemons_reaches_the_one_holder() {
+    let creator = InProcNode::create("churn-task").await;
+    let _first = InProcNode::join(&creator.mesh, "churn-task-dup").await;
+    let mut second = InProcNode::join(&creator.mesh, "churn-task-dup").await;
+    await_nickname_held(&mut second).await;
+    let observer = InProcNode::join(&creator.mesh, "churn-task-obs").await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    await_the_single_holder(&observer, "churn-task-dup").await;
 
-    let created = common::cli_task_create_raw(&mesh, &observer.nickname, "churn-task-dup", "t");
-    let reply = format!(
-        "{}{}",
-        String::from_utf8_lossy(&created.stdout),
-        String::from_utf8_lossy(&created.stderr)
-    );
+    let created = observer.create_task("churn-task-dup", "t").await;
     assert!(
-        created.status.success() && !reply.contains("ambiguous"),
-        "a task to a nickname with one holder was refused: {reply}"
+        created.get("result").is_some(),
+        "a task to a nickname with one holder was refused: {created}"
     );
-    let _ = std::fs::remove_dir_all(&folder);
 }

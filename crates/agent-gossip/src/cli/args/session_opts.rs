@@ -5,7 +5,8 @@ pub(crate) struct SessionOpts {
     /// The agent-session process to report for: a daemon counts as this
     /// session's when this pid is among its process ancestors. Defaults to
     /// this command's parent process; agent skills pass their shell's
-    /// `$PPID` (the agent process itself).
+    /// `$PPID` (the agent process itself). Pid 0 and pid 1 are refused:
+    /// init owns every daemon.
     #[arg(long)]
     pub session_pid: Option<u32>,
 }

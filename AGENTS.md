@@ -459,6 +459,13 @@ Correctness is imperative. Choose the correct design, whatever the size of the r
 Do not keep a workaround, a heuristic, or a smaller change when it hides a wrong model.
 If the correct fix is large, split it into small steps. Each step compiles and passes the tests.
 
+## Simplicity
+
+Make the code as simple as possible. Remove cyclomatic complexity: each branch, flag, and special case must earn its place.
+The fewer special cases, the better. If two designs are correct, choose the one with fewer branches and fewer special cases.
+If a fix can remove a special case or add one, remove one. If a fix must add a special case, say why in the commit message and in the PR.
+Model a state as one value (an enum), not as several booleans, so that a state with no meaning cannot exist.
+
 ## Compatibility
 
 Until version 1.0, this project does not keep backward compatibility.

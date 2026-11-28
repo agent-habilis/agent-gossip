@@ -12,6 +12,7 @@ pub(crate) mod a2a_app;
 pub(crate) mod a2a_binding;
 pub(crate) mod broadcast_params;
 pub(crate) mod card;
+pub(crate) mod decided;
 mod extensions;
 mod frame_payload_error;
 pub(crate) mod ipc_command;

@@ -172,25 +172,6 @@ fn await_served_card(port: u16, path: &str) -> Value {
     }
 }
 
-/// The author key of the daemon that runs on `state_file`, from its `ready` output.
-fn ready_pubkey(state_file: &std::path::Path) -> String {
-    let output = common::test_cmd()
-        .args(["ready", "--state-file"])
-        .arg(state_file)
-        .output()
-        .expect("the ready command spawns");
-    assert!(
-        output.status.success(),
-        "the ready gate failed, so the key of the daemon is unknown: {output:?}"
-    );
-    let ready: Value =
-        serde_json::from_slice(&output.stdout).expect("ready prints one JSON object");
-    ready["pubkey"]
-        .as_str()
-        .expect("ready names the author key of the daemon")
-        .to_owned()
-}
-
 /// The identity that a served card names: the author key in the first interface.
 fn identity_of(card: &Value) -> Option<&str> {
     card.pointer("/supportedInterfaces/0/url")
@@ -201,31 +182,31 @@ fn identity_of(card: &Value) -> Option<&str> {
 /// first that proved it, so the nickname gives the card of that key and stays with it when a second key
 /// claims the same nickname. The key in hex gives the card of the admitted key. The refused key is no
 /// member of the host, so its hex gets a 404: the daemon builds a card only from its roster.
-#[test]
-fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_its_hex() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_its_hex() {
     let folder =
         std::env::temp_dir().join(format!("agent-gossip-meta-by-key-{}", std::process::id()));
     std::fs::create_dir_all(&folder).expect("the temp folder is writable");
-    let state_of = |name: &str| folder.join(format!("{name}.state.json"));
-    let state_file = state_of("host");
+    let state_file = folder.join("host.state.json");
     let state_path = state_file.to_string_lossy().to_string();
+    // The host is a CLI daemon, because only the CLI serves the HTTP route. The two members of the
+    // shared nickname run in process, each with a runtime base of its own: the host lock refuses two
+    // members of one nickname in one base, and a member of its own key is what the gate must tell apart.
     let (host, mesh) = Node::create_args(
         "mbk-route",
         &["--a2a-serve", "--state-file", &state_path],
         &[],
     );
-    // Two daemons of one mesh and one nickname with no state file of their own share one member key,
-    // so they are one member and the newer run replaces the older. A state file for each makes two
-    // members that claim one nickname.
-    let join_as_member = |name: &str| {
-        let state = state_of(name).to_string_lossy().to_string();
-        Node::join_args(&mesh, SHARED, &["--state-file", &state], &[])
-    };
-    let first = join_as_member("first");
+    let first = InProcNode::join(&mesh, SHARED).await;
     assert!(host.wait_ready(&mesh), "the host socket never appeared");
     let (port, _token) = wait_a2a(&state_file);
     let route = format!("/peers/{SHARED}/.well-known/agent-card.json");
-    let first_key = ready_pubkey(&state_of("first"));
+    let first_key = first
+        .session
+        .own_key()
+        .await
+        .expect("the session of the first member stays up")
+        .to_string();
 
     // The host serves the card of the first key by the nickname, before a second key claims the
     // nickname: the host holds the proof of the first key when the second one comes.
@@ -235,12 +216,17 @@ fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_its_hex
         Some(first_key.as_str()),
         "the host serves the first nickname holder with the card of another key"
     );
-    let second = join_as_member("second");
-    let second_key = ready_pubkey(&state_of("second"));
-    assert_ne!(first_key, second_key, "the premise: two daemons, two keys");
+    let second = InProcNode::join(&mesh, SHARED).await;
+    let second_key = second
+        .session
+        .own_key()
+        .await
+        .expect("the session of the second member stays up")
+        .to_string();
+    assert_ne!(first_key, second_key, "the premise: two members, two keys");
     // No event marks a frame that the gate of the host refuses, so the test gives the second key
     // time to arrive and be refused before it asks for the card.
-    std::thread::sleep(Duration::from_secs(5));
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     let (status, body) = http_get(port, &route);
     assert_eq!(

@@ -4,9 +4,9 @@ use habilis_network::runtime::{
 };
 use habilis_network::util::logging;
 
-use super::agent;
 use super::args::SharedServerOpts;
 use super::detach_if_owned::detach_if_owned;
+use super::{agent, start_failure};
 use crate::a2a::a2a_app::{A2aApp, Startup, SurfacedIo};
 use crate::a2a::a2a_binding;
 use crate::api;
@@ -18,28 +18,22 @@ use crate::emission::{Output, OutputMode};
 /// and advertise directory (see [`habilis_network::runtime::Resolved`]).
 pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     detach_if_owned(&shared)?;
+    let state_file = shared.state_file.clone();
+    let result = serve(resolved, shared).await;
+    if let (Err(error), Some(state_file)) = (&result, &state_file) {
+        start_failure::record(state_file, error);
+    }
+    result
+}
+
+/// The mesh of one session: the setup, then the event loop until it ends.
+async fn serve(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     let Resolved {
         kind,
         author,
         advertise_directory,
         ..
     } = resolved;
-    // Refuse to share a state file with a daemon that is still using it.
-    // Failing loudly here beats two daemons alternating ownership of one file
-    // for the rest of the session, which is silent and corrupts identity
-    // resolution for both. Checked before any network setup so the refusal
-    // costs nothing.
-    if let Some(path) = shared.state_file.as_ref()
-        && let Some(owner) = super::session::live_owner_of(path).await
-    {
-        anyhow::bail!(
-            "state file {} is already in use by {owner}. \
-             A state file has one writer; sharing it makes both daemons \
-             unreachable at random. Pass a different --state-file, or leave \
-             that session first.",
-            path.display(),
-        );
-    }
     // The advertiser reaches the directory over this mesh's own lookups
     // (only `create` advertises, so only `Create` carries them).
     let directory_lookups = if let SetupKind::Create { config, .. } = &kind {
@@ -87,13 +81,14 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         // The CLI daemon writes its status file to the default state path, and keeps its member key and its
         // run counter there too: a restart after a crash is the same member. The in-process sessions do not.
         .keys_in_default_state(true);
-    setup_params.state_file = shared.state_file;
+    setup_params.state_file = shared.state_file.clone();
     setup_params.live_count = live_count.clone();
     let config = setup_mesh(kind, setup_params).await?;
     let config = match shared.owner_pid {
         Some(owner) => config.set_owner_pid(owner)?,
         None => config,
     };
+    app.set_member(config.member_key());
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this mesh's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
@@ -102,7 +97,12 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         .zip(directory_lookups)
         .zip(live_count)
         .map(|((directory, lookups), counter)| {
-            api::spawn_advertiser(&config, counter, directory, lookups)
+            let route = api::DirectoryRoute {
+                directory,
+                lookups,
+                base: crate::runtime_base(),
+            };
+            api::spawn_advertiser(&config, counter, route)
         });
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).

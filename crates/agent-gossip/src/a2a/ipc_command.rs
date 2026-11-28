@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::{
-    MergeCtx, PendingSend, StateMergeParams, broadcast_state_merge, invite, start_ping_round,
+    MergeCtx, StateMergeParams, broadcast_state_merge, invite, start_ping_round,
 };
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
@@ -19,6 +19,7 @@ use crate::a2a::broadcast_params::{
     BroadcastParams, FileRef, MsgParams, TaskArtifactEmitParams, TaskStatusParams,
     emit_task_artifact, emit_task_status, live_holders, send_broadcast, send_msg, when_sent,
 };
+use crate::a2a::decided::Decided;
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths, row_endpoint};
 use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
@@ -542,7 +543,7 @@ impl IpcRequest<'_> {
     }
 }
 
-fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<PendingSend>) {
+fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<Decided>) {
     when_sent(pending, move |verdict| {
         let _ = resp_tx.send(match verdict {
             Ok(()) => ok,
@@ -700,10 +701,7 @@ fn info_response(
         "name": name.as_str(),
         "nickname": author.as_str(),
         "peer_count": state.roster_snapshot().count,
-        // The daemon answering, not the pid some file claims. A state file
-        // outlives a SIGKILLed daemon, and the OS reissues pids, so a file's
-        // pid alone cannot say whether *this* session is the one still
-        // running there — see `cli::session::confirm_owner`.
+        // The daemon answering, not the pid some file claims.
         "pid": std::process::id(),
     })
     .to_string()
@@ -822,10 +820,17 @@ fn state_get_response(state: &EventLoopState) -> String {
 /// trimmed view back as if it were truth. `absent` is derived, so it cannot
 /// travel that path.
 fn meta_get_response(state: &EventLoopState) -> String {
-    let MetaView { document, absent } = meta_view(state);
+    let MetaView {
+        document,
+        absent,
+        members,
+    } = meta_view(state);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
-    format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
+    let members_json = serde_json::to_string(&members).unwrap_or_else(|_| "{}".to_owned());
+    format!(
+        r#"{{"ok":true,"document":{doc_json},"absent":{absent_json},"members":{members_json}}}"#
+    )
 }
 
 /// The meta document and the slots of its `absent` entries, for the CLI and the MCP surface
@@ -834,6 +839,10 @@ pub(crate) struct MetaView {
     pub(crate) document: serde_json::Value,
     /// The slots, each the hex of an author key.
     pub(crate) absent: Vec<String>,
+    /// The member key behind each slot of the document, in hex, or `None` when no proof of it was
+    /// verified. It lives beside the document, never in it, so that a `get`, an edit and a `merge`
+    /// do not write a derived value back. At most one entry for each slot of the document.
+    pub(crate) members: BTreeMap<String, Option<String>>,
 }
 
 pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
@@ -844,7 +853,30 @@ pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
     let own: AuthorKey = state.identity().author_key();
     let slots: Vec<&str> = card::absent_peers(&document, &live, &own);
     let absent: Vec<String> = slots.into_iter().map(str::to_owned).collect();
-    MetaView { document, absent }
+    let roster = state.roster_snapshot();
+    let own_slot = own.to_string();
+    let members: BTreeMap<String, Option<String>> = document
+        .as_object()
+        .into_iter()
+        .flat_map(serde_json::Map::keys)
+        .map(|slot| {
+            let member = if *slot == own_slot {
+                roster.own_member
+            } else {
+                let entry = roster
+                    .peers
+                    .iter()
+                    .find(|entry| entry.key.to_string() == *slot);
+                entry.and_then(|entry| entry.member)
+            };
+            (slot.clone(), member.map(|key| key.to_string()))
+        })
+        .collect();
+    MetaView {
+        document,
+        absent,
+        members,
+    }
 }
 
 /// The record of a message as the IPC and MCP surfaces report it: the wire form, with the

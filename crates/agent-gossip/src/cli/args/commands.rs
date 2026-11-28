@@ -13,6 +13,7 @@ use super::peers_opts::PeersOpts;
 use super::ping_opts::PingOpts;
 use super::poll_opts::PollOpts;
 use super::ready_opts::ReadyOpts;
+use super::session_file_opts::SessionFileOpts;
 use super::session_opts::SessionOpts;
 use super::state_action::StateAction;
 use super::topic_opts::TopicOpts;
@@ -41,14 +42,15 @@ pub(crate) enum Commands {
 
     /// Leave a gossip: stop this session's local daemon.
     ///
-    /// Finds running create/join/topic daemons through their state files
-    /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
-    /// and removes its state file on the way out. With no GOSSIP, stops
-    /// only the daemons owned by the calling session — those with
-    /// `--session-pid` among their process ancestors — and never touches
-    /// other sessions'. An explicit GOSSIP targets that gossip's local
-    /// member(s) regardless of owner. State files whose daemon is gone
-    /// (SIGKILL, power loss) are cleaned up along the way.
+    /// Finds running create/join/topic daemons in the registry of the
+    /// runtime base (a record of pid and start time in a lock file), and
+    /// sends each a SIGTERM; a daemon broadcasts `left` to its peers and
+    /// removes its own files on the way out, and `leave` then waits for its
+    /// lock. With no GOSSIP, stops only the daemons owned by the calling
+    /// session — those with `--session-pid` among their process ancestors —
+    /// and never touches other sessions'. An explicit GOSSIP, or `--gossip`,
+    /// targets that gossip's local member(s) regardless of owner. A tracing
+    /// log that is 7 days old and has no socket is removed along the way.
     Leave {
         #[command(flatten)]
         options: LeaveOpts,
@@ -64,6 +66,17 @@ pub(crate) enum Commands {
     Session {
         #[command(flatten)]
         options: SessionOpts,
+    },
+
+    /// Print the state file path for an agent session.
+    ///
+    /// The name is the pid and the start time of the agent process, so a later process that gets the
+    /// same pid gets another file. Skills pass this path as `--state-file` to every command that names
+    /// the session. Prints one line and makes no file. Fails, and prints nothing on stdout, for pid 0,
+    /// pid 1 and a pid that has no live process; the reason is the first line on stderr.
+    SessionFile {
+        #[command(flatten)]
+        options: SessionFileOpts,
     },
 
     /// Exit 3 when a gossip session of the calling agent has no bell armed.
@@ -114,7 +127,8 @@ pub(crate) enum Commands {
     /// Queries the running daemon for current peers (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
     /// task target picker; prints a JSON object with `peers`
-    /// and `peer_count`.
+    /// and `peer_count`. `peer_count` is the active peers plus self: the live
+    /// size of the gossip, one more than the other live peers.
     Peers {
         #[command(flatten)]
         options: PeersOpts,

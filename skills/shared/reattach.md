@@ -19,10 +19,10 @@ Result handling:
   `$NAME`, and `$NICKNAME`, and its `pubkey` as `$PUBKEY` (the author key, the
   slot of your meta entry); when it carries `topic`, hold that too — the bell
   guard's re-arm needs it.
-- No sessions: report that this session is not in a gossip. If
-  `/tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr` is not empty, a daemon
-  of this session stopped with an error: show that file to the user as the
-  reason.
+- No sessions: report that this session is not in a gossip. Take the path that
+  `agent-gossip session-file --session-pid "$PPID"` prints and change `.json`
+  to `.stderr`. If that file is not empty, a daemon of this session stopped
+  with an error: show the file to the user as the reason.
 - Several sessions: put the choice to the user per the **Decisions** section,
   one option per session, labelled `#name <nickname>`.
 

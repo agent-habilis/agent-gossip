@@ -373,7 +373,10 @@ mod tests {
     }
 
     fn is_bell(line: &str) -> bool {
-        line.starts_with("agent-gossip poll ") && line.contains("--long")
+        let command = line
+            .strip_prefix(r#"S=$(agent-gossip session-file --session-pid "$PPID") && "#)
+            .unwrap_or(line);
+        command.starts_with("agent-gossip poll ") && command.contains("--long")
     }
 
     fn frontmatter(body: &str) -> &str {
@@ -565,7 +568,7 @@ mod tests {
                 let discards = line.ends_with("> /dev/null 2>&1")
                     || (is_daemon_launch(line)
                         && line.contains("> /dev/null 2> ")
-                        && line.ends_with(".stderr"));
+                        && line.ends_with(r#".stderr""#));
                 assert!(
                     discards,
                     "{path}: a long-running command must discard stdout and keep \

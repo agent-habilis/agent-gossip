@@ -99,7 +99,8 @@ impl InProcessSession {
     /// # Errors
     /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
     pub(crate) async fn create_poll(config: CreateConfig) -> Result<Self, CreateError> {
-        let (elc, io, advertiser) = create_setup(config, Output::silent()).await?;
+        let (elc, io, advertiser) =
+            create_setup(config, Output::silent(), crate::runtime_base()).await?;
         Ok(Self::spawn_poll(elc, io, advertiser))
     }
 
@@ -108,7 +109,7 @@ impl InProcessSession {
     /// # Errors
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
     pub(crate) async fn join_poll(config: JoinConfig) -> Result<Self, JoinError> {
-        let (elc, io) = join_setup(config, Output::silent()).await?;
+        let (elc, io) = join_setup(config, Output::silent(), crate::runtime_base()).await?;
         Ok(Self::spawn_poll(elc, io, None))
     }
 
@@ -119,7 +120,7 @@ impl InProcessSession {
     /// [`JoinError::Resolve`] on an empty string; [`JoinError::Setup`] on
     /// endpoint/gossip failure.
     pub(crate) async fn topic_poll(config: TopicConfig) -> Result<Self, JoinError> {
-        let (elc, io) = topic_setup(config, Output::silent()).await?;
+        let (elc, io) = topic_setup(config, Output::silent(), crate::runtime_base()).await?;
         Ok(Self::spawn_poll(elc, io, None))
     }
 
@@ -372,11 +373,14 @@ impl InProcessSession {
             .await
     }
 
-    /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
-    /// waiting up to 3s. On timeout returns `Ok(())` and `Drop` detaches.
+    /// Clean shutdown: ask the loop to broadcast `Left` and wind down, and
+    /// wait until it has ended and closed the endpoints. `Ok(())` means the
+    /// node is closed.
     ///
     /// # Errors
-    /// Returns an error if the event-loop task panicked or returned an error.
+    /// Returns an error if the event-loop task panicked or returned an error,
+    /// or if it did not end within the leave bound of the engine
+    /// (`NODE_LEAVE`, 14.5 s): the text says so, and the node is not closed.
     pub(crate) async fn leave(self) -> Result<(), SessionError> {
         let Self {
             node, advertiser, ..

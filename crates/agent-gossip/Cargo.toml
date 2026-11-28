@@ -37,6 +37,13 @@ bench = ["habilis-network/test-fixtures"]
 # in `harness`, not `api`, so the feature cannot widen the public surface (nor
 # put an `iroh` type on it). `cargo task test`/`ci` enable it.
 adversarial = ["habilis-network/adversarial"]
+# Off by default. Exposes `MeshSession::{create_in, join_in, topic_in, own_key}`
+# (`src/harness/test_node.rs`): the first three name the runtime base of a node, and
+# the last names the key of a member. The test fixtures turn it on, so that each
+# in-process node has a base of its own and the host lock of one runtime base does
+# not refuse two nodes of one nickname. It gates only these four methods: the `base`
+# parameter below the constructors is always compiled.
+test-node = []
 
 [build-dependencies]
 # `build.rs` renders the multi-file `skills/` sources into the single-file

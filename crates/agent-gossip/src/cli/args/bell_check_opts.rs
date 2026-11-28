@@ -4,7 +4,8 @@ use clap::Parser;
 pub(crate) struct BellCheckOpts {
     /// The agent-session process to check: a daemon counts as this
     /// session's when this pid is among its process ancestors. Defaults to
-    /// this command's parent process.
+    /// this command's parent process. Pid 0 and pid 1 are refused: init owns
+    /// every daemon.
     #[arg(long)]
     pub session_pid: Option<u32>,
 

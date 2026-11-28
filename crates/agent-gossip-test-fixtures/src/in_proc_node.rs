@@ -14,6 +14,8 @@ use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::own_base::OwnBase;
+use crate::owned_session::OwnedSession;
 use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
@@ -23,8 +25,9 @@ use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, t
 /// subprocess [`Node`](crate::Node), but everything runs in the test process — so
 /// coverage is recorded and teardown is deterministic.
 pub struct InProcNode {
-    /// The live session, for calls the wrappers of this harness do not cover.
-    pub session: MeshSession,
+    /// The live session, for calls the wrappers of this harness do not cover. It holds the runtime base of
+    /// the node, so a test that moves it out of the node takes the base with it.
+    pub session: OwnedSession,
     pub(crate) rx: UnboundedReceiver<OutputEvent>,
     pub(crate) drained: Vec<OutputEvent>,
     /// The mesh id the node joined.
@@ -79,24 +82,30 @@ impl InProcNode {
 
     async fn create_from(config: CreateConfig) -> Self {
         init_test_tracing();
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::create(config)
+            MeshSession::create_in(config, base.path())
                 .await
                 .expect("in-process create failed"),
+            base,
         )
     }
 
     async fn join_from(config: JoinConfig) -> Result<Self, JoinError> {
         init_test_tracing();
-        Ok(Self::with_session(MeshSession::join(config).await?))
+        let base = OwnBase::new();
+        Ok(Self::with_session(
+            MeshSession::join_in(config, base.path()).await?,
+            base,
+        ))
     }
 
-    fn with_session(mut session: MeshSession) -> Self {
+    fn with_session(mut session: MeshSession, base: OwnBase) -> Self {
         let rx = session.events().expect("events() receiver");
         let mesh = session.mesh_id().to_string();
         let nickname = session.nickname().to_string();
         Self {
-            session,
+            session: OwnedSession::new(session, base),
             rx,
             drained: Vec::new(),
             mesh,
@@ -124,10 +133,12 @@ impl InProcNode {
     pub async fn topic(string: &str, nickname: &str) -> Self {
         init_test_tracing();
         let config = TopicConfig::new(string.to_owned()).with_nickname(test_nickname(nickname));
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::topic(config)
+            MeshSession::topic_in(config, base.path())
                 .await
                 .expect("in-process topic join failed"),
+            base,
         )
     }
 

@@ -1,58 +1,75 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
-use habilis_network::runtime::state_file;
 use habilis_network::runtime::state_file::{read_identity, read_session_entry};
+use habilis_network::runtime::{
+    DaemonRecord, DaemonState, read_record, registry, state_file, wait_daemon_lock,
+};
 use habilis_network::util::{process, tuning};
+use tokio::sync::oneshot;
+use tokio::time::Instant;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
-use super::discovery::Discovery;
+use super::read_member::read_member;
 use super::target::Target;
-use super::{bell, info_response};
+use super::{bell, leftovers};
 use crate::runtime_base;
 
-/// Seconds to wait for a signalled daemon to drop its state file and stop
-/// answering its socket before reporting it unconfirmed. Outlasts the engine's
+/// Seconds to wait for a signalled daemon to end before reporting it unconfirmed. Outlasts the engine's
 /// own leave budget.
 pub(super) const LEAVE_CONFIRM_SECS: u64 = tuning::NODE_LEAVE.as_secs() + 2;
 
-/// Walk every state file under [`runtime_base`](fn@runtime_base) and resolve it to a live
-/// daemon or clean it up. Covers both per-mesh files
-/// (`<prefix>/<nick>.state.json`) and the CLI-fallback location the skills
-/// use (`sessions/<ppid>.json`) — any first-level `*.json`.
-fn discover() -> Discovery {
-    let mut live = Vec::new();
-    let mut cleaned = 0;
-    for path in state_file_paths() {
-        let Some(entry) = read_session_entry(&path) else {
-            continue;
-        };
-        let (Some(mesh), Some(pid)) = (entry.mesh, entry.pid) else {
-            // A pre-`pid` (old-binary) file: no way to verify or signal its
-            // daemon, so it is neither actionable nor safely removable.
-            continue;
-        };
-        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-gossip") {
-            live.push(Target {
-                owner_pid: entry.owner_pid,
-                pubkey: read_identity(&path).pubkey,
-                path,
-                mesh,
-                name: entry.name,
-                nickname: entry.nickname,
-                topic: entry.topic,
-                pid,
-            });
-        } else {
-            let _ = std::fs::remove_file(&path);
-            cleaned += 1;
-        }
-    }
-    Discovery { live, cleaned }
+/// The daemons of the runtime base that run. The registry holds a lock file for each mesh and nickname
+/// that was used, and a daemon that runs has a record in it whose pid and start name a live process.
+/// No lock is taken and no daemon is asked: the record is the whole proof, so a stopped daemon is
+/// listed, and a state file with no live record is not.
+fn discover(base: &Path) -> Vec<Target> {
+    let Ok(entries) = registry(base) else {
+        return Vec::new();
+    };
+    let locks: Vec<PathBuf> = entries.flatten().collect();
+    locks.iter().filter_map(|lock| target_of(lock)).collect()
 }
 
-/// Whether the session anchored at `anchor` owns this daemon: the daemon is
+/// The target behind a lock file, or `None` when no daemon runs for it: the record is not written yet,
+/// or its process is gone. A record that says unknown is listed, because that daemon can run.
+fn target_of(lock: &Path) -> Option<Target> {
+    let record = read_record(lock).ok().flatten()?;
+    match record.state() {
+        DaemonState::Live | DaemonState::Unknown => Some(target_from(lock, record)),
+        DaemonState::Gone => None,
+    }
+}
+
+/// The target of a record, with the fields that its state file adds. A daemon that is not ready has no
+/// state file yet, and its target keeps the fields of the record alone: nobody waits for the file.
+fn target_from(lock: &Path, record: DaemonRecord) -> Target {
+    let entry = read_session_entry(&record.state_file);
+    let name = entry.as_ref().and_then(|entry| entry.name.clone());
+    let topic = entry.as_ref().and_then(|entry| entry.topic.clone());
+    let owner_pid = entry.and_then(|entry| entry.owner_pid);
+    let pubkey = read_identity(&record.state_file).pubkey;
+    let member = read_member(&record.state_file);
+    let mesh = record.mesh.as_str().to_owned();
+    let nickname = record.nickname.as_str().to_owned();
+    Target {
+        pubkey,
+        member,
+        name,
+        topic,
+        owner_pid,
+        lock: lock.to_path_buf(),
+        mesh,
+        nickname,
+        pid: record.pid,
+        start: record.start,
+        path: record.state_file,
+    }
+}
+
+/// Whether the daemon of `anchor`'s session owns this daemon: the daemon is
 /// its descendant, or the daemon named the anchor, or one of its descendants,
 /// as its owner.
 fn owned_by(target: &Target, anchor: u32) -> bool {
@@ -66,24 +83,10 @@ fn owned_by(target: &Target, anchor: u32) -> bool {
 /// the session's runtime dir without retyping the mesh id (e.g. `a2a fetch`
 /// landing a blob under `<nick>.recv`). `None` if no live session claims it.
 pub(crate) fn mesh_for_nickname(nickname: &str) -> Option<String> {
-    discover()
-        .live
+    discover(&runtime_base())
         .into_iter()
-        .find(|target| target.nickname.as_deref() == Some(nickname))
+        .find(|target| target.nickname == nickname)
         .map(|target| target.mesh)
-}
-
-fn state_file_paths() -> Vec<PathBuf> {
-    let Ok(mesh_dirs) = std::fs::read_dir(runtime_base()) else {
-        return Vec::new();
-    };
-    let entries = mesh_dirs.flatten().map(|dir_entry| dir_entry.path());
-    let dirs = entries.filter(|path| path.is_dir());
-    let files = dirs.flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten());
-    let paths = files.map(|file_entry| file_entry.path());
-    paths
-        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-        .collect()
 }
 
 /// Split the live daemons into the calling session's own vs everyone
@@ -104,17 +107,30 @@ fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec
         .into_iter()
         .filter(|target| target.mesh.starts_with(mesh));
     in_mesh
-        .filter(|target| nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted)))
+        .filter(|target| nickname.is_none_or(|wanted| target.nickname == wanted))
         .collect()
 }
 
-/// The default ownership anchor when `--session-pid` is not given: this
-/// command's own parent. When an agent's Bash tool runs `agent-gossip leave`
-/// directly (not via a wrapping shell script), that parent *is* the shell
-/// whose parent is the agent — so skills pass `$PPID` explicitly instead of
-/// relying on this.
-fn default_session_pid() -> u32 {
-    process::parent_of(std::process::id()).unwrap_or(1)
+/// The pid that names the calling session: `--session-pid`, or when it is not given this command's
+/// own parent. When an agent's Bash tool runs `agent-gossip leave` directly (not via a wrapping shell
+/// script), that parent *is* the shell whose parent is the agent — so skills pass `$PPID` explicitly
+/// instead of relying on this.
+///
+/// Pid 0 and pid 1 name no session: init is an ancestor of every process, so a daemon is "owned" by
+/// it, and a command that selected by it would stop the daemons of every session on the host. They
+/// are refused as `--owner-pid` is, and so is a parent that is unknown or is init (an orphaned shell).
+pub(super) fn session_anchor(session_pid: Option<u32>, parent: Option<u32>) -> Result<u32> {
+    let Some(pid) = session_pid.or(parent) else {
+        anyhow::bail!(
+            "the parent process of this command is unknown, so no session is named: pass --session-pid"
+        );
+    };
+    if pid <= 1 {
+        anyhow::bail!(
+            "session pid {pid} is init or invalid: it is an ancestor of every process, so it would select the daemons of every session. Pass the pid of the agent process"
+        );
+    }
+    Ok(pid)
 }
 
 fn target_json(target: &Target) -> serde_json::Value {
@@ -123,12 +139,11 @@ fn target_json(target: &Target) -> serde_json::Value {
     if let Some(name) = &target.name {
         obj.insert("name".into(), name.clone().into());
     }
-    if let Some(nickname) = &target.nickname {
-        obj.insert("nickname".into(), nickname.clone().into());
-    }
+    obj.insert("nickname".into(), target.nickname.clone().into());
     if let Some(pubkey) = &target.pubkey {
         obj.insert("pubkey".into(), pubkey.clone().into());
     }
+    obj.insert("member".into(), target.member.clone());
     if let Some(topic) = &target.topic {
         obj.insert("topic".into(), topic.clone().into());
     }
@@ -136,86 +151,21 @@ fn target_json(target: &Target) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
-/// What a live daemon answered when asked who it is: its mesh, its nickname,
-/// and — the part no state file can be trusted for — its own pid.
-struct Owner {
-    gossip: String,
-    nickname: String,
-    pid: u32,
-}
-
-async fn live_owners() -> Vec<Owner> {
-    info_response::live_daemons()
-        .await
-        .into_iter()
-        .map(|info| Owner {
-            gossip: info.gossip,
-            nickname: info.nickname,
-            pid: info.pid,
-        })
-        .collect()
-}
-
-/// Does a live daemon actually answer for this target's mesh *at this pid*?
-///
-/// Both halves matter. Matching only the mesh would still signal the wrong
-/// process when a stale file's pid has been reissued; matching only the pid
-/// would signal a live daemon that has nothing to do with the mesh named.
-fn confirm_owner(owners: &[Owner], target: &Target) -> bool {
-    owners.iter().any(|owner| {
-        owner.pid == target.pid
-            && owner.gossip == target.mesh
-            && target
-                .nickname
-                .as_ref()
-                .is_none_or(|wanted| owner.nickname == *wanted)
-    })
-}
-
-/// The live daemon already writing `path`, described for an error message, or
-/// `None` if the path is free.
-///
-/// A state file has exactly one writer: the daemon replaces it wholesale on
-/// every heartbeat. Two daemons pointed at one path therefore take turns
-/// owning it, and everything that resolves identity from that file — the bell,
-/// `ready`, `session`, `leave` — follows whichever wrote last, so which agent
-/// is deaf flips per heartbeat with nothing to indicate it. The skills derive
-/// the path from the agent's parent pid, so two sessions under one parent
-/// collide by construction rather than by accident.
-///
-/// A leftover file from a `SIGKILL`ed daemon is not a collision: nothing
-/// answers for it, so the path is free and the new daemon overwrites it.
-pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
-    let entry = read_session_entry(path)?;
-    let (mesh, pid) = (entry.mesh?, entry.pid?);
-    let nickname = entry.nickname.clone();
-    let target = Target {
-        path: path.to_path_buf(),
-        mesh: mesh.clone(),
-        name: entry.name,
-        nickname: nickname.clone(),
-        pubkey: None,
-        topic: entry.topic,
-        pid,
-        owner_pid: entry.owner_pid,
-    };
-    if !confirm_owner(&live_owners().await, &target) {
-        return None;
-    }
-    let who = nickname.map_or_else(
-        || format!("pid {pid}"),
-        |nick| format!("<{nick}> (pid {pid})"),
-    );
-    Some(format!("{who} on gossip {mesh}"))
-}
-
 pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     let LeaveOpts {
-        gossip: mesh,
+        gossip,
+        gossip_flag,
         nickname,
         session_pid,
     } = options;
-    let Discovery { live, cleaned } = discover();
+    let mesh = gossip.or(gossip_flag);
+    let parent = process::parent_of(std::process::id());
+    // A named pid that names no session is refused, whether or not GOSSIP leaves it unused.
+    if let Some(pid) = session_pid {
+        session_anchor(Some(pid), parent)?;
+    }
+    let base = runtime_base();
+    let live = discover(&base);
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
         (
             select_explicit(
@@ -226,96 +176,101 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
             0,
         )
     } else {
-        owned_sessions(live, session_pid)
+        let anchor = session_anchor(session_pid, parent)?;
+        split_owned(live, |target| owned_by(target, anchor))
     };
 
-    let owners = live_owners().await;
-    let mut left = Vec::new();
-    for target in &matched {
-        // Confirm the pid still belongs to *this* session before signalling.
-        // `discover` accepts any live `agent-gossip` process, which is enough
-        // to list a session but not to kill one: a SIGKILLed daemon leaves its
-        // state file behind, and once the OS reissues that pid to another
-        // daemon, the file points at a stranger. Signalling on the file's word
-        // alone terminates that stranger's gossip.
-        if !confirm_owner(&owners, target) {
-            let _ = std::fs::remove_file(&target.path);
-            left.push((target.clone(), false));
-            continue;
-        }
-        // A failed SIGTERM (EPERM/vanished pid) is reported per-entry, not a
-        // hard error: the other matches must still be signalled.
-        let signalled = process::terminate(target.pid).is_ok();
-        left.push((target.clone(), signalled));
-    }
-    // `confirmed` has to mean the daemon is gone, not that its file is. It
-    // removes that file early in shutdown and then keeps serving — still in the
-    // mesh, still answering its socket — for another half-second, so waiting on
-    // the file alone reported a departure that had not happened. A caller that
-    // took it at its word and started a replacement got two daemons on one
-    // identity, the new one announcing `joined` before the old one broadcast
-    // `left`. Requiring silence on the socket too makes the report agree with
-    // the predicate `run_session` refuses to start against.
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(LEAVE_CONFIRM_SECS);
-    let mut outcomes: Vec<(Target, bool, bool)> = left
+    // A failed SIGTERM (EPERM/vanished pid) is reported per entry, not a hard error: the other matches
+    // must still be signalled.
+    let signalled: Vec<(Target, bool)> = matched
         .into_iter()
-        .map(|(target, signalled)| (target, signalled, false))
-        .collect();
-    // A scan of every socket on the host is not free, so it runs only while a signalled daemon can still serve.
-    while outcomes
-        .iter()
-        .any(|(_, signalled, gone)| *signalled && !*gone)
-    {
-        let still_serving = live_owners().await;
-        let mut waiting = false;
-        for (target, signalled, gone) in &mut outcomes {
-            if !*signalled || *gone {
-                continue;
-            }
-            if target.path.exists() || confirm_owner(&still_serving, target) {
-                waiting = true;
-            } else {
-                *gone = true;
-            }
-        }
-        if !waiting || tokio::time::Instant::now() >= deadline {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-
-    let left_json: Vec<serde_json::Value> = outcomes
-        .iter()
-        .map(|(target, _, gone)| {
-            let mut obj = target_json(target);
-            obj["confirmed"] = (*gone).into();
-            obj
+        .map(|target| {
+            let sent = runs_now(&target) && process::terminate(target.pid).is_ok();
+            (target, sent)
         })
         .collect();
+    // The waits start together and share 1 limit. A thread waits for the lock of each signalled daemon,
+    // and the lock is free when that daemon has ended and removed its files.
+    let deadline = Instant::now() + Duration::from_secs(LEAVE_CONFIRM_SECS);
+    let mut waits: Vec<Option<oneshot::Receiver<bool>>> = Vec::new();
+    for (target, sent) in &signalled {
+        waits.push(sent.then(|| wait_for_stop(target.lock.clone())));
+    }
+    let mut left_json = Vec::new();
+    for ((target, _), wait) in signalled.iter().zip(waits) {
+        let confirmed = match wait {
+            Some(wait) => stopped_before(wait, deadline).await,
+            None => false,
+        };
+        let mut obj = target_json(target);
+        obj["confirmed"] = confirmed.into();
+        left_json.push(obj);
+    }
+
+    leftovers::sweep_dead_members(&base);
+    leftovers::sweep_logs(&base);
+
     let report = serde_json::json!({
         "ok": true,
         "left": left_json,
         "other_sessions": other_sessions,
-        "cleaned": cleaned,
     });
     println!("{report}");
     Ok(())
 }
 
-pub(crate) fn session(options: &SessionOpts) {
+/// Whether the record of the target says, now, that its daemon runs. The pid is signalled on this word
+/// alone, so the record is read again just before the signal, and the pids 0 and 1 are never signalled.
+fn runs_now(target: &Target) -> bool {
+    let record = read_record(&target.lock).ok().flatten();
+    record.is_some_and(|record| {
+        may_signal(
+            (target.pid, target.start),
+            (record.pid, record.start),
+            record.state(),
+        )
+    })
+}
+
+/// The 3 conditions of a signal. The record names the process of the target: the pid and the start that
+/// discovery read, because a new daemon that takes the pid of an ended one has another start. The pid is
+/// not 0 or 1 (a signal to 0 goes to a whole process group, and 1 is init). And the daemon of the record
+/// runs. The 2 pairs are `(pid, start)`.
+fn may_signal(target: (u32, u64), record: (u32, u64), state: DaemonState) -> bool {
+    record == target && record.0 > 1 && state == DaemonState::Live
+}
+
+/// Wait on a plain thread for the lock of a daemon, which is free when the daemon has ended. The thread is
+/// not a task of the runtime: the runtime waits for its blocking tasks when it drops, and a daemon that
+/// never ends would keep the process from exiting, while a plain thread dies with the process.
+fn wait_for_stop(lock: PathBuf) -> oneshot::Receiver<bool> {
+    let (sender, receiver) = oneshot::channel();
+    std::thread::spawn(move || {
+        // The guard drops at the end of this statement, so a start that follows is never refused by it.
+        let stopped = wait_daemon_lock(&lock).is_ok();
+        let _ = sender.send(stopped);
+    });
+    receiver
+}
+
+async fn stopped_before(wait: oneshot::Receiver<bool>, deadline: Instant) -> bool {
+    matches!(tokio::time::timeout_at(deadline, wait).await, Ok(Ok(true)))
+}
+
+pub(crate) fn session(options: &SessionOpts) -> Result<()> {
     let SessionOpts { session_pid } = options;
-    let Discovery { live, cleaned } = discover();
-    let (owned, other_sessions) = owned_sessions(live, *session_pid);
+    let anchor = session_anchor(*session_pid, process::parent_of(std::process::id()))?;
+    let base = runtime_base();
+    let live = discover(&base);
+    leftovers::sweep_dead_members(&base);
+    leftovers::sweep_logs(&base);
+    let (owned, other_sessions) = owned_sessions(live, anchor);
 
     let sessions: Vec<_> = owned
         .iter()
         .map(|target| {
             let mut json = target_json(target);
-            json["bell"] = target
-                .nickname
-                .as_deref()
-                .is_some_and(|nickname| bell::is_armed(&target.mesh, nickname))
-                .into();
+            json["bell"] = bell::is_armed(&target.mesh, &target.nickname).into();
             json
         })
         .collect();
@@ -323,13 +278,12 @@ pub(crate) fn session(options: &SessionOpts) {
         "ok": true,
         "sessions": sessions,
         "other_sessions": other_sessions,
-        "cleaned": cleaned,
     });
     println!("{report}");
+    Ok(())
 }
 
-fn owned_sessions(live: Vec<Target>, session_pid: Option<u32>) -> (Vec<Target>, usize) {
-    let anchor = session_pid.unwrap_or_else(default_session_pid);
+fn owned_sessions(live: Vec<Target>, anchor: u32) -> (Vec<Target>, usize) {
     split_owned(live, |target| owned_by(target, anchor))
 }
 
@@ -341,13 +295,10 @@ fn unarmed(
     is_ready: impl Fn(&Target) -> bool,
     is_armed: impl Fn(&str, &str) -> bool,
 ) -> Vec<&str> {
-    owned
+    let deaf = owned
         .iter()
-        .filter_map(|target| {
-            let nickname = target.nickname.as_deref()?;
-            (!is_armed(&target.mesh, nickname) && is_ready(target)).then_some(nickname)
-        })
-        .collect()
+        .filter(|target| !is_armed(&target.mesh, &target.nickname) && is_ready(target));
+    deaf.map(|target| target.nickname.as_str()).collect()
 }
 
 fn is_ready(target: &Target) -> bool {
@@ -364,19 +315,20 @@ fn is_ready(target: &Target) -> bool {
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
 /// turn, and Claude Code still reads the JSON.
-pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
+pub(crate) async fn bell_check(options: &BellCheckOpts) -> Result<bool> {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
     } = options;
-    let (owned, _) = owned_sessions(discover().live, session_pid);
+    let anchor = session_anchor(session_pid, process::parent_of(std::process::id()))?;
+    let (owned, _) = owned_sessions(discover(&runtime_base()), anchor);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    let deadline = std::time::Instant::now() + Duration::from_millis(grace_ms);
     loop {
         let missing = unarmed(&owned, is_ready, bell::is_armed);
         if missing.is_empty() {
-            return false;
+            return Ok(false);
         }
         if std::time::Instant::now() >= deadline {
             let reason = format!(
@@ -387,40 +339,89 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
                 "{}",
                 serde_json::json!({ "decision": "block", "reason": reason })
             );
-            return true;
+            return Ok(true);
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::util::process;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
 
-    use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
+    use habilis_network::runtime::DaemonState;
+    use habilis_network::util::process;
+    use habilis_network::util::process_start::ProcessStart;
+
+    use super::{
+        Target, discover, may_signal, owned_by, runs_now, select_explicit, session_anchor,
+        split_owned, unarmed,
+    };
+
+    /// A mesh id that the engine accepts, for the records that these tests write.
+    const MESH: &str = "3HUwLw2tgo15FvgqRBckue6iTFfSwuAXidiQuA6vrpoYZpSug11nR6g5rzaEsLjyLnD2wctm";
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
-            path: std::path::PathBuf::from("/nonexistent"),
+            path: PathBuf::from("/nonexistent"),
+            lock: PathBuf::from("/nonexistent.lock"),
             mesh: mesh.to_owned(),
             name: Some("cool-team".to_owned()),
-            nickname: Some(nickname.to_owned()),
+            nickname: nickname.to_owned(),
             pubkey: None,
+            member: serde_json::Value::Null,
             topic: None,
             pid,
+            start: 0,
             owner_pid: None,
         }
     }
 
+    fn scratch(name: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("session-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("locks")).expect("the temp dir is writable");
+        base
+    }
+
+    /// The start that the system gives for this process, as the record of a daemon keeps it.
+    fn own_start() -> u64 {
+        match process::start_of(std::process::id()) {
+            ProcessStart::Live(start) => start,
+            ProcessStart::Gone | ProcessStart::Unknown(_) => {
+                panic!("the test process runs, so its start can be read")
+            }
+        }
+    }
+
+    fn write_record(
+        base: &Path,
+        nickname: &str,
+        process: (u32, u64),
+        state_file: &Path,
+    ) -> PathBuf {
+        let (pid, start) = process;
+        let lock = base
+            .join("locks")
+            .join(format!("3HUwLw2tgo15FvgqRBc-{nickname}.lock"));
+        let line = serde_json::json!({
+            "pid": pid,
+            "start": start,
+            "mesh": MESH,
+            "nickname": nickname,
+            "state_file": state_file,
+        });
+        std::fs::write(&lock, format!("{line}\n")).expect("the temp dir is writable");
+        lock
+    }
+
     #[test]
     fn unarmed_skips_unready_and_armed_sessions() {
-        let mut anonymous = target("m4", "x", 4);
-        anonymous.nickname = None;
         let owned = [
             target("m1", "armed", 1),
             target("m2", "starting", 2),
             target("m3", "deaf", 3),
-            anonymous,
         ];
         let missing = unarmed(
             &owned,
@@ -430,44 +431,182 @@ mod tests {
         assert_eq!(missing, ["deaf"], "only the deaf session is missing a bell");
     }
 
-    /// The scenario that reissued pids create, and the reason `leave` cannot
-    /// act on a state file's word alone.
-    ///
-    /// Daemon A (mesh `aaaa`, pid 10) dies by SIGKILL, so its file survives
-    /// with pid 10 still written in it. The OS hands pid 10 to daemon B, on
-    /// mesh `bbbb`. `discover` accepts the stale entry as live — the pid is
-    /// alive and the process really is called `agent-gossip` — so `leave
-    /// --gossip aaaa` used to SIGTERM daemon B, a gossip it was never asked
-    /// about, and then report `confirmed: false` because A's orphan file was
-    /// never going to disappear.
     #[test]
-    fn a_reissued_pid_is_not_confirmed_as_the_owner() {
-        let owners = vec![Owner {
-            gossip: "bbbb".to_owned(),
-            nickname: "three-four".to_owned(),
-            pid: 10,
-        }];
+    fn a_live_record_is_listed_with_the_fields_of_its_state_file() {
+        let base = scratch("live");
+        let state = base.join("one-two.state.json");
+        std::fs::write(
+            &state,
+            r#"{"gossip":"x","pid":1,"name":"cool-team","nickname":"one-two","owner_pid":5}"#,
+        )
+        .expect("the temp dir is writable");
+        write_record(&base, "one-two", (std::process::id(), own_start()), &state);
 
-        // The stale entry: right pid, wrong gossip. Nobody answers for `aaaa`.
-        assert!(
-            !confirm_owner(&owners, &target("aaaa", "one-two", 10)),
-            "a live daemon on another gossip must not stand in for this one"
+        let listed = discover(&base);
+
+        assert_eq!(listed.len(), 1, "one daemon runs: {listed:?}");
+        assert_eq!(listed[0].pid, std::process::id(), "the pid is the record's");
+        assert_eq!(listed[0].mesh, MESH, "the mesh is the record's");
+        assert_eq!(
+            listed[0].name.as_deref(),
+            Some("cool-team"),
+            "the state file adds the name"
         );
-        // The daemon that does answer for its own gossip is confirmed.
-        assert!(
-            confirm_owner(&owners, &target("bbbb", "three-four", 10)),
-            "a session owned by the caller is confirmed"
+        assert_eq!(
+            listed[0].owner_pid,
+            Some(5),
+            "and the owner of a detached daemon"
         );
-        // Right gossip, but the pid moved on: also not ours to signal.
-        assert!(
-            !confirm_owner(&owners, &target("bbbb", "three-four", 11)),
-            "a matching gossip at a different pid is a different process"
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_live_record_with_no_state_file_is_listed_with_the_fields_of_the_record() {
+        let base = scratch("no-state");
+        let state = base.join("not-there-yet.json");
+        write_record(&base, "one-two", (std::process::id(), own_start()), &state);
+
+        let listed = discover(&base);
+
+        assert_eq!(
+            listed.len(),
+            1,
+            "a daemon that is not ready yet is listed: {listed:?}"
         );
-        // A nickname that disagrees rules it out even with mesh and pid equal,
-        // which is what separates two daemons sharing one state-file path.
+        assert_eq!(
+            listed[0].nickname, "one-two",
+            "the record names the nickname"
+        );
+        assert!(listed[0].name.is_none(), "nobody waits for the state file");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_gone_process_a_reused_pid_and_a_cut_record_list_nothing() {
+        let base = scratch("gone");
+        let state = base.join("x.json");
+        let mut finished = Command::new("sleep")
+            .arg("0")
+            .spawn()
+            .expect("sleep is on PATH on every unix host");
+        let dead_pid = finished.id();
+        finished.wait().expect("a finished child can be waited on");
+        write_record(&base, "dead-one", (dead_pid, 1), &state);
+        // The pid of a live process with another start: a later process that got the pid of the daemon.
+        write_record(
+            &base,
+            "reused-pid",
+            (std::process::id(), own_start() + 1),
+            &state,
+        );
+        let locks = base.join("locks");
+        std::fs::write(
+            locks.join("3HUwLw2tgo15FvgqRBc-cut-one.lock"),
+            r#"{"pid":1"#,
+        )
+        .expect("the temp dir is writable");
+        std::fs::write(locks.join("3HUwLw2tgo15FvgqRBc-empty-one.lock"), "")
+            .expect("the temp dir is writable");
+
+        let listed = discover(&base);
+
         assert!(
-            !confirm_owner(&owners, &target("bbbb", "someone-else", 10)),
-            "a session of another owner is not confirmed"
+            listed.is_empty(),
+            "no daemon runs behind these files: {listed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_folder_with_no_locks_lists_nothing() {
+        let base = std::env::temp_dir().join(format!("session-nolocks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("the temp dir is writable");
+
+        assert!(
+            discover(&base).is_empty(),
+            "a base that has no locks folder has no daemon"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_signal_goes_only_to_the_daemon_that_the_record_names_now() {
+        let base = scratch("runs");
+        let state = base.join("x.json");
+        let own = std::process::id();
+        let lock = write_record(&base, "one-two", (own, own_start()), &state);
+        let mut live = target("m", "one-two", own);
+        live.lock = lock;
+        live.start = own_start();
+        assert!(
+            runs_now(&live),
+            "the record names a live process with its start"
+        );
+
+        let mut other_pid = live.clone();
+        other_pid.pid = own + 1;
+        assert!(
+            !runs_now(&other_pid),
+            "a target whose pid is not the record's is not signalled"
+        );
+
+        write_record(&base, "one-two", (own, own_start() + 1), &state);
+        assert!(
+            !runs_now(&live),
+            "a record read again that names another start says gone"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A daemon that ended and a new one that took its pid are 2 daemons. The record of the new one
+    /// names a live process, so its own check passes: only the start that discovery read tells them apart.
+    #[test]
+    fn a_new_daemon_with_the_pid_of_the_discovered_one_is_not_signalled() {
+        let base = scratch("reused-pid");
+        let state = base.join("x.json");
+        let own = std::process::id();
+        let lock = write_record(&base, "one-two", (own, own_start()), &state);
+        let mut discovered = target("m", "one-two", own);
+        discovered.lock = lock;
+        discovered.start = own_start() + 1;
+
+        assert!(
+            !runs_now(&discovered),
+            "the record names a live process with the pid of the target and another start"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_signal_needs_the_same_process_a_pid_above_1_and_a_live_daemon() {
+        assert!(
+            may_signal((10, 5), (10, 5), DaemonState::Live),
+            "the daemon that runs"
+        );
+        assert!(
+            !may_signal((10, 5), (11, 5), DaemonState::Live),
+            "a record of another pid"
+        );
+        assert!(
+            !may_signal((10, 5), (10, 6), DaemonState::Live),
+            "a record of a new process that took the pid"
+        );
+        assert!(
+            !may_signal((10, 5), (10, 5), DaemonState::Gone),
+            "a daemon that is gone"
+        );
+        assert!(
+            !may_signal((10, 5), (10, 5), DaemonState::Unknown),
+            "a daemon that may run is not signalled"
+        );
+        assert!(
+            !may_signal((1, 5), (1, 5), DaemonState::Live),
+            "init is never signalled"
+        );
+        assert!(
+            !may_signal((0, 5), (0, 5), DaemonState::Live),
+            "pid 0 would signal a process group"
         );
     }
 
@@ -531,6 +670,43 @@ mod tests {
         assert!(
             select_explicit(live, "none", None).is_empty(),
             "an unknown mesh selects nothing"
+        );
+    }
+
+    #[test]
+    fn a_session_pid_of_init_or_below_names_no_session() {
+        for pid in [0, 1] {
+            let error = session_anchor(Some(pid), Some(500))
+                .expect_err("pid 0 and pid 1 are ancestors of every process")
+                .to_string();
+            assert!(
+                error.contains("init or invalid") && error.contains(&pid.to_string()),
+                "the error says which pid and why: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_anchor_that_is_init_or_unknown_names_no_session() {
+        for parent in [None, Some(0), Some(1)] {
+            assert!(
+                session_anchor(None, parent).is_err(),
+                "a parent of {parent:?} would select the daemons of every session"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_session_pid_is_the_anchor_and_the_flag_wins_over_the_parent() {
+        assert_eq!(
+            session_anchor(None, Some(500)).expect("a normal parent names the session"),
+            500,
+            "without the flag the parent names the session"
+        );
+        assert_eq!(
+            session_anchor(Some(700), Some(500)).expect("a normal pid names the session"),
+            700,
+            "the flag names the session before the parent does"
         );
     }
 }

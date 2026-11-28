@@ -17,7 +17,8 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Cap on direct connections, gossip neighbors included. If the transport
+    /// Cap on direct connections, gossip neighbors included. The lowest value
+    /// is 8: a lower value is an error at start. If the transport
     /// policy has multihop and a route is known, a peer past the cap is reached
     /// through a connected peer. Pinned and extra connections fit up to twice
     /// this value.
@@ -41,7 +42,11 @@ pub(crate) struct SharedServerOpts {
     /// on clean shutdown — for external tools (e.g. a shell statusline) to
     /// render live count + liveness without IPC. Defaults to
     /// `<runtime-base>/<mesh-prefix>/<nick>.state.json` (beside the socket +
-    /// log); pass this to write elsewhere instead.
+    /// log); pass this to write elsewhere instead. `leave` and `session` find
+    /// the daemon through its record in the registry, which names this file.
+    /// If the daemon dies without cleaning up (SIGKILL, power loss), the file
+    /// stays: no command removes it, and the next start of the same mesh and
+    /// nickname writes it again.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 

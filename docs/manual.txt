@@ -54,7 +54,7 @@ SYNOPSIS
                   [--lookup LOOKUPS] [--relay-url URLS]
        agent-gossip a2a fetch TICKET [--nickname NAME] [--output PATH] [--password PW]
 
-       agent-gossip leave [GOSSIP] [--nickname NAME] [--session-pid PID]
+       agent-gossip leave [GOSSIP | --gossip GOSSIP] [--nickname NAME] [--session-pid PID]
 
 
        agent-gossip session [--session-pid PID]
@@ -159,10 +159,34 @@ DESCRIPTION
 
        IDENTITY
               A nickname is a display label, not an identity, and is not
-              unique. The cryptographic identity is an Ed25519 public key
-              (pubkey) minted per process; every message is signed with it
-              and verified on receipt. Make trust and disambiguation
-              decisions on pubkey, not the nickname.
+              unique. A pubkey is an Ed25519 public key that is minted for
+              each run of a daemon; every message is signed with it and
+              verified on receipt. A restart gives a new pubkey.
+
+              The member key is the stable identity of a node. A node keeps
+              its member key in files beside its state file. Peers, ready,
+              session and the state file show it as "member". The value is
+              null where no proof of the key was verified for that session.
+              The member key of a mesh is derived for that mesh, so it does
+              not link the node across meshes.
+
+              A node keeps its member key across a restart in these cases
+              only: the state file is a path that you chose with
+              --state-file, or the run has an owner (--owner-pid).
+              A clean leave of a run with the default state path and no
+              owner removes the key.
+
+              member proves which key a session holds. It does not prove
+              that the node is the one you met before. To know that, compare
+              member with the value that you saw then. A new value under a
+              known nickname is another node, or a node that lost its key.
+              Do not trust a nickname, and do not trust a pubkey of one run.
+
+              A nickname is protected only while its holder is present. When
+              the holder is gone, another member can take the nickname. Any
+              process of the same OS user can read the key files until the
+              next reboot of the host, and a process that copies them can act
+              as this member.
 
 COMMANDS
        create [OPTIONS]
@@ -186,6 +210,8 @@ COMMANDS
                      value is an error. Omit for all three lookups, a
                      cross-machine gossip. Name loopback for a gossip that
                      works on the local machine only. Baked into the id.
+                     Only the beacon publishes to the DHT; see "NETWORKING"
+                     for what the record holds.
 
               --relay-url URLS
                      Ordered, comma-separated relay ladder, e.g.
@@ -243,10 +269,12 @@ COMMANDS
                      daemon is the sole writer; a fresh, complete document
                      each time), refreshed on every membership change and a
                      ~10s heartbeat, and remove it on clean shutdown. `pid`
-                     is the daemon's own process id — what `leave` / `session`
-                     use to map the file back to a running daemon; they
-                     garbage-collect a stale file whose pid is gone (SIGKILL,
-                     power loss). Gate on the `ready` flag with `agent-gossip
+                     is the daemon's own process id. `leave` and `session`
+                     read the registry of the daemons, not this file, to find
+                     a running daemon. A stale file whose pid is gone (SIGKILL,
+                     power loss) stays: no command removes it, and the next
+                     start of the same mesh and nickname writes it again (see
+                     `leave`). Gate on the `ready` flag with `agent-gossip
                      ready` (see "READINESS AND POLLING").
 
               --owner-pid PID
@@ -262,6 +290,7 @@ COMMANDS
 
               --max-connections N
                      Cap on direct connections, gossip neighbors included.
+                     The lowest value is 8; a lower value is an error at start.
                      When the transport names multihop and a route exists, a
                      send to a peer beyond the cap goes through a connected
                      peer and opens no new direct connection. Without
@@ -370,6 +399,11 @@ COMMANDS
               gossip + nickname. Prints the new message id.
 
               This is how you talk to the whole gossip.
+
+              A broadcast reaches the members that are in the gossip while
+              it is sent. It is not backfilled: a node that is away (frozen
+              or offline) does not get the broadcasts that it missed when it
+              comes back. Only the state and meta slices are backfilled.
 
        a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
               Send a chat message to ONE peer — a msg. Only you and --to see
@@ -713,6 +747,13 @@ COMMANDS
               pubkey. A member admits one key for a nickname, so two different
               members cannot share a nickname at one observer.
 
+              member is the member key of the peer in hex, or null when no
+              proof of it was verified for this run and this nickname. The
+              pubkey of a peer changes at each restart. member stays the
+              same in the cases that IDENTITY lists.
+              The reply also carries own_member, the member key of the node
+              that answers, or null where no file keeps one.
+
               peers are sorted most-recently-seen first. quiet is true for a
               peer the heartbeat sweep evicted after it went silent past the
               alive timeout (the peer_timeout event); it may still come back,
@@ -781,14 +822,61 @@ COMMANDS
               Short-lived; requires a running create/join daemon. Exits
               non-zero on {"ok":false}.
 
-       leave [GOSSIP] [--nickname NAME] [--session-pid PID]
+       leave [GOSSIP | --gossip GOSSIP] [--nickname NAME] [--session-pid PID]
               Leave a gossip: stop the local create/join/topic daemon.
-              Discovery is via the daemons' state files under
-              /tmp/agent-gossip; each match gets a SIGTERM, on which
-              the daemon broadcasts `left` to its peers and removes its
-              state file (the removal is what `confirmed` reports). State
-              files whose recorded pid is gone (SIGKILL, power loss) are
-              deleted along the way and counted in `cleaned`.
+              Discovery reads the registry of the daemons: each mesh and
+              nickname that ran has a lock file in /tmp/agent-gossip/locks,
+              and a running daemon keeps its record there: its pid, its
+              start time, its mesh, its nickname and the path of its state
+              file. A daemon runs when a process has that pid and that start
+              time. No daemon is asked and no lock is taken, so a stopped
+              daemon (SIGSTOP) is still listed. Each daemon that runs gets a
+              SIGTERM, on which it broadcasts `left` to its peers, removes
+              its state file, its socket and its chunk folder, and lets go
+              of its lock. leave then waits for that lock, and `confirmed`
+              is true when it got it: the daemon has ended. A daemon that
+              ended on that SIGTERM has removed its files. A daemon that
+              was killed (SIGKILL) while leave waited also frees the lock,
+              and its files stay until a later leave or session removes
+              them, as the next paragraph says.
+
+              leave and session remove one more thing: a `<nick>.tracing.log`
+              that has no socket beside it and is 7 days old, and the
+              folder that this removal empties. A daemon that dies by
+              SIGKILL (or power loss) leaves its socket, its chunk folder
+              and its state file. leave and session remove the socket and
+              the chunk folder of each such member of any gossip in the
+              runtime folder: the record in its lock file names a process
+              that is gone (or a process with another start time, when the
+              pid was reused). They try the lock of the member without
+              waiting, and they remove nothing when someone holds it, so a
+              daemon that starts at that moment keeps its files. The state
+              file stays: the next start of the same mesh and nickname
+              writes it again, and if it starts with another --state-file,
+              the old state file stays until the host restarts. The lock
+              file of the registry stays too.
+
+              A daemon stops within about 0.5 s. When a peer does not
+              acknowledge the close (the peer is stopped, gone, or on a slow
+              link), the stop waits for the QUIC close to drain: up to 6 s.
+              leave waits up to 8 s for a stop before it reports
+              `confirmed` false.
+
+              A stopped daemon removes its state file, but the two empty
+              lock files `<state>.key.lock` and `<state>.run.lock` stay
+              beside it. They stay on purpose. A daemon holds each one with
+              flock, and deleting a lock file that another process can open
+              is a race: one process opens it, the file is deleted, a third
+              process creates and locks a new file, and two processes hold
+              the lock. The next daemon on that state path reuses them.
+
+              A run that keeps its member key also leaves the key file
+              `<state>.key` and the run counter `<state>.run` beside the
+              state file. A run keeps its member key when the state file is
+              a path that you chose with --state-file, or when the run has
+              an owner (--owner-pid). The next start on that state path, in
+              the same mesh, is the same member, with a new pubkey. A run
+              with the default state path and no owner removes both files.
 
               With no GOSSIP, only daemons OWNED BY THE CALLING SESSION are
               stopped: a daemon is session-owned when --session-pid (default:
@@ -799,23 +887,40 @@ COMMANDS
               `other_sessions`, never touched. Agent skills pass their
               shell's $PPID — the agent process — so a session can leave its
               gossip even after the agent's conversation context was cleared.
+              A --session-pid of 0 or 1 is refused with an error and a
+              non-zero exit, and nothing is stopped: init is an ancestor of
+              every process, so it would select the daemons of every
+              session. So is a default that falls to init, when the parent
+              process of the command is unknown or is init. session and
+              bell-check refuse the same pids. The guard closes init only:
+              a real pid that is an ancestor of more than one session, such
+              as a login shell or a terminal server, still selects all of
+              them, because a session owns a daemon when its pid is an
+              ancestor of it.
 
-              With an explicit GOSSIP (the full id or a unique prefix),
-              that gossip's local member(s) are stopped regardless of owner;
-              narrow to one member with --nickname when several run on this
-              machine. Daemons started with a --state-file outside
-              /tmp/agent-gossip (and in-process sessions, which write
-              none) are not discoverable. Two daemons on one state path
-              cannot run: the second fails at start with "another daemon
-              holds the member key {path}: two live daemons cannot be one
-              member; use another nickname or another --state-file".
+              With an explicit GOSSIP (the full id or a unique prefix; the
+              flag form --gossip GOSSIP is the same, and naming it twice is
+              an error), that gossip's local member(s) are stopped regardless
+              of owner; narrow to one member with --nickname when several run
+              on this machine. A daemon started with a --state-file outside
+              /tmp/agent-gossip is found like any other: its record names
+              the file. In-process sessions take no lock and write no state
+              file, so they are not discoverable. One daemon runs for each
+              mesh and nickname on a host. A second start of the same mesh
+              and nickname fails at once with "another daemon already runs
+              as {nick} on mesh {id} in this runtime folder (pid {pid}): use
+              another nickname", and the first daemon is not touched. Two
+              daemons on one state path cannot run either: the second fails
+              at start with "another daemon still runs on this state file and
+              holds the member key {path} (pid {pid}): wait for it to exit and
+              retry, or use another nickname or --state-file".
               Exits 0 whether or not anything matched; prints:
 
                 {"ok":true,
                  "left":[{"gossip":"<hash>","name":"cool-team",
                           "nickname":"swift-cedar","pid":34299,
                           "confirmed":true}],
-                 "other_sessions":0,"cleaned":0}
+                 "other_sessions":0}
 
        session [--session-pid PID]
               Report the gossip the calling session is joined to — the
@@ -826,14 +931,26 @@ COMMANDS
               re-learns the gossip id, name, nickname, and pubkey of a session it is
               still joined to, instead of concluding it is not in a gossip.
               "pubkey" is the author key of the daemon in hex, the slot of
-              its meta entry. "bell" is true while a `poll --long` bell for that session
+              its meta entry. "member" is the stable member key of the daemon
+              in hex, or null. "bell" is true while a `poll --long` bell for that session
               is running. prints:
 
                 {"ok":true,
                  "sessions":[{"gossip":"<hash>","name":"cool-team",
                               "nickname":"swift-cedar","pubkey":"<hex>",
                               "pid":34299,"bell":true}],
-                 "other_sessions":0,"cleaned":0}
+                 "other_sessions":0}
+
+       session-file --session-pid PID
+              Print the state file path for the agent session with process
+              PID, and nothing else. A session file is named for 1 process
+              instance: the name is the pid and the start time of that
+              process, so a later process that gets the same pid gets
+              another file. The skills call it for each command that takes
+              --state-file for the session. It prints 1 line and makes no
+              file. For pid 0, pid 1 and a pid with no live process it exits
+              non-zero and prints nothing on stdout. The reason is the first
+              line on stderr, as for each command that fails.
 
        state merge --gossip GOSSIP --nickname NAME --merge MERGE
        state get   --gossip GOSSIP --nickname NAME
@@ -964,7 +1081,8 @@ COMMANDS
               contract, ordering, and the meta event on the
               stream). Use it for gossip metadata rather than the task itself.
 
-              meta get answers {"ok":true,"document":{...},"absent":[...]}.
+              meta get answers {"ok":true,"document":{...},"absent":[...],
+              "members":{...}}.
               document has one entry for each member, keyed by the author key
               of the member in lowercase hex. absent lists the keys with no
               active member behind them. A member that leaves gracefully
@@ -974,6 +1092,12 @@ COMMANDS
               reports whatever status it last set, so absent is the signal
               that an entry is history rather than a peer you can give work
               to. Your own entry is never listed.
+
+              members maps each slot of document to the member key behind
+              it in hex, or to null when no proof of the key was verified.
+              It is in the reply and not in document, so a get, an edit and
+              a merge do not write a derived value back. It comes from the
+              roster only.
 
               By convention agents self-report what they run on in their own
               entry, at the top level of it, e.g.
@@ -998,9 +1122,11 @@ COMMANDS
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
-              exit 0; non-zero on timeout. Pass the SAME --state-file path
-              you gave create/join. On success it prints {gossip,name,nickname}
-              — plus `topic` for a topic gossip, and `drift` when an installed
+              exit 0; non-zero on timeout. A start that failed (a cap under
+              8, a wrong password) ends the wait at once, with the error of
+              the daemon, if this ready began within 2 s of the failure. A
+              ready that began later waits its limit. Pass the SAME --state-file path you gave create/join. On success it prints {gossip,name,nickname,
+              pubkey,member} — plus `topic` for a topic gossip, and `drift` when an installed
               skill set has fallen behind this binary — so the gate doubles as
               the identity read. See "READINESS AND POLLING" for the full
               contract.
@@ -1115,6 +1241,11 @@ NETWORKING
        Each lookup is sufficient on its own; combining them only adds
        reliability. Name mdns,dht,relay unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
+
+       What the DHT publishes. Only the beacon publishes to the DHT. With
+       relay in --lookup, the record holds the relay URL and no IP address.
+       With dht and no relay, the beacon puts its IP addresses
+       in the public DHT, so everyone who reads the DHT sees them.
 
        discover, a2a expose, and a2a discover take the same --lookup and
        --relay-url flags, and the all-on preset is the no-flag default for

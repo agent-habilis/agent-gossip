@@ -1003,7 +1003,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1300,7 +1300,7 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1339,7 +1339,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-chunks"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1353,7 +1353,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "bs58",
  "chacha20poly1305",
@@ -1368,7 +1368,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1386,7 +1386,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-multihop-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1406,7 +1406,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "iroh",
 ]
@@ -1414,7 +1414,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1441,7 +1441,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -1453,7 +1453,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1478,7 +1478,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=3b8dda9df01ad0b8794eb6499eb5bc859f154e04#3b8dda9df01ad0b8794eb6499eb5bc859f154e04"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=ad4e3715366e739f6ca7ac625c2fa319e9411fdb#ad4e3715366e739f6ca7ac625c2fa319e9411fdb"
 dependencies = [
  "tokio",
  "tracing",
@@ -2005,7 +2005,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.103.0"
-source = "git+https://github.com/agent-habilis/iroh-gossip?rev=ad79518f2dfd6cca7c55ad2683487e8577ddca66#ad79518f2dfd6cca7c55ad2683487e8577ddca66"
+source = "git+https://github.com/agent-habilis/iroh-gossip?rev=6f1eee4854d06a5fb64706dbf2895a712bb4a154#6f1eee4854d06a5fb64706dbf2895a712bb4a154"
 dependencies = [
  "blake3",
  "bytes",
@@ -2613,7 +2613,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3371,7 +3371,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3490,7 +3490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4500,7 +4500,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

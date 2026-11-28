@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use habilis_network::embed::{
     AppClass, EventLoopState, HandlerCtx, InboundApp, NodeApp, NodeDriver,
 };
-use habilis_network::ops::{Delivered, deliver};
+use habilis_network::ops::{Delivered, SendVerdict, deliver};
 use habilis_network::protocol::{
     AppFrameParams, AppTag, AuthorKey, Message, MessageBody, MessageId, MessageKind, Nickname,
     sole_addressee,
@@ -292,12 +292,14 @@ impl NodeDriver for GossipDriver {
                 // fails is told to the inbox when it fails.
                 let inbox = self.inbox.clone();
                 n0_future::task::spawn(async move {
-                    let outcome = pending
-                        .await
-                        .map_err(anyhow::Error::from)
-                        .and_then(|result| result);
-                    if let Err(error) = outcome {
-                        inbox.push_send_failure(&error);
+                    // A task that ended with no verdict leaves it unknown whether the peer has the frame.
+                    let verdict = pending.await.unwrap_or_else(|_| {
+                        SendVerdict::Unconfirmed(
+                            "the send task ended before it gave its outcome".to_owned(),
+                        )
+                    });
+                    if verdict != SendVerdict::Delivered {
+                        inbox.push("system".to_owned(), verdict.to_string(), "system");
                     }
                 });
             }

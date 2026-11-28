@@ -12,7 +12,6 @@ pub(super) struct InfoResponse {
     pub(super) name: String,
     pub(super) nickname: String,
     pub(super) peer_count: usize,
-    pub(super) pid: u32,
 }
 
 /// A live daemon answers `Info` in milliseconds. A daemon whose event loop spins still completes the connection

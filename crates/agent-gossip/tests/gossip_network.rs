@@ -9,6 +9,7 @@
 //! runs at near-release connect speeds.
 use std::collections::HashSet;
 use std::fs::{self, File};
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -22,6 +23,7 @@ use common::{
     tmp_log, trace_log, wait_until,
 };
 use habilis_network::util::process;
+use habilis_network::util::process_start::ProcessStart;
 
 /// Heal cadence for the reliability tests, injected through the hidden
 /// `--heal-interval-secs` flag. Floored at 3s: below that the
@@ -365,6 +367,153 @@ async fn test_bidirectional_messaging() {
     assert!(
         creator.wait_body("second message", MSG_TIMEOUT).await,
         "creator never received the joiner's message"
+    );
+}
+
+/// A folder that the test made in the temp dir, removed when the test ends, also on a panic.
+struct RemoveDirOnDrop(PathBuf);
+
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A cap under the minimum of the engine ends the start with the engine text and a non-zero exit.
+/// The process is the daemon in the foreground, so a process that ended leaves no daemon.
+#[test]
+fn a_cap_under_the_minimum_is_refused_at_start_with_the_engine_text() {
+    for cap in ["0", "4", "7"] {
+        let mut command = common::test_cmd();
+        command.args([
+            "create",
+            "--max-connections",
+            cap,
+            "--nickname",
+            "cap-refused",
+        ]);
+        let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let text = format!("max connections is {cap}: the lowest value is 8 (the default is 16)");
+        assert!(
+            !out.status.success() && stderr.contains(&text),
+            "--max-connections {cap} must end the start with `{text}`, and it gave {out:?}"
+        );
+    }
+}
+
+/// The help of `--max-connections` says what the engine enforces: the lowest value and the default.
+#[test]
+fn the_help_of_max_connections_names_the_lowest_value_and_the_default() {
+    let mut command = common::test_cmd();
+    command.args(["create", "--help"]);
+    let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        help.contains("The lowest value is 8") && help.contains("[default: 16]"),
+        "the help of --max-connections names the lowest value 8 and the default 16: {help}"
+    );
+}
+
+/// A detached start that the engine refuses leaves `ready` with the reason at once: the launcher
+/// returns, the daemon has ended with its error, and `ready --state-file` says so without its wait.
+#[test]
+fn ready_reports_a_refused_detached_start_at_once() {
+    let dir = std::env::temp_dir().join(format!("ready-refused-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("the temp dir is writable");
+    let _folder = RemoveDirOnDrop(dir.clone());
+    let state_file = dir.join("session.json");
+    let owner = process::parent_of(std::process::id()).expect("the test process has a parent");
+    let mut launch = common::test_cmd();
+    launch.args([
+        "create",
+        "--max-connections",
+        "4",
+        "--nickname",
+        "ready-refused",
+        "--owner-pid",
+        &owner.to_string(),
+        "--state-file",
+    ]);
+    launch.arg(&state_file);
+    let launched: std::process::Output = output_within(&mut launch, QUERY_LIMIT);
+    assert!(
+        launched.status.success(),
+        "the detached launcher returns 0 before the daemon is checked: {launched:?}"
+    );
+
+    let started = Instant::now();
+    let mut ready = common::test_cmd();
+    ready.args(["ready", "--timeout-secs", "20", "--state-file"]);
+    ready.arg(&state_file);
+    let out: std::process::Output = output_within(&mut ready, Duration::from_secs(30));
+    let waited = started.elapsed();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let text = "max connections is 4: the lowest value is 8 (the default is 16)";
+    assert!(
+        !out.status.success() && stderr.contains(text) && waited < Duration::from_secs(10),
+        "ready must fail within 10 s with `{text}`, and it gave {out:?} after {waited:?}"
+    );
+}
+
+/// A retry on the state file of a start that failed is not judged by the old error. The skills
+/// start the daemon and `ready` together on one path, so `ready` can look before the new daemon has
+/// written anything, and the file still holds the error of the start before.
+#[test]
+fn ready_is_not_misled_by_the_error_of_an_earlier_start_on_the_same_path() {
+    let dir = std::env::temp_dir().join(format!("ready-retry-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("the temp dir is writable");
+    let _folder = RemoveDirOnDrop(dir.clone());
+    let state_file = dir.join("session.json");
+    let mut refused = common::test_cmd();
+    refused.args([
+        "create",
+        "--max-connections",
+        "4",
+        "--nickname",
+        "retry-a",
+        "--state-file",
+    ]);
+    refused.arg(&state_file);
+    let first: std::process::Output = output_within(&mut refused, QUERY_LIMIT);
+    assert!(
+        !first.status.success(),
+        "the first start must be refused by the cap: {first:?}"
+    );
+    // Longer than the grace that `ready` allows before its own start.
+    std::thread::sleep(Duration::from_secs(4));
+
+    let mut ready = common::test_cmd();
+    ready.args(["ready", "--timeout-secs", "60", "--state-file"]);
+    ready
+        .arg(&state_file)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let waiting = ready.spawn().expect("ready starts");
+    std::thread::sleep(Duration::from_millis(300));
+    let log = tmp_log("retry-b");
+    let file = File::create(&log).expect("the test temp dir is writable");
+    let mut start = common::test_cmd();
+    start.args([
+        "create",
+        "--name",
+        "retry-b",
+        "--lookup",
+        "loopback",
+        "--state-file",
+    ]);
+    start.arg(&state_file);
+    let log_out = Stdio::from(file.try_clone().expect("the log file handle can be cloned"));
+    start.stdout(log_out).stderr(Stdio::from(file));
+    let child: Child = start.spawn().expect("the second start spawns");
+    let _daemon = KillOnDrop::new(child);
+    let out = waiting.wait_with_output().expect("ready ends");
+    assert!(
+        out.status.success(),
+        "ready must wait for the daemon of the retry and end 0, and it gave {out:?}\ndaemon log:\n{}",
+        fs::read_to_string(&log).unwrap_or_default()
     );
 }
 
@@ -886,9 +1035,10 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         use std::io::Read;
         let _ = pipe.read_to_string(&mut stderr);
     }
+    // The refusal is the engine's: the key lock of the state file is held. The CLI has no check of its own.
     assert!(
-        stderr.contains("already in use"),
-        "the refusal should say the file is taken, got: {stderr}"
+        stderr.contains("another daemon still runs on this state file"),
+        "the refusal should say that a daemon runs on the file, got: {stderr}"
     );
 
     // The first daemon still owns the file and is unharmed.
@@ -1624,11 +1774,12 @@ fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
 }
 
 /// `--max-connections` reaches the engine, and the `topology` reply reports the
-/// cap, its use, and a link to the joined peer.
+/// cap, its use, and a link to the joined peer. The cap is 8, the lowest the engine accepts and
+/// not the default 16, so the reply tells the flag from the default.
 #[test]
 fn test_topology_reports_the_cap_and_the_links() {
     let _serial = serial_guard();
-    let (creator, mesh) = Node::create_args("topology-cap", &["--max-connections", "5"], &[]);
+    let (creator, mesh) = Node::create_args("topology-cap", &["--max-connections", "8"], &[]);
     assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     let joiner = Node::join(&mesh, "cap-joiner");
     assert!(
@@ -1648,11 +1799,11 @@ fn test_topology_reports_the_cap_and_the_links() {
         reply = topology_reply(&mesh, &creator.nickname, "creator");
     }
     assert_eq!(
-        reply["cap"]["max_connections"], 5,
+        reply["cap"]["max_connections"], 8,
         "the flag reaches the engine\n{reply}"
     );
     assert_eq!(
-        reply["cap"]["connected_cap"], 10,
+        reply["cap"]["connected_cap"], 16,
         "the total cap is twice the flag\n{reply}"
     );
     let links = reply["links"]
@@ -1745,17 +1896,17 @@ fn reachable_endpoints(reply: &serde_json::Value) -> HashSet<String> {
     seen
 }
 
-/// The headline of the multihop transport: at `--max-connections 2` a node of
-/// five cannot hold a direct connection to each of the four others, and every
-/// directed message still arrives. A peer past the cap is pinned: the
-/// `topology` reply names its first hop.
+/// The headline of the multihop transport: at `--max-connections 8`, the lowest cap the engine
+/// accepts, a node of ten cannot hold a direct connection to each of the nine others, and every
+/// directed message still arrives. A peer past the cap is pinned: the `topology` reply names its
+/// first hop.
 #[test]
-fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers() {
-    const CAP2: [(&str, &str); 1] = [("--max-connections", "2")];
+fn test_directed_messages_cross_a_cap_of_eight_and_the_topology_pins_the_far_peers() {
+    const CAP8: [(&str, &str); 1] = [("--max-connections", "8")];
     let _serial = serial_guard();
-    let (creator, mesh) = Node::create_flags("cap-two", &CAP2);
-    let joiners: Vec<Node> = (0..4)
-        .map(|index| Node::join_flags(&mesh, &format!("cp-{index}"), &CAP2))
+    let (creator, mesh) = Node::create_flags("cap-eight", &CAP8);
+    let joiners: Vec<Node> = (0..9)
+        .map(|index| Node::join_flags(&mesh, &format!("cp-{index}"), &CAP8))
         .collect();
     assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     for joiner in &joiners {
@@ -1838,7 +1989,7 @@ fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers
         .collect();
     assert!(
         pinned_seen >= 1,
-        "no node reports a pinned link with a first hop at a cap of 2\n{}",
+        "no node reports a pinned link with a first hop at a cap of 8\n{}",
         state_of_each_node.join("\n")
     );
 }
@@ -2856,20 +3007,20 @@ fn test_lone_creator_never_trips_starvation() {
     );
 }
 
-/// The 2026-05-31 roster-collapse, mechanized: a 5-node mesh at
-/// `--max-connections 2` (the partial-mesh churn regime) put through
-/// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
+/// The 2026-05-31 roster-collapse, mechanized: a 10-node mesh at
+/// `--max-connections 8` (the lowest cap the engine accepts: a node holds 8 of the 9 others, so
+/// the mesh is partial) put through SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
 /// loss. Post-fix (link truth + starvation watchdog), every node must
 /// deliver again once the storm passes.
 #[test]
 fn test_flap_storm_all_rosters_recover() {
-    const CAP2_STARVE: [(&str, &str); 5] = [
+    const CAP8_STARVE: [(&str, &str); 5] = [
         ("--alive-timeout-secs", "3"),
         ("--sweep-interval-secs", "1"),
         ("--heal-interval-secs", "3"),
         ("--starvation-threshold-secs", "6"),
-        ("--max-connections", "2"),
+        ("--max-connections", "8"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2882,9 +3033,9 @@ fn test_flap_storm_all_rosters_recover() {
     // for re-bridge/re-announce to propagate, plus margin.
     let recover = RECOVERY_TIMEOUT;
 
-    let (creator, mesh) = Node::create_flags("itest", &CAP2_STARVE);
-    let joiners: Vec<Node> = (0..4)
-        .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP2_STARVE))
+    let (creator, mesh) = Node::create_flags("itest", &CAP8_STARVE);
+    let joiners: Vec<Node> = (0..9)
+        .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP8_STARVE))
         .collect();
     assert!(
         creator.wait_ready(&mesh),
@@ -2894,7 +3045,7 @@ fn test_flap_storm_all_rosters_recover() {
         assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
     }
     // Baseline delivery gets the same generous bound as the post-storm
-    // probe: at cap 2 even a healthy broadcast is partial-mesh-routed
+    // probe: at cap 8 with ten nodes even a healthy broadcast is partial-mesh-routed
     // (multi-hop, convergence-dependent), so the standard 30s message
     // timeout is occasionally short here. Adaptive — healthy runs pass
     // in seconds.
@@ -2903,18 +3054,23 @@ fn test_flap_storm_all_rosters_recover() {
         assert_received(joiner, &creator.nickname, "fs-base", recover);
     }
 
-    // Three flap rounds, two victims each, rotating across all five
-    // nodes — the same storm shape that wedged the soak and the manual
-    // repro (roster_len=0 with phantom links, delivery frozen).
+    // Five flap rounds, four victims each, rotating across all ten nodes, so that every node is
+    // stopped twice. The first storm had 5 nodes and stopped 2 of them in a round, the same 40
+    // percent; with 10 nodes that is 4. The shape wedged the soak and the manual repro
+    // (roster_len=0 with phantom links, delivery frozen).
     let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
-    for round in 0..3usize {
-        let first = all[round % all.len()];
-        let second = all[(round + 2) % all.len()];
-        first.stop();
-        second.stop();
+    for round in 0..5usize {
+        let victims: Vec<&Node> = [0, 1, 5, 6]
+            .iter()
+            .map(|offset| all[(2 * round + offset) % all.len()])
+            .collect();
+        for victim in &victims {
+            victim.stop();
+        }
         std::thread::sleep(stop_window);
-        first.cont();
-        second.cont();
+        for victim in &victims {
+            victim.cont();
+        }
         std::thread::sleep(resume_gap);
     }
 
@@ -3130,6 +3286,42 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let _ = bystander.wait();
     let _ = fs::remove_file(&victim_log);
     let _ = fs::remove_file(&bystander_log);
+}
+
+/// `peers`, `topology` and `poll` take the gossip as `--gossip <id>`, so `leave` takes it
+/// in that spelling too, with `--nickname` beside it.
+#[test]
+fn leave_takes_the_gossip_as_a_flag() {
+    let (mut daemon, log, mesh, nickname) = spawn_discoverable_daemon("leave-flag");
+
+    let mut command = common::test_cmd();
+    command.args(["leave", "--gossip", &mesh, "--nickname", &nickname]);
+    let out: std::process::Output = command.output().expect("failed to run leave");
+    assert!(
+        out.status.success(),
+        "the flag form is refused as an unexpected argument: {out:?}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("leave prints JSON on success");
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
+    assert_eq!(
+        left.len(),
+        1,
+        "the flag names the one daemon to stop: {report}"
+    );
+    assert_eq!(
+        left[0]["confirmed"], true,
+        "the daemon is still serving: {report}"
+    );
+    assert!(
+        !default_state_file(&mesh, &nickname).exists(),
+        "the daemon removes its own state file on the way out"
+    );
+    let _ = daemon.wait();
+    let _ = fs::remove_file(&log);
 }
 
 /// Three skills tell an agent "if the ready output carries `drift`, print it
@@ -3362,11 +3554,56 @@ fn spawn_decoy(name: &str) -> (Child, String, String, String, PathBuf) {
     (decoy, decoy_pid, mesh, nickname, log)
 }
 
+/// Read `pipe` to its end on a thread of its own, so a child that writes more than the buffer of the pipe
+/// is not stopped by the wait of the test.
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
+}
+
+/// Run `command` to its end, or kill it and fail the test after `limit`. A hang in the code under
+/// test then fails the test, and a `StoppedDaemon` guard still resumes its daemon.
+fn output_within(command: &mut Command, limit: Duration) -> std::process::Output {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + limit;
+    loop {
+        let exited = child
+            .try_wait()
+            .expect("a child of this test can be polled");
+        if let Some(status) = exited {
+            return std::process::Output {
+                status,
+                stdout: stdout.join().expect("the stdout reader does not panic"),
+                stderr: stderr.join().expect("the stderr reader does not panic"),
+            };
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{command:?} ran past {limit:?}, so the daemon never answered it");
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The longest a `session` or `leave` query may take in these tests. Leave waits up to its own
+/// budget for a daemon to stop, so the bound sits well above it.
+const QUERY_LIMIT: Duration = Duration::from_secs(90);
+
 fn session_report(session_pid: &str) -> serde_json::Value {
-    let out: std::process::Output = common::test_cmd()
-        .args(["session", "--session-pid", session_pid])
-        .output()
-        .expect("failed to run agent-gossip session");
+    let mut command = common::test_cmd();
+    command.args(["session", "--session-pid", session_pid]);
+    let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
     assert!(
         out.status.success(),
         "the session query needs no daemon and exits zero, output was {out:?}"
@@ -3676,17 +3913,22 @@ struct DetachedDaemon {
 }
 
 /// Launch `create --owner-pid` for a `sleep` owner and wait for the launcher
-/// to exit. The state file sits where `session` discovery looks for it.
+/// to exit. The state file sits in the runtime base, where `session` discovery
+/// walks for it.
 fn launch_detached_daemon(name: &str) -> DetachedDaemon {
+    launch_detached_daemon_in(name, &common::runtime_base().join("sessions"))
+}
+
+/// Like [`launch_detached_daemon`], with the state file in `state_dir`.
+fn launch_detached_daemon_in(name: &str, state_dir: &std::path::Path) -> DetachedDaemon {
     let owner = KillOnDrop::new(
         Command::new("sleep")
             .arg("600")
             .spawn()
             .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
-    let sessions_dir = common::runtime_base().join("sessions");
-    fs::create_dir_all(&sessions_dir).expect("the test temp dir is writable");
-    let state_file = sessions_dir.join(format!("{}.json", owner.id()));
+    fs::create_dir_all(state_dir).expect("the test temp dir is writable");
+    let state_file = state_dir.join(format!("{}.json", owner.id()));
     let stderr_file = tmp_log(&format!("{name}-stderr"));
 
     let started = Instant::now();
@@ -3855,6 +4097,1288 @@ fn detached_daemon_leaves_by_owner() {
     );
 }
 
+/// Wait until the daemon that writes `state_file` reports ready.
+fn wait_ready(state_file: &std::path::Path) {
+    let mut command = common::test_cmd();
+    command.arg("ready").arg("--state-file").arg(state_file);
+    let ready: std::process::Output = command
+        .output()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    assert!(
+        ready.status.success(),
+        "a session query before ready races the daemon's start: {ready:?}"
+    );
+}
+
+/// Run `leave --session-pid` and parse its report.
+fn leave_by_owner(owner_pid: &str) -> serde_json::Value {
+    let mut command = common::test_cmd();
+    command.args(["leave", "--session-pid", owner_pid]);
+    let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+    assert!(
+        out.status.success(),
+        "a daemon that cannot be stopped exits non-zero: {out:?}"
+    );
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+        .expect("leave prints JSON on success")
+}
+
+/// `leave` and `session` find a daemon whose `--state-file` is outside the
+/// runtime base: its IPC socket is always inside it, so the socket leads to
+/// the state file.
+#[test]
+fn a_daemon_with_a_state_file_outside_the_runtime_base_is_found_and_left() {
+    let _serial = serial_guard();
+    let outside = std::env::temp_dir().join(format!("outside-base-{}", std::process::id()));
+    assert!(
+        !outside.starts_with(common::runtime_base()),
+        "inside the runtime base the old walk finds the file, and the test proves nothing"
+    );
+    let daemon = launch_detached_daemon_in("outside-base", &outside);
+    wait_ready(&daemon.state_file);
+
+    let owner_pid = daemon.owner.id().to_string();
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "the daemon is listed once, not missed and not doubled: {sessions}"
+    );
+
+    let report = leave_by_owner(&owner_pid);
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
+    assert_eq!(
+        left.len(),
+        1,
+        "leave reports the daemon it stopped: {report}"
+    );
+    assert_eq!(
+        left[0]["confirmed"], true,
+        "a daemon still serving after leave is not left: {report}"
+    );
+    assert!(
+        wait_until_gone(&daemon.state_file, Duration::from_secs(5)),
+        "the daemon removes its own state file on the way out"
+    );
+    let _ = fs::remove_dir_all(&outside);
+}
+
+/// A relative `--state-file` names a file by the daemon's working directory. `leave` runs
+/// somewhere else, so the daemon must report the absolute path.
+#[test]
+fn a_relative_state_file_is_found_from_another_directory() {
+    let _serial = serial_guard();
+    let workdir = std::env::temp_dir().join(format!("relative-state-{}", std::process::id()));
+    fs::create_dir_all(&workdir).expect("the test temp dir is writable");
+    let owner = KillOnDrop::new(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
+    );
+    let owner_pid = owner.id().to_string();
+    let mut command = common::test_cmd();
+    command.current_dir(&workdir);
+    command.args(["create", "--name", "relative-state", "--lookup", "loopback"]);
+    command.args(["--owner-pid", &owner_pid]);
+    command.args(["--state-file", "daemon.json"]);
+    command.stdin(Stdio::null()).stdout(Stdio::null());
+    let launcher = command
+        .status()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    assert!(
+        launcher.success(),
+        "create detaches and exits zero: {launcher}"
+    );
+    let state_file = workdir.join("daemon.json");
+    wait_ready(&state_file);
+
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "a relative path in the reply names no file from this directory: {sessions}"
+    );
+    leave_by_owner(&owner_pid);
+    assert!(
+        wait_until_gone(&state_file, Duration::from_secs(5)),
+        "the daemon removes its own state file on the way out"
+    );
+    let _ = fs::remove_dir_all(&workdir);
+}
+
+/// Stops a daemon with `SIGSTOP` and resumes it with `SIGCONT` when it goes out of scope, so a
+/// failed assertion cannot leave a stopped daemon behind: it could not see its owner die.
+struct StoppedDaemon(String);
+
+impl StoppedDaemon {
+    fn new(pid: String) -> Self {
+        let status = Command::new("kill")
+            .args(["-STOP", &pid])
+            .status()
+            .expect("kill is on PATH on every unix host, so it spawns");
+        assert!(
+            status.success(),
+            "the signal reaches the daemon it was read from"
+        );
+        Self(pid)
+    }
+}
+
+impl Drop for StoppedDaemon {
+    fn drop(&mut self) {
+        let _ = Command::new("kill").args(["-CONT", &self.0]).status();
+    }
+}
+
+/// A stopped daemon (`SIGSTOP`) still accepts a connection and never answers. The Stop hook
+/// runs `session` discovery at the end of every turn, so it must not wait for such a daemon.
+#[test]
+fn a_stopped_daemon_does_not_hold_up_session() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("stopped-daemon");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let daemon_pid = session_report(&owner_pid)["sessions"][0]["pid"].to_string();
+    let _stopped = StoppedDaemon::new(daemon_pid);
+
+    let started = Instant::now();
+    let sessions = session_report(&owner_pid);
+    let took = started.elapsed();
+
+    assert!(
+        took < Duration::from_secs(10),
+        "a reply that never comes holds the hook for {took:?}"
+    );
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "the state file in the runtime base still lists the stopped daemon: {sessions}"
+    );
+}
+
+/// A daemon that gives no answer in time can be alive: stopped, or slow under load. `leave` must
+/// not read the silence as death, so it keeps the state file and does not claim the daemon is gone.
+#[test]
+fn leave_keeps_the_state_file_of_a_daemon_that_does_not_answer() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("silent-daemon");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let daemon_pid = session_report(&owner_pid)["sessions"][0]["pid"].to_string();
+    let _stopped = StoppedDaemon::new(daemon_pid);
+
+    let report = leave_by_owner(&owner_pid);
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
+    assert_eq!(
+        left.len(),
+        1,
+        "leave still reports the daemon it matched: {report}"
+    );
+    assert_eq!(
+        left[0]["confirmed"], false,
+        "nobody signalled this daemon, so it is not confirmed gone: {report}"
+    );
+    assert!(
+        daemon.state_file.exists(),
+        "a timeout says nothing about the daemon, and the file is the one it writes"
+    );
+}
+
+/// A member as `session` reports it, with the files that its daemon keeps in its runtime folder.
+struct MemberFiles {
+    pid: String,
+    lock: PathBuf,
+    socket: PathBuf,
+    chunks: PathBuf,
+    log: PathBuf,
+}
+
+fn member_files(owner_pid: &str) -> MemberFiles {
+    let report = session_report(owner_pid);
+    let member = &report["sessions"][0];
+    let text_of = |key: &str| {
+        member[key]
+            .as_str()
+            .expect("a listed session carries its gossip and nickname")
+            .to_owned()
+    };
+    let (mesh, nickname) = (text_of("gossip"), text_of("nickname"));
+    let dir = default_state_file(&mesh, &nickname)
+        .parent()
+        .expect("a state file sits in a folder")
+        .to_path_buf();
+    let mesh_folder: String = mesh.chars().take(16).collect();
+    let lock = common::runtime_base()
+        .join("locks")
+        .join(format!("{mesh_folder}-{nickname}.lock"));
+    MemberFiles {
+        pid: member["pid"].to_string(),
+        lock,
+        socket: dir.join(format!("{nickname}.ipc.sock")),
+        chunks: dir.join(format!("{nickname}.chunks")),
+        log: dir.join(format!("{nickname}.tracing.log")),
+    }
+}
+
+/// A daemon that stops cleanly removes its own state file, socket and chunk folder before it lets go of its
+/// lock, and `leave` confirms the stop when it gets that lock. So `confirmed` means that the daemon is gone
+/// and has removed its files, and no command sweeps after it.
+#[test]
+fn leave_confirms_a_stop_only_after_the_daemon_removed_its_files() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("stopped-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    // A path that does not exist before the leave passes the `!exists()` checks below with nothing
+    // removed, so each file that the daemon must remove is shown to exist first.
+    assert!(
+        daemon.state_file.exists(),
+        "the daemon wrote its state file when it was ready"
+    );
+    assert!(
+        member.socket.exists(),
+        "the daemon made its socket at {:?}",
+        member.socket
+    );
+    assert!(
+        member.chunks.exists(),
+        "the daemon made its chunk folder at {:?}",
+        member.chunks
+    );
+
+    let report = leave_by_owner(&owner_pid);
+    assert_eq!(
+        report["left"][0]["confirmed"], true,
+        "the lock is free when the daemon has ended: {report}"
+    );
+    assert!(
+        !daemon.state_file.exists(),
+        "the daemon removed its own state file before it ended"
+    );
+    assert!(
+        !member.socket.exists(),
+        "the daemon removed its own socket before it ended"
+    );
+    assert!(
+        !member.chunks.exists(),
+        "the daemon removed its own chunk folder before it ended"
+    );
+}
+
+/// A daemon that was killed is not listed any more, because its record names a process that is gone. Its lock
+/// file stays: no command removes a lock file, so that two starts of one member keep one lock.
+#[test]
+fn a_killed_daemon_is_not_listed_and_its_lock_file_stays() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("killed-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    assert!(
+        member.lock.exists(),
+        "a running daemon has its lock file in the registry: {:?}",
+        member.lock
+    );
+
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    let dead_pid: u32 = member.pid.parse().expect("a pid is a number");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while process::is_alive(dead_pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the killed daemon is still alive"
+        );
+        std::thread::sleep(POLL);
+    }
+
+    let report = session_report(&owner_pid);
+    let listed = report["sessions"].as_array().map_or(usize::MAX, Vec::len);
+    assert_eq!(
+        listed, 0,
+        "a daemon that is gone is not a session: {report}"
+    );
+    assert!(
+        member.lock.exists(),
+        "the lock file of a dead member stays, with its old record"
+    );
+}
+
+/// SIGKILL the daemon of `member` and wait until the process is gone. A killed daemon removes nothing itself.
+fn kill_member(member: &MemberFiles) {
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    let dead_pid: u32 = member.pid.parse().expect("a pid is a number");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while process::is_alive(dead_pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the killed daemon is still alive"
+        );
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        member.socket.exists() && member.chunks.exists(),
+        "a killed daemon removes nothing itself"
+    );
+}
+
+fn assert_files_exist(member: &MemberFiles, when: &str) {
+    assert!(member.socket.exists(), "the socket is gone {when}");
+    assert!(member.chunks.exists(), "the chunk folder is gone {when}");
+}
+
+fn assert_files_removed(member: &MemberFiles, when: &str) {
+    assert!(
+        !member.socket.exists(),
+        "the socket of the dead member stays {when}: {}",
+        member.socket.display()
+    );
+    assert!(
+        !member.chunks.exists(),
+        "the chunk folder of the dead member stays {when}: {}",
+        member.chunks.display()
+    );
+}
+
+/// A killed daemon cannot remove its own socket and chunk folder. Its lock is free and its record names a
+/// process that is gone, so `leave` removes both.
+#[test]
+fn leave_removes_the_socket_and_chunks_of_a_killed_member() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("swept-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    assert_files_exist(&member, "while the daemon runs");
+    kill_member(&member);
+
+    leave_by_owner(&owner_pid);
+    assert_files_removed(&member, "after leave");
+}
+
+/// `session` reads the same registry as `leave` and removes the same leftovers, and a member that
+/// runs keeps both files through the `leave` of another member.
+#[test]
+fn a_live_member_keeps_its_files_while_leave_and_session_sweep_a_killed_one() {
+    let _serial = serial_guard();
+    let live = launch_detached_daemon("kept-by-sweep");
+    wait_ready(&live.state_file);
+    let live_files = member_files(&live.owner.id().to_string());
+    let dead = launch_detached_daemon("swept-by-session");
+    wait_ready(&dead.state_file);
+    let dead_owner = dead.owner.id().to_string();
+    let dead_files = member_files(&dead_owner);
+    kill_member(&dead_files);
+
+    session_report(&dead_owner);
+    assert_files_removed(&dead_files, "after session");
+    assert_files_exist(&live_files, "after the sweep of another member");
+    leave_by_owner(&dead_owner);
+    assert_files_exist(&live_files, "after leave of another member");
+}
+
+/// A daemon that starts holds the lock before it makes its socket, so a lock that someone holds means
+/// that the member can run: nothing is removed until the lock is free.
+#[test]
+fn leave_removes_nothing_while_the_lock_of_the_member_is_held() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("held-lock-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    kill_member(&member);
+
+    let lock = File::open(&member.lock).expect("the lock file of a dead member stays");
+    lock.lock().expect("the lock of a dead member is free");
+    leave_by_owner(&owner_pid);
+    assert_files_exist(&member, "while another process holds the lock");
+
+    drop(lock);
+    leave_by_owner(&owner_pid);
+    assert_files_removed(&member, "after the lock is free");
+}
+
+/// A record names a pid and the start of its process. A pid that a new process took has another start,
+/// so the record is not of a running daemon.
+#[test]
+fn a_record_whose_pid_was_reused_is_a_dead_member() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("reused-pid-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    kill_member(&member);
+
+    let text = fs::read_to_string(&member.lock).expect("the lock file holds the old record");
+    let mut record: serde_json::Value =
+        serde_json::from_str(text.trim()).expect("the record is one JSON line");
+    record["pid"] = daemon.owner.id().into();
+    record["start"] = 1.into();
+    fs::write(&member.lock, format!("{record}\n")).expect("the lock file is writable");
+
+    leave_by_owner(&owner_pid);
+    assert_files_removed(
+        &member,
+        "when the pid of the record runs with another start",
+    );
+}
+
+/// The mesh folder of a dead member can be a link that someone made, and the sweep must not follow it:
+/// the socket and the chunk folder that sit behind the link are not the files of this member.
+#[test]
+fn a_mesh_folder_that_is_a_link_is_not_swept_through() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("linked-mesh-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    kill_member(&member);
+    let mesh_folder = member
+        .socket
+        .parent()
+        .expect("a socket sits in the folder of its mesh")
+        .to_path_buf();
+    let behind = std::env::temp_dir().join(format!("behind-the-link-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&behind);
+    fs::rename(&mesh_folder, &behind).expect("the folder moves inside one temp dir");
+    symlink(&behind, &mesh_folder).expect("the test makes the link in the runtime base");
+
+    leave_by_owner(&owner_pid);
+    let socket_behind = behind.join(member.socket.file_name().expect("a socket has a name"));
+    let chunks_behind = behind.join(
+        member
+            .chunks
+            .file_name()
+            .expect("a chunk folder has a name"),
+    );
+    let kept = socket_behind.exists() && chunks_behind.exists();
+
+    let _ = fs::remove_file(&mesh_folder);
+    let _ = fs::remove_dir_all(&behind);
+    assert!(
+        kept,
+        "the sweep followed the link of the mesh folder and removed what sits behind it"
+    );
+}
+
+/// `confirmed` means that the daemon let go of its lock, so a start of the same mesh and nickname right after
+/// `leave` finds the lock free and is not refused. There is no retry in the start and no wait in the test.
+#[test]
+fn a_start_right_after_leave_is_not_refused() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("restart-anchor");
+    let dir = std::env::temp_dir().join(format!("restart-after-leave-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("restart-after-leave");
+    let spec = NodeSpec {
+        mesh: &mesh,
+        nickname: "restart-node",
+        state: &state,
+    };
+    let mut first = start_keyed_node(&spec, false, &stderr);
+
+    let mut leave = common::test_cmd();
+    leave.args(["leave", "--gossip", &mesh, "--nickname", "restart-node"]);
+    let out = output_within(&mut leave, QUERY_LIMIT);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("leave prints JSON");
+    first.crashed = true;
+    let second = start_keyed_node(&spec, false, &stderr);
+    crash(second);
+
+    assert_eq!(
+        report["left"][0]["confirmed"], true,
+        "leave got the lock, so the daemon had ended: {report}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// `leave` reports the member key that the daemon had. A daemon that stops cleanly removes its state file
+/// first, so a report that reads the file after the stop shows `null` for a node that had a key.
+#[test]
+fn leave_reports_the_member_key_of_the_daemon_it_stopped() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("leave-member-anchor");
+    let dir = std::env::temp_dir().join(format!("leave-member-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("leave-member");
+    let mut node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "leave-member-node",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+    let own = ready_json(&state)["member"].clone();
+    assert!(is_hex_key(&own), "the node has a member key to report");
+
+    let mut leave = common::test_cmd();
+    leave.args([
+        "leave",
+        "--gossip",
+        &mesh,
+        "--nickname",
+        "leave-member-node",
+    ]);
+    let out = output_within(&mut leave, QUERY_LIMIT);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("leave prints JSON");
+    node.crashed = true;
+
+    assert_eq!(
+        report["left"][0]["member"], own,
+        "leave reports the key that the stopped daemon had: {report}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// A second start of one mesh and nickname is refused with the message of the host, and the first daemon is
+/// not harmed: it still answers on its own socket.
+#[test]
+fn a_second_start_of_one_member_is_refused_and_the_first_daemon_still_answers() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("refuse-anchor");
+    let dir = std::env::temp_dir().join(format!("refuse-second-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let first_state = dir.join("first.json");
+    let stderr = tmp_log("refuse-second");
+    let first = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "one-member",
+            state: &first_state,
+        },
+        false,
+        &stderr,
+    );
+
+    let mut second = common::test_cmd();
+    second.args(["join", &mesh, "--nickname", "one-member", "--state-file"]);
+    second.arg(dir.join("second.json"));
+    let refused = output_within(&mut second, QUERY_LIMIT);
+    let mut peers = common::test_cmd();
+    peers.args(["peers", "--gossip", &mesh, "--nickname", "one-member"]);
+    let answer = output_within(&mut peers, QUERY_LIMIT);
+    crash(first);
+
+    let message = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        !refused.status.success(),
+        "the second start exits non-zero: {refused:?}"
+    );
+    assert!(
+        message.contains("another daemon already runs as one-member"),
+        "the refusal is the message of the host: {message}"
+    );
+    assert!(
+        answer.status.success(),
+        "the first daemon still answers on its own socket: {answer:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// Pid 0 and pid 1 are ancestors of every process, so a command that selects daemons by them
+/// selects the daemons of every session. Every flag that names a session refuses them. This test
+/// runs only commands that cannot stop a daemon even if the refusal were gone: the two read-only
+/// commands, and `leave` with a gossip id that no daemon has. A `leave --session-pid 1` with no
+/// gossip would stop every daemon on the host, and it is never run here.
+#[test]
+fn a_session_pid_of_init_is_refused_and_stops_nothing() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("anchor-guard");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+
+    let no_such_gossip = "AbCdEf1234AbCdEf1234AbCdEf1234AbCdEf1234AbCdEf1234AbCdEf1234AbCd";
+    let refused: [&[&str]; 5] = [
+        &["session", "--session-pid", "1"],
+        &["session", "--session-pid", "0"],
+        &["bell-check", "--session-pid", "1"],
+        &["leave", no_such_gossip, "--session-pid", "1"],
+        &["leave", no_such_gossip, "--session-pid", "0"],
+    ];
+    for args in refused {
+        let mut command = common::test_cmd();
+        command.args(args);
+        let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("init or invalid"),
+            "{args:?} must fail with a clear error, and it gave {out:?}"
+        );
+    }
+
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "the daemon that this test started is still serving: {sessions}"
+    );
+}
+
+/// The kept member key of a state file, as raw bytes: the seed, then the start time of its owner (0 when the
+/// key is bound to none). The tests compare bytes and never print them.
+fn kept_key(state: &std::path::Path) -> Vec<u8> {
+    fs::read(state.with_extension("key")).unwrap_or_default()
+}
+
+/// The start time of the owner that the key is bound to, and 0 when it is bound to none.
+fn owner_start(key: &[u8]) -> u64 {
+    let tail = key
+        .get(32..40)
+        .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok());
+    tail.map_or(0, u64::from_le_bytes)
+}
+
+fn same_member(first: &[u8], second: &[u8]) -> bool {
+    first.len() >= 32 && first.get(..32) == second.get(..32)
+}
+
+/// What names a member that a test starts: its mesh, its nickname and its state file.
+struct NodeSpec<'spec> {
+    mesh: &'spec str,
+    nickname: &'spec str,
+    state: &'spec std::path::Path,
+}
+
+/// A member that a test starts on a state file: the process that it must kill, and the daemon's pid. Behind a
+/// wrapper the daemon is a child of the process that `holder` owns, so a test that panics before `crash` kills
+/// the daemon here, and `crash` says that it did.
+struct KeyedNode {
+    holder: KillOnDrop,
+    daemon_pid: u32,
+    crashed: bool,
+}
+
+impl Drop for KeyedNode {
+    fn drop(&mut self) {
+        if !self.crashed {
+            let _ = Command::new("kill")
+                .args(["-KILL", &self.daemon_pid.to_string()])
+                .status();
+        }
+    }
+}
+
+fn child_pid(parent: u32) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut command = Command::new("pgrep");
+        command.args(["-P", &parent.to_string()]);
+        let out = command
+            .output()
+            .expect("pgrep is on PATH on every unix host");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let first = text.lines().next();
+        if let Some(pid) = first.and_then(|line| line.trim().parse().ok()) {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the wrapper never started its daemon"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Start `join` on `state`, behind a `sh` wrapper when `wrapped`, as the e2e suite does: a new wrapper
+/// is a new parent of the daemon. The stale state file of an earlier run is removed first, so that
+/// `ready` waits for this run.
+fn start_keyed_node(
+    spec: &NodeSpec<'_>,
+    wrapped: bool,
+    stderr_file: &std::path::Path,
+) -> KeyedNode {
+    let NodeSpec {
+        mesh,
+        nickname,
+        state,
+    } = *spec;
+    let _ = fs::remove_file(state);
+    let stderr = File::create(stderr_file).expect("the test temp dir is writable");
+    let child = if wrapped {
+        // The paths are arguments of the shell, and not words of its program: a path with a space is one word.
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            r#""$1" --log-dir "$2" join "$3" --nickname "$4" --state-file "$5"; true"#,
+            "sh",
+        ]);
+        command.arg(bin()).arg(common::test_log_dir());
+        command.args([mesh, nickname]).arg(state);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        command.stderr(stderr);
+        command.spawn().expect("sh is on every unix host")
+    } else {
+        let mut command = common::test_cmd();
+        command.args(["join", mesh, "--nickname", nickname, "--state-file"]);
+        command.arg(state);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        command.stderr(stderr);
+        command
+            .spawn()
+            .expect("the test binary is built before the suite runs, so its path always spawns")
+    };
+    let holder = KillOnDrop::new(child);
+    let daemon_pid = if wrapped {
+        child_pid(holder.id())
+    } else {
+        holder.id()
+    };
+    let node = KeyedNode {
+        holder,
+        daemon_pid,
+        crashed: false,
+    };
+    wait_ready(state);
+    node
+}
+
+/// `SIGKILL` the daemon and its wrapper: a crash, not a leave.
+fn crash(mut node: KeyedNode) {
+    let status = Command::new("kill")
+        .args(["-KILL", &node.daemon_pid.to_string()])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    node.crashed = true;
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    let _ = node.holder.kill();
+    let _ = node.holder.wait();
+    std::thread::sleep(Duration::from_millis(1500));
+}
+
+/// A state file that the user chose, outside the session folder, keeps its member after a restart under
+/// another parent: the e2e case, where every start has its own `sh` wrapper. No owner is bound.
+#[test]
+fn a_state_file_that_the_user_chose_keeps_its_member_under_another_parent() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("keyowner-anchor-c");
+    let dir = std::env::temp_dir().join(format!("keyowner-chosen-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("keyowner-c");
+
+    let first = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "keyed-c",
+            state: &state,
+        },
+        true,
+        &stderr,
+    );
+    let before = kept_key(&state);
+    crash(first);
+    let second = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "keyed-c",
+            state: &state,
+        },
+        true,
+        &stderr,
+    );
+    let after = kept_key(&state);
+    crash(second);
+
+    assert!(
+        same_member(&before, &after),
+        "a restart under a new wrapper of a path that the user chose is the same member"
+    );
+    assert_eq!(
+        owner_start(&before),
+        0,
+        "no owner is bound to a path that the user chose"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// The member key and the run counter are the identity of a node across a restart. `session` and `leave`
+/// remove nothing of a crashed daemon: its state file stays until the same member starts again, and nothing
+/// in the app may remove the key or the counter.
+#[test]
+fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
+    let _serial = serial_guard();
+    // A folder of its own, because the sessions folder of the runtime base is shared by every agent on the
+    // host, and the `bell-check` of an installed older binary (0.16.0, run by the Stop hook of a session)
+    // deletes the state file of a dead pid there. That deleted the file of this test in 1 run of 8 to 12.
+    let dir = std::env::temp_dir().join(format!("key-keeper-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let _folder = RemoveDirOnDrop(dir.clone());
+    let daemon = launch_detached_daemon_in("key-keeper", &dir);
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    let key = kept_key(&daemon.state_file);
+    let run = fs::read(daemon.state_file.with_extension("run")).unwrap_or_default();
+    assert!(
+        !key.is_empty() && !run.is_empty(),
+        "a running daemon keeps its key and its run counter"
+    );
+
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    std::thread::sleep(Duration::from_millis(1500));
+    session_report(&owner_pid);
+    leave_by_owner(&owner_pid);
+
+    assert!(
+        daemon.state_file.exists(),
+        "the stale state file of the crashed daemon stays: no command cleans it"
+    );
+    assert_eq!(
+        kept_key(&daemon.state_file),
+        key,
+        "the member key is still there, byte for byte"
+    );
+    assert_eq!(
+        fs::read(daemon.state_file.with_extension("run")).unwrap_or_default(),
+        run,
+        "the run counter is still there, byte for byte"
+    );
+}
+
+fn session_file_output(pid: &str) -> std::process::Output {
+    let mut command = common::test_cmd();
+    command.args(["session-file", "--session-pid", pid]);
+    output_within(&mut command, QUERY_LIMIT)
+}
+
+/// The path that `session-file` prints for a pid, or a failed test when it exits non-zero.
+fn session_file_path_of(pid: u32) -> PathBuf {
+    let out = session_file_output(&pid.to_string());
+    assert!(out.status.success(), "a live pid names a file: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "one line, and no more: {stdout:?}"
+    );
+    PathBuf::from(stdout.trim())
+}
+
+/// A session file is named for one process instance: the same live pid prints the same path twice, and the
+/// path is in the sessions folder of the runtime base, whose folder and file the command does not make.
+#[test]
+fn session_file_prints_one_path_in_the_sessions_folder_for_a_live_pid() {
+    // The daemon test below starts a node on the same path, because both name this process, so this test
+    // must not run while that state file exists.
+    let _serial = serial_guard();
+    let pid = std::process::id();
+
+    let first = session_file_path_of(pid);
+    let second = session_file_path_of(pid);
+
+    assert_eq!(first, second, "one process instance has one name");
+    assert_eq!(
+        first.parent(),
+        Some(common::runtime_base().join("sessions").as_path()),
+        "the path is where the skills keep the state file of one agent session"
+    );
+    assert!(!first.exists(), "the command makes no file");
+}
+
+/// Init, the pid 0 and a pid with no process name no file. The command prints nothing on stdout, so a skill line
+/// that builds `--state-file` from it stops where it would have taken an empty path.
+#[test]
+fn session_file_refuses_init_and_a_dead_pid_and_prints_nothing() {
+    let mut gone = Command::new("sleep")
+        .arg("0")
+        .spawn()
+        .expect("sleep is on PATH on every unix host");
+    let dead_pid = gone.id();
+    gone.wait().expect("a gone child can be waited on");
+
+    for pid in ["0", "1", &dead_pid.to_string()] {
+        let out = session_file_output(pid);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "pid {pid} names no file: {out:?}");
+        assert!(out.stdout.is_empty(), "pid {pid} printed a path: {out:?}");
+        // The CLI prints an `anyhow` error with its backtrace when RUST_BACKTRACE is set, as CI does, so the
+        // reason is the first line and not the only one.
+        assert!(
+            stderr
+                .lines()
+                .next()
+                .is_some_and(|line| line.starts_with("Error: ")),
+            "the reason is the first line on stderr: {stderr:?}"
+        );
+    }
+}
+
+/// Removes the files that a daemon keeps beside its state file, when it drops. A test that fails after the
+/// daemon wrote them must not leave the session file of its process, which the next test of the file looks at.
+/// Declare it before the node: the node is killed first, and then the files go.
+struct StateFilesGuard<'path>(&'path std::path::Path);
+
+impl Drop for StateFilesGuard<'_> {
+    fn drop(&mut self) {
+        for extension in ["json", "key", "run", "run.tmp", "key.lock", "run.lock"] {
+            let _ = fs::remove_file(self.0.with_extension(extension));
+        }
+    }
+}
+
+/// The contract of the skills: a daemon that starts on the printed path is found by `ready` and by `session`.
+#[test]
+fn a_daemon_on_the_printed_session_file_is_found_by_ready_and_session() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("session-file-anchor");
+    let state = session_file_path_of(std::process::id());
+    // The command makes no folder, and the engine does not make the folder of a state file: the launch line of
+    // the skills runs `mkdir -p` first, and a fresh CI runner has no sessions folder yet.
+    fs::create_dir_all(state.parent().expect("a state file has a folder"))
+        .expect("the runtime base is writable");
+    let stderr = tmp_log("session-file");
+    let _files = StateFilesGuard(&state);
+
+    let node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "session-file-node",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+    let ready = ready_json(&state);
+    let report = session_report(&std::process::id().to_string());
+    let sessions = report["sessions"]
+        .as_array()
+        .expect("session prints a list of sessions");
+    let listed = sessions
+        .iter()
+        .find(|row| row["nickname"] == "session-file-node");
+    crash(node);
+
+    assert_eq!(
+        ready["nickname"], "session-file-node",
+        "ready names the node that started on the printed path: {ready}"
+    );
+    assert!(
+        listed.is_some(),
+        "session finds a daemon that runs under this process on that path: {report}"
+    );
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// The JSON that `command` prints, or a failed test when it exits non-zero.
+fn json_of(command: &mut Command) -> serde_json::Value {
+    let out: std::process::Output = output_within(command, QUERY_LIMIT);
+    assert!(out.status.success(), "the query exits zero: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(stdout.trim()).expect("a query prints one JSON document")
+}
+
+fn ready_json(state: &std::path::Path) -> serde_json::Value {
+    let mut command = common::test_cmd();
+    command.arg("ready").arg("--state-file").arg(state);
+    json_of(&mut command)
+}
+
+fn is_hex_key(value: &serde_json::Value) -> bool {
+    let Some(text) = value.as_str() else {
+        return false;
+    };
+    text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The roster row of `nickname` in the `peers` reply of `observer`, polled until its `member` is proved.
+fn proved_row(
+    mesh: &str,
+    observer: &str,
+    nickname: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let mut command = common::test_cmd();
+        command.args(["peers", "--gossip", mesh, "--nickname", observer]);
+        let reply = json_of(&mut command);
+        let rows = reply["peers"].as_array().cloned().unwrap_or_default();
+        let live: Vec<&serde_json::Value> = rows
+            .iter()
+            .filter(|row| row["nickname"] == nickname && row["quiet"] == false)
+            .collect();
+        if let [row] = live.as_slice()
+            && is_hex_key(&row["member"])
+        {
+            return ((*row).clone(), reply);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the member of {nickname} was never proved to {observer}: {rows:?}"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The member key is the stable identity of a node: `peers` shows it for every peer, and `ready`, `session`
+/// and the state file show it for the node itself. `pubkey` is the key of one run and still shows beside it.
+/// `member` is `null` where no proof was verified, never the old value.
+#[test]
+fn the_member_key_is_shown_in_peers_ready_session_and_the_state_file() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, anchor_nick) = spawn_discoverable_daemon("member-anchor");
+    let dir = std::env::temp_dir().join(format!("member-shown-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("member-shown");
+    let node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "member-node",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+
+    let ready = ready_json(&state);
+    let own = ready["member"].clone();
+    assert!(
+        is_hex_key(&own),
+        "ready shows the member key of the node: {ready}"
+    );
+    assert_ne!(
+        own, ready["pubkey"],
+        "the member key is not the key of the run"
+    );
+    let written = fs::read_to_string(&state).expect("the daemon wrote its state file");
+    let file: serde_json::Value = serde_json::from_str(&written)
+        .expect("the daemon writes the file atomically, so a read never sees half of it");
+    assert_eq!(
+        file["member"], own,
+        "the state file shows the same member key"
+    );
+    let session = session_report(&std::process::id().to_string());
+    let sessions = session["sessions"]
+        .as_array()
+        .expect("session prints a list of sessions");
+    let listed = sessions
+        .iter()
+        .find(|row| row["nickname"] == "member-node")
+        .expect("the node is a descendant of this test, so session lists it");
+    assert_eq!(listed["member"], own, "session shows the same member key");
+
+    let (row, reply) = proved_row(&mesh, &anchor_nick, "member-node");
+    assert_eq!(
+        row["member"], own,
+        "a peer sees the member key that the node reports"
+    );
+    assert_ne!(
+        row["pubkey"], row["member"],
+        "the row keeps the key of the run beside it"
+    );
+    assert!(
+        is_hex_key(&reply["own_member"]),
+        "peers shows the member key of the observer too: {reply}"
+    );
+    crash(node);
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// The scenario that failed in the e2e run: a node is killed and started again on the same state file, under a
+/// new wrapper. Its member key is the same and shows once in the roster, and the key of the run is new.
+#[test]
+fn a_restart_on_the_same_state_file_shows_the_same_member_once() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, anchor_nick) = spawn_discoverable_daemon("member-restart");
+    let dir = std::env::temp_dir().join(format!("member-restart-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("member-restart");
+    let spec = NodeSpec {
+        mesh: &mesh,
+        nickname: "member-again",
+        state: &state,
+    };
+
+    let first = start_keyed_node(&spec, true, &stderr);
+    let before = ready_json(&state);
+    let (row_before, _) = proved_row(&mesh, &anchor_nick, "member-again");
+    crash(first);
+    let second = start_keyed_node(&spec, true, &stderr);
+    let after = ready_json(&state);
+    let key_of_run_after = after["pubkey"].clone();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let row_after = loop {
+        let (row, _) = proved_row(&mesh, &anchor_nick, "member-again");
+        if row["pubkey"] == key_of_run_after || Instant::now() >= deadline {
+            break row;
+        }
+        std::thread::sleep(POLL);
+    };
+    crash(second);
+
+    assert!(
+        is_hex_key(&before["member"]),
+        "ready shows a member key, so the comparison below is not null against null: {before}"
+    );
+    assert_eq!(
+        before["member"], after["member"],
+        "the node that restarts on its own state file is the same member"
+    );
+    assert_ne!(
+        before["pubkey"], after["pubkey"],
+        "the key of the run is new at every start, by design"
+    );
+    assert_eq!(
+        row_before["member"], row_after["member"],
+        "the other nodes see the same member key after the restart"
+    );
+    assert_eq!(
+        row_after["pubkey"], key_of_run_after,
+        "a row names the key of the run that started last"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// `meta get` names the member key of each slot beside the document and not in it, so that a `get`, an edit
+/// and a `merge` do not write a derived value back. The slot is the key of a run, and the value comes from the
+/// roster only.
+#[test]
+fn meta_get_names_the_member_of_each_slot_beside_the_document() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, anchor_nick) = spawn_discoverable_daemon("member-meta");
+    let dir = std::env::temp_dir().join(format!("member-meta-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("member-meta");
+    let node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "member-slot",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+    let own = ready_json(&state);
+    let (row, _) = proved_row(&mesh, &anchor_nick, "member-slot");
+
+    let mut report = common::test_cmd();
+    report.args([
+        "meta",
+        "merge",
+        "--gossip",
+        &mesh,
+        "--nickname",
+        "member-slot",
+    ]);
+    report.args(["--merge", "{\"status\":\"busy\"}"]);
+    let merged: std::process::Output = output_within(&mut report, QUERY_LIMIT);
+    assert!(
+        merged.status.success(),
+        "the merge of the status must end 0 before the anchor is asked: {merged:?}"
+    );
+    let slot = own["pubkey"]
+        .as_str()
+        .expect("ready shows the key of the run");
+    // The reply of the merge says that the node took it, not that the anchor applied it, so the anchor is
+    // asked until it shows the slot.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let reply = loop {
+        let mut get = common::test_cmd();
+        get.args(["meta", "get", "--gossip", &mesh, "--nickname", &anchor_nick]);
+        let reply = json_of(&mut get);
+        if !reply["members"][slot].is_null() || Instant::now() >= deadline {
+            break reply;
+        }
+        std::thread::sleep(POLL);
+    };
+    assert_eq!(
+        reply["members"][slot], row["member"],
+        "the slot of the key of a run names the member that the roster proved: {reply}"
+    );
+    assert!(
+        reply["document"][slot].get("member").is_none(),
+        "the document itself carries no derived field"
+    );
+    crash(node);
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// The sweep removes only what a refused connection proves dead: a live member and a member that
+/// does not answer in time keep every file.
+#[test]
+fn session_keeps_the_files_of_live_and_silent_members() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("kept-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.id().to_string();
+    let member = member_files(&owner_pid);
+    fs::write(&member.log, "a run's tracing log").expect("the member folder is writable");
+    let all_there = |when: &str| {
+        for file in [&member.socket, &member.chunks, &member.log] {
+            assert!(file.exists(), "{file:?} is gone {when}");
+        }
+    };
+
+    session_report(&owner_pid);
+    all_there("after a session query of a live member");
+
+    let _stopped = StoppedDaemon::new(member.pid.clone());
+    session_report(&owner_pid);
+    all_there("after a session query of a member that does not answer");
+}
+
 /// A caller that captures the launcher's output reads it to EOF. The detached
 /// daemon must not hold the write end of that pipe, or the caller blocks until
 /// the daemon exits and gets the daemon's JSON stdout as well.
@@ -3956,7 +5480,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
         .expect("`true` is on PATH on every unix host, so it spawns");
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
-    while process::live_start_time(zombie.id()).is_some() {
+    while matches!(process::start_of(zombie.id()), ProcessStart::Live(_)) {
         assert!(Instant::now() < exited, "the zombie owner never exited");
         std::thread::sleep(POLL);
     }

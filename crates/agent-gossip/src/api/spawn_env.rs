@@ -1,9 +1,11 @@
+use std::path::PathBuf;
+
 use habilis_network::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
 use habilis_network::runtime::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, SignalHandling, setup_mesh,
 };
 
-use super::advertiser::{Advertiser, initial_live_count, spawn_advertiser};
+use super::advertiser::{Advertiser, DirectoryRoute, initial_live_count, spawn_advertiser};
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use crate::a2a::a2a_app::SurfacedIo;
@@ -16,9 +18,10 @@ use crate::topic;
 ///
 /// # Errors
 /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
-pub(super) async fn create_setup(
+pub(crate) async fn create_setup(
     config: CreateConfig,
     output: Output,
+    base: PathBuf,
 ) -> Result<(EventLoopConfig, SurfacedIo, Option<Advertiser>), CreateError> {
     crate::register_build_version();
     let mesh_config = MeshConfig::new(
@@ -65,7 +68,7 @@ pub(super) async fn create_setup(
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
         .max_connections(max_connections)
-        .runtime_base(crate::runtime_base());
+        .runtime_base(base.clone());
     setup_params.live_count = live_count.clone();
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         CreateError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
@@ -75,7 +78,14 @@ pub(super) async fn create_setup(
     // at-most-once closure, so no clone).
     let advertiser = advertise_directory
         .zip(live_count)
-        .map(|(directory, counter)| spawn_advertiser(&elc, counter, directory, directory_lookups));
+        .map(|(directory, counter)| {
+            let route = DirectoryRoute {
+                directory,
+                lookups: directory_lookups,
+                base,
+            };
+            spawn_advertiser(&elc, counter, route)
+        });
     Ok((elc, io, advertiser))
 }
 
@@ -84,9 +94,10 @@ pub(super) async fn create_setup(
 ///
 /// # Errors
 /// [`JoinError::Resolve`] / [`JoinError::Setup`].
-pub(super) async fn join_setup(
+pub(crate) async fn join_setup(
     config: JoinConfig,
     output: Output,
+    base: PathBuf,
 ) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     let resolved = JoinParams::new(
         config.target,
@@ -97,7 +108,7 @@ pub(super) async fn join_setup(
     )
     .resolve()
     .map_err(|error| JoinError::Resolve(anyhow::Error::from(error)))?;
-    resolved_setup(resolved, config.max_connections, output).await
+    resolved_setup(resolved, config.max_connections, output, base).await
 }
 
 /// Resolve + set up a topic (a string-derived public mesh).
@@ -108,10 +119,11 @@ pub(super) async fn join_setup(
 pub(super) async fn topic_setup(
     config: TopicConfig,
     output: Output,
+    base: PathBuf,
 ) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     let resolved =
         topic::resolve_topic(config.string, config.nickname).map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, config.max_connections, output).await
+    resolved_setup(resolved, config.max_connections, output, base).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_mesh` for
@@ -120,6 +132,7 @@ async fn resolved_setup(
     resolved: Resolved,
     max_connections: usize,
     output: Output,
+    base: PathBuf,
 ) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     crate::register_build_version();
     let Resolved { kind, author, .. } = resolved;
@@ -130,7 +143,7 @@ async fn resolved_setup(
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let setup_params = SetupParams::new(author, sink)
         .max_connections(max_connections)
-        .runtime_base(crate::runtime_base());
+        .runtime_base(base);
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         JoinError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
     })?;

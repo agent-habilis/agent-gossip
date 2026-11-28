@@ -12,3 +12,7 @@ pub mod test_key;
 
 #[cfg(feature = "adversarial")]
 pub mod session;
+
+/// The constructors that name the runtime base of a node, for the test fixtures.
+#[cfg(feature = "test-node")]
+pub mod test_node;

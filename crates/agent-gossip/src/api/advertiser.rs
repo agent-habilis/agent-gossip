@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 use habilis_network::ops::directory;
@@ -45,18 +46,32 @@ pub(crate) fn initial_live_count() -> LiveCount {
     live_count
 }
 
+/// How an advertiser reaches its directory: the name, the lookups that meet it, and the runtime base of
+/// the call that created the advertised mesh, so that the directory session writes its files there too.
+pub(crate) struct DirectoryRoute {
+    pub(crate) directory: MeshName,
+    pub(crate) lookups: LookupOpts,
+    pub(crate) base: PathBuf,
+}
+
 pub(crate) fn spawn_advertiser(
     config: &EventLoopConfig,
     live_count: LiveCount,
-    directory: MeshName,
-    lookups: LookupOpts,
+    route: DirectoryRoute,
 ) -> Advertiser {
     let mesh_id = config.mesh_id().clone();
+    let DirectoryRoute {
+        directory,
+        lookups,
+        base,
+    } = route;
     // Reach the directory over the advertised mesh's own lookups, so an
     // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and
     // discoverers must use the same lookups to meet.
     let next_ad = move || ad_with_peers(&mesh_id, live_count.load(Ordering::Relaxed)).to_body();
-    Advertiser::spawn(super::directory::advertise(directory, lookups, next_ad))
+    Advertiser::spawn(super::directory::advertise(
+        directory, lookups, base, next_ad,
+    ))
 }
 
 /// `Ad` has no constructor, so the ad is built through its validating `Deserialize`.

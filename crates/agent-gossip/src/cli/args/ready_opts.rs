@@ -11,7 +11,9 @@ use clap::Parser;
 pub(crate) struct ReadyOpts {
     /// Path to the daemon's --state-file. Pass the SAME path you gave
     /// `create`/`join`. `ready` blocks until that file reports the daemon
-    /// is serving, then exits 0 (non-zero on timeout).
+    /// is serving, then exits 0 (non-zero on timeout). A start that failed
+    /// ends the wait at once, with the error of the daemon, if this `ready`
+    /// began within 2 s of the failure. A `ready` that began later waits its limit.
     #[arg(long)]
     pub state_file: std::path::PathBuf,
 

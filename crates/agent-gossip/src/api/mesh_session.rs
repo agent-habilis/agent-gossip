@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{Mesh, MeshId, MeshName, MessageBody, Nickname};
@@ -41,8 +43,20 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if the target can't be resolved;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn join(config: JoinConfig) -> Result<Self, JoinError> {
+        Self::join_with_base(config, crate::runtime_base()).await
+    }
+
+    /// [`Self::join`] with the runtime base named. The public call always passes `runtime_base()`; the
+    /// base is a parameter so that the test harness can give each node a base of its own.
+    ///
+    /// # Errors
+    /// The same as [`Self::join`].
+    pub(crate) async fn join_with_base(
+        config: JoinConfig,
+        base: PathBuf,
+    ) -> Result<Self, JoinError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io) = join_setup(config, output).await?;
+        let (elc, io) = join_setup(config, output, base).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
@@ -54,8 +68,19 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
+        Self::topic_with_base(config, crate::runtime_base()).await
+    }
+
+    /// [`Self::topic`] with the runtime base named, as [`Self::join_with_base`] does for a join.
+    ///
+    /// # Errors
+    /// The same as [`Self::topic`].
+    pub(crate) async fn topic_with_base(
+        config: TopicConfig,
+        base: PathBuf,
+    ) -> Result<Self, JoinError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io) = topic_setup(config, output).await?;
+        let (elc, io) = topic_setup(config, output, base).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
@@ -66,8 +91,19 @@ impl MeshSession {
     /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
     /// loopback-only mesh; [`CreateError::Setup`] on endpoint/gossip failure.
     pub async fn create(config: CreateConfig) -> Result<Self, CreateError> {
+        Self::create_with_base(config, crate::runtime_base()).await
+    }
+
+    /// [`Self::create`] with the runtime base named, as [`Self::join_with_base`] does for a join.
+    ///
+    /// # Errors
+    /// The same as [`Self::create`].
+    pub(crate) async fn create_with_base(
+        config: CreateConfig,
+        base: PathBuf,
+    ) -> Result<Self, CreateError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io, advertiser) = create_setup(config, output).await?;
+        let (elc, io, advertiser) = create_setup(config, output, base).await?;
         Ok(Self::with_events(elc, io, advertiser, events_rx))
     }
 
@@ -84,6 +120,7 @@ impl MeshSession {
         mesh: Mesh,
         nickname: Option<Nickname>,
         cohost: CoHostPolicy,
+        base: PathBuf,
     ) -> anyhow::Result<Self> {
         crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
@@ -103,7 +140,7 @@ impl MeshSession {
             // (see `tunnel::expose`), so there is no accept() loop to share.
             SetupParams::new(author, sink)
                 .max_connections(MAX_CONNECTIONS)
-                .runtime_base(crate::runtime_base())
+                .runtime_base(base)
                 .cohost(cohost),
         )
         .await?;
@@ -330,11 +367,14 @@ impl MeshSession {
         Ok(self.core.ping().await?.into_iter())
     }
 
-    /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
-    /// waiting up to 3s. On timeout returns `Ok(())` and the task detaches.
+    /// Clean shutdown: ask the loop to broadcast `Left` and wind down, and
+    /// wait until it has ended and closed the endpoints. `Ok(())` means the
+    /// node is closed.
     ///
     /// # Errors
-    /// Returns an error if the event-loop task panicked or returned an error.
+    /// Returns an error if the event-loop task panicked or returned an error,
+    /// or if it did not end within the leave bound of the engine
+    /// (`NODE_LEAVE`, 14.5 s): the text says so, and the node is not closed.
     pub async fn leave(self) -> Result<(), SessionError> {
         self.core.leave().await
     }
