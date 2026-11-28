@@ -189,8 +189,9 @@ impl TaskRecord {
         self.last_activity = now;
     }
 
-    /// End the task as canceled by this node without a leg of its own to carry it (the peer left). The end takes the next seq, as the cancel of the sweep does, so
-    /// that an end sent again later is no repeat of a seq that the peer may already hold.
+    /// End the task as canceled by this node without a leg of its own to carry it (the peer
+    /// left). The end takes the next seq, as the cancel of the sweep does, so that an end sent
+    /// again later is no repeat of a seq that the peer may already hold.
     pub(crate) fn cancel_without_leg(&mut self, now: Instant) {
         self.close(TaskState::Canceled, now);
         self.take_seq_applied(self.seq.saturating_add(1));
@@ -4857,6 +4858,8 @@ mod tests {
         let applied = receive(&mut tasks, &beat_with_progress(10, 2));
         assert_eq!(applied.beat, None, "the beat asks and ends nothing");
         assert_eq!(tasks[&tid()].state, TaskState::Working, "the task goes on");
+        assert_eq!(tasks[&tid()].peer_seq, 5, "the seq held does not move back");
+        assert_eq!(tasks[&tid()].asked_at, None, "and no ask is marked");
     }
 
     /// An ask whose reply never came (the call timed out, or its reply was lost) lapses after one
