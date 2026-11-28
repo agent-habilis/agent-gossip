@@ -617,7 +617,7 @@ impl A2aApp {
             return;
         }
         if let Some(rec) = self.tasks.get_mut(&task_id) {
-            rec.state = crate::a2a::TaskState::Canceled;
+            rec.end(crate::a2a::TaskState::Canceled);
             rec.last_activity = Instant::now();
         }
         self.late_cancels

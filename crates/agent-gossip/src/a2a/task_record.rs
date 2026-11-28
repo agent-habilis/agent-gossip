@@ -113,7 +113,7 @@ impl TaskRecord {
     /// End the task in `state`, a terminal one. A finished task waits for nothing, so the reason goes with
     /// it: this is the one place that sets a terminal state, whether a leg, the timeout sweep or the
     /// departure of the peer ends the task.
-    fn end(&mut self, state: TaskState) {
+    pub(crate) fn end(&mut self, state: TaskState) {
         self.state = state;
         self.waiting = None;
     }
