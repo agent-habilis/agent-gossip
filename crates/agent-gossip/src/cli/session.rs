@@ -7,7 +7,7 @@ use habilis_network::runtime::state_file::{read_identity, read_session_entry};
 use habilis_network::runtime::{
     DaemonRecord, DaemonState, read_record, registry, state_file, wait_daemon_lock,
 };
-use habilis_network::util::process;
+use habilis_network::util::{process, tuning};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
@@ -16,6 +16,10 @@ use super::read_member::read_member;
 use super::target::Target;
 use super::{bell, leftovers};
 use crate::runtime_base;
+
+/// Seconds to wait for a signalled daemon to end before reporting it unconfirmed. Outlasts the engine's
+/// own leave budget.
+pub(super) const LEAVE_CONFIRM_SECS: u64 = tuning::NODE_LEAVE.as_secs() + 2;
 
 /// The daemons of the runtime base that run. The registry holds a lock file for each mesh and nickname
 /// that was used, and a daemon that runs has a record in it whose pid and start name a live process.
@@ -153,8 +157,6 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         gossip_flag,
         nickname,
         session_pid,
-        confirm_timeout_secs,
-        legacy_output: _,
     } = options;
     let mesh = gossip.or(gossip_flag);
     let parent = process::parent_of(std::process::id());
@@ -189,7 +191,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         .collect();
     // The waits start together and share 1 limit. A thread waits for the lock of each signalled daemon,
     // and the lock is free when that daemon has ended and removed its files.
-    let deadline = Instant::now() + Duration::from_secs(confirm_timeout_secs);
+    let deadline = Instant::now() + Duration::from_secs(LEAVE_CONFIRM_SECS);
     let mut waits: Vec<Option<oneshot::Receiver<bool>>> = Vec::new();
     for (target, sent) in &signalled {
         waits.push(sent.then(|| wait_for_stop(target.lock.clone())));
@@ -256,10 +258,7 @@ async fn stopped_before(wait: oneshot::Receiver<bool>, deadline: Instant) -> boo
 }
 
 pub(crate) fn session(options: &SessionOpts) -> Result<()> {
-    let SessionOpts {
-        session_pid,
-        legacy_output: _,
-    } = options;
+    let SessionOpts { session_pid } = options;
     let anchor = session_anchor(*session_pid, process::parent_of(std::process::id()))?;
     let base = runtime_base();
     let live = discover(&base);

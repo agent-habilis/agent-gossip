@@ -1,15 +1,17 @@
+use std::path::PathBuf;
 use std::time::Instant;
 
 use habilis_network::ops::directory::{self, Listing, ListingChange, Listings};
 use habilis_network::protocol::{
-    DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
+    DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, MessageBody, Nickname,
+    resolve_lookups,
 };
 use habilis_network::runtime::{CoHostPolicy, tuning};
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use super::directory_error::DirectoryError;
-use super::{MeshSession, event_sink};
+use super::{DIRECTORY_ADVERTISER_COHOST, MeshSession, event_sink};
 use crate::a2a::status_update_params;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
@@ -82,6 +84,65 @@ fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Li
     );
 }
 
+/// The task that collects a directory's ads. Aborts rather than detaches: a bare
+/// `JoinHandle` dropped on the floor keeps collecting. A field with its own `Drop`
+/// also lets `close` move the session out of its owner.
+#[derive(Debug)]
+pub(crate) struct Collector(JoinHandle<()>);
+
+impl Collector {
+    pub(crate) fn spawn(collect: impl Future<Output = ()> + Send + 'static) -> Self {
+        Self(tokio::spawn(collect))
+    }
+}
+
+impl Drop for Collector {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Join `directory` over `lookups` and broadcast `next_ad()` into it at every
+/// advertise interval, until the future is dropped. The directory session writes its files in `base`,
+/// the runtime base of the call that created the advertised mesh. A directory-join failure
+/// logs and ends it: whatever the ad lists is unaffected, only unlisted.
+pub(crate) async fn advertise(
+    directory: MeshName,
+    lookups: LookupOpts,
+    base: PathBuf,
+    mut next_ad: impl FnMut() -> MessageBody + Send,
+) {
+    let mesh = directory::directory_mesh(&directory, lookups);
+    // Co-host the directory rendezvous from t=0 so a beacon exists
+    // before any discoverer subscribes (a `Deferred` advertiser would
+    // only beacon at the first heal tick, after discoverers already
+    // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
+    let session =
+        match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST, base).await {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    target: "agent_gossip::directory",
+                    %error,
+                    directory = %directory,
+                    "directory advertise: could not join the directory; the ad stays unlisted"
+                );
+                return;
+            }
+        };
+    let mut ticker = tokio::time::interval(tuning::advertise_interval());
+    loop {
+        ticker.tick().await;
+        if let Err(error) = session.broadcast(next_ad()).await {
+            tracing::debug!(
+                target: "agent_gossip::directory",
+                %error,
+                "directory advertise: re-broadcast failed (will retry next tick)"
+            );
+        }
+    }
+}
+
 /// A live view of a directory.
 ///
 /// Joins the directory's mesh as an
@@ -103,10 +164,12 @@ fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Li
 /// ```
 #[derive(Debug)]
 pub struct Directory {
-    session: Option<MeshSession>,
+    // First, so that an implicit drop stops the collector before the session, as `close` does.
+    collector: Collector,
+    session: MeshSession,
     snapshot_rx: watch::Receiver<Vec<MeshListing>>,
+    /// `None` after [`Directory::events`] hands the receiver out.
     events_rx: Option<event_sink::EventReceiver<DirectoryEvent>>,
-    task: Option<JoinHandle<()>>,
 }
 
 impl Directory {
@@ -153,7 +216,7 @@ impl Directory {
         let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
         let (events_tx, events_rx) = event_sink::event_feed();
 
-        let task = tokio::spawn(async move {
+        let collector = Collector::spawn(async move {
             let ttl = tuning::directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
@@ -200,10 +263,10 @@ impl Directory {
         });
 
         Ok(Self {
-            session: Some(session),
+            collector,
+            session,
             snapshot_rx,
             events_rx: Some(events_rx),
-            task: Some(task),
         })
     }
 
@@ -219,13 +282,11 @@ impl Directory {
         self.events_rx.take()
     }
 
-    /// The directory session's `(mesh id, nickname)` while it is open —
+    /// The directory session's `(mesh id, nickname)` —
     /// used by the CLI to route its logs to the per-member file via
     /// `logging::attach` (so the picker / JSON stream stays clean).
-    pub(crate) fn session_identity(&self) -> Option<(&MeshId, &Nickname)> {
-        self.session
-            .as_ref()
-            .map(|session| (session.mesh_id(), session.nickname()))
+    pub(crate) fn session_identity(&self) -> (&MeshId, &Nickname) {
+        (self.session.mesh_id(), self.session.nickname())
     }
 
     /// Leave the directory and stop collecting.
@@ -233,32 +294,17 @@ impl Directory {
     /// # Errors
     /// Propagates a clean-shutdown error from the underlying directory
     /// [`MeshSession::leave`] (event-loop task panic / loop error).
-    pub async fn close(mut self) -> Result<(), DirectoryError> {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-        if let Some(session) = self.session.take() {
-            session.leave().await.map_err(DirectoryError::Leave)?;
-        }
-        Ok(())
+    pub async fn close(self) -> Result<(), DirectoryError> {
+        drop(self.collector);
+        self.session.leave().await.map_err(DirectoryError::Leave)
     }
 }
 
-impl Drop for Directory {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-        // The directory `MeshSession` (if not already taken by `close`)
-        // drops here, winding down its own loop.
-    }
-}
-
-/// habilis-network's `resolve_lookups` with the old `public` default: a networked
+/// habilis-network's `resolve_lookups` with a `public` default: a networked
 /// surface (a directory, a bridge) that names no lookup gets the all-on public
 /// preset. habilis-network moved that choice out to its callers. The lookups are
-/// baked into the gossip id, so this must resolve exactly as before, or peers
-/// on an older version land in a different directory.
+/// baked into the gossip id, so two peers that resolve them differently land
+/// in different directories.
 pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> LookupOpts {
     if public && !lookups.any() {
         LookupOpts::public_preset()

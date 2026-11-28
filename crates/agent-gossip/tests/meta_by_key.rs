@@ -3,13 +3,11 @@
     reason = "an integration test crate has no public docs; the module path names it"
 )]
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
-use common::{CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Node, POLL, RECOVERY_TIMEOUT};
+use common::{InProcNode, MSG_TIMEOUT, Node, POLL, RECOVERY_TIMEOUT, http_get, wait_a2a};
 use serde_json::{Value, json};
 
 const SHARED: &str = "dup";
@@ -158,45 +156,11 @@ async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_a
     observer.leave().await;
 }
 
-/// One GET against the local A2A binding; returns `(status, body)`.
-fn get(port: u16, path: &str) -> (u16, String) {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to the a2a port");
-    let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
-    stream
-        .write_all(request.as_bytes())
-        .expect("the server stays up until the client has sent its request");
-    let mut raw = String::new();
-    stream.read_to_string(&mut raw).expect("read the response");
-    let code: &str = raw
-        .split_whitespace()
-        .nth(1)
-        .expect("a well-formed HTTP response starts with a status line");
-    let status: u16 = code.parse().expect("the status code is a number");
-    let (_, body) = raw.split_once("\r\n\r\n").unwrap_or_default();
-    (status, body.to_owned())
-}
-
-/// The port of the local A2A binding, once the daemon is ready.
-fn wait_port(state_file: &std::path::Path) -> u16 {
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Ok(raw) = std::fs::read_to_string(state_file)
-            && let Ok(parsed) = serde_json::from_str::<Value>(&raw)
-            && parsed["ready"] == true
-            && let Some(port) = parsed["a2a_port"].as_u64()
-        {
-            return u16::try_from(port).expect("a port fits u16");
-        }
-        std::thread::sleep(POLL);
-    }
-    panic!("the daemon never reported a bound a2a port");
-}
-
 /// The card that the route serves for `path`, once it answers 200.
 fn await_served_card(port: u16, path: &str) -> Value {
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
-        let (status, body) = get(port, path);
+        let (status, body) = http_get(port, path);
         if status == 200 {
             return serde_json::from_str(&body).expect("the route answers 200 with a JSON card");
         }
@@ -235,7 +199,7 @@ async fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_i
     );
     let first = InProcNode::join(&mesh, SHARED).await;
     assert!(host.wait_ready(&mesh), "the host socket never appeared");
-    let port = wait_port(&state_file);
+    let (port, _token) = wait_a2a(&state_file);
     let route = format!("/peers/{SHARED}/.well-known/agent-card.json");
     let first_key = first
         .session
@@ -264,7 +228,7 @@ async fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_i
     // time to arrive and be refused before it asks for the card.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    let (status, body) = get(port, &route);
+    let (status, body) = http_get(port, &route);
     assert_eq!(
         status, 200,
         "a nickname with one admitted holder is not served: {body}"
@@ -277,7 +241,7 @@ async fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_i
         "the nickname moved to the key that the gate refused"
     );
 
-    let (key_status, key_body) = get(
+    let (key_status, key_body) = http_get(
         port,
         &format!("/peers/{first_key}/.well-known/agent-card.json"),
     );
@@ -293,7 +257,7 @@ async fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_i
         "the card of a key in hex is the card of another key"
     );
 
-    let (refused_status, refused_body) = get(
+    let (refused_status, refused_body) = http_get(
         port,
         &format!("/peers/{second_key}/.well-known/agent-card.json"),
     );

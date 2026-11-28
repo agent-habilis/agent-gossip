@@ -1,7 +1,7 @@
-use super::drift_warning::drift_warning;
+use super::agent;
 use super::ready_state_file::ReadyStateFile;
 
-/// Print the session identity as a JSON object for `agent-gossip ready --output json`,
+/// Print the session identity as a JSON object for `agent-gossip ready`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"gossip":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
@@ -19,7 +19,7 @@ pub(super) fn print_ready_identity(ready: &ReadyStateFile) {
         // — the stream the session-start script sends to /dev/null — so the
         // warning had no way to reach anyone. It is a local check on the
         // installed skill files, needing no daemon, so `ready` runs it itself.
-        ("drift", drift_warning()),
+        ("drift", agent::home_drift_warning()),
     ] {
         if let Some(value) = value {
             obj.insert(key.to_owned(), value.into());

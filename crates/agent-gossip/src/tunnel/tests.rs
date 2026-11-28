@@ -3,10 +3,8 @@
 //! is rewritten, bytes round-trip, a bad token is rejected, and the 1:1
 //! invariant holds.
 
-use std::sync::atomic::AtomicBool;
-
-use futures_util::stream::FuturesUnordered;
 use habilis_network::iroh::endpoint::ConnectionError;
+use habilis_network::iroh::{EndpointAddr, SecretKey};
 use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
 use habilis_network::protocol::{LookupOpts, Password};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,7 +13,7 @@ use tokio::net::{TcpListener, TcpStream};
 use super::A2A_ALPN;
 use super::a2a_ticket::A2aTicket;
 use super::bridge::{Bridge, LocalSide, SharedConnection, forward_one};
-use super::expose_params::{bind, serve_connection};
+use super::expose_params::{bind, serve};
 use super::local_gate::{LocalGate, TOKEN_HEADER};
 
 /// A local HTTP origin that answers every connection with the same
@@ -42,16 +40,27 @@ async fn spawn_origin(response: Vec<u8>) -> String {
     format!("127.0.0.1:{port}")
 }
 
-/// A minimal Agent Card HTTP response with the given absolute `url`.
-fn card_response(url: &str) -> Vec<u8> {
-    let body =
-        format!(r#"{{"protocolVersion":"0.3.0","name":"origin","url":"{url}","skills":[]}}"#);
+/// A `Content-Length`-framed `application/json` HTTP response.
+pub(super) fn json_response(body: &str) -> Vec<u8> {
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     )
     .into_bytes()
+}
+
+/// A minimal Agent Card HTTP response with the given absolute `url`.
+pub(super) fn card_response(url: &str) -> Vec<u8> {
+    json_response(&format!(
+        r#"{{"protocolVersion":"0.3.0","name":"origin","url":"{url}","skills":[]}}"#
+    ))
+}
+
+/// An address on loopback whose endpoint id comes from `byte`.
+pub(super) fn sample_addr(byte: u8) -> EndpointAddr {
+    EndpointAddr::new(SecretKey::from_bytes(&[byte; 32]).public())
+        .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"))
 }
 
 /// Stand up a loopback exposer forwarding to `origin`, serving with the shared
@@ -64,24 +73,7 @@ async fn spawn_exposer(
         .await
         .expect("a loopback endpoint needs no network, so the bind cannot fail");
     let accept_endpoint = endpoint.clone();
-    tokio::spawn(async move {
-        use futures_util::StreamExt as _;
-
-        let paired = AtomicBool::new(false);
-        let mut connections = FuturesUnordered::new();
-        loop {
-            tokio::select! {
-                accepted = accept_endpoint.accept() => {
-                    let Some(incoming) = accepted else { break };
-                    let auth = auth.clone();
-                    connections.push(async {
-                        let _ = serve_connection(incoming, &origin, auth, &paired).await;
-                    });
-                }
-                Some(()) = connections.next() => {}
-            }
-        }
-    });
+    tokio::spawn(async move { serve(&accept_endpoint, &origin, &auth).await });
     (endpoint, ticket)
 }
 

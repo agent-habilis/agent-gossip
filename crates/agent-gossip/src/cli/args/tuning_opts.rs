@@ -42,10 +42,6 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_KEEPALIVE_SECS)]
     pub task_keepalive_secs: u64,
 
-    /// Task silence from both agents after which the daemons stop beating it (seconds).
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_SKILL_SILENCE_MAX_SECS)]
-    pub task_skill_silence_max_secs: u64,
-
     /// Worker-agent silence after which the initiator's daemon raises `task_stalled` (seconds).
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_STALL_CHECK_SECS)]
     pub task_stall_check_secs: u64,
@@ -57,14 +53,6 @@ pub(crate) struct TuningOpts {
     /// Own content legs that may wait for their send before a new one is refused.
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_CAP)]
     pub unsent_legs_cap: usize,
-
-    /// Bytes of body that the own task legs may hold before a new one is refused.
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::OWN_LEGS_BYTES_CAP)]
-    pub own_legs_bytes_cap: usize,
-
-    /// Bytes that the own content legs may hold before a new one is refused.
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_BYTES_CAP)]
-    pub unsent_legs_bytes_cap: usize,
 
     /// Blob groups of calls that one task may hold before a call with a file is refused.
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::CALL_BLOB_GROUPS_PER_TASK_CAP)]
@@ -109,14 +97,6 @@ pub(crate) struct TuningOpts {
     /// Use the loopback (private) directory + relax the advertise→public guard.
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
-
-    /// How long a member that let go of the rendezvous waits before it comes back to it (seconds).
-    #[arg(long, hide = true, default_value_t = secs(defaults::RENDEZVOUS_PERIODIC_RETURN))]
-    pub rendezvous_periodic_return_secs: u64,
-
-    /// Narrow topic-mesh lookups to mDNS only (no DHT, no relay).
-    #[arg(long, hide = true, default_value_t = false)]
-    pub topic_mdns_only: bool,
 }
 
 /// The whole seconds of a tuning default, the `u64` the flag takes.
@@ -140,9 +120,6 @@ impl TuningOpts {
         tuning.directory_expiry = Duration::from_secs(self.directory_expiry_secs);
         tuning.backfill_interval = Duration::from_secs(self.backfill_interval_secs);
         tuning.directory_private = self.directory_private;
-        tuning.rendezvous_periodic_return =
-            Duration::from_secs(self.rendezvous_periodic_return_secs);
-        tuning.topic_mdns_only = self.topic_mdns_only;
         tuning
     }
 
@@ -154,13 +131,10 @@ impl TuningOpts {
         A2aTuning {
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
-            task_skill_silence_max_secs: self.task_skill_silence_max_secs,
             task_stall_check_secs: self.task_stall_check_secs,
             longpoll_max_ms: self.longpoll_max_ms,
             own_legs_cap: self.own_legs_cap,
             unsent_legs_cap: self.unsent_legs_cap,
-            own_legs_bytes_cap: self.own_legs_bytes_cap,
-            unsent_legs_bytes_cap: self.unsent_legs_bytes_cap,
             call_blob_groups_per_task_cap: self.call_blob_groups_per_task_cap,
         }
     }

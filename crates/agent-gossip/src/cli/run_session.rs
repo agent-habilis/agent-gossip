@@ -6,8 +6,7 @@ use habilis_network::util::logging;
 
 use super::args::SharedServerOpts;
 use super::detach_if_owned::detach_if_owned;
-use super::drift_warning::drift_warning;
-use super::start_failure;
+use super::{agent, start_failure};
 use crate::a2a::a2a_app::{A2aApp, Startup, SurfacedIo};
 use crate::a2a::a2a_binding;
 use crate::api;
@@ -46,7 +45,7 @@ async fn serve(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the in-process paths pass `None` so in-process tests
     // stay hermetic. `agent-gossip status` is the on-demand counterpart.
-    let drift = drift_warning();
+    let drift = agent::home_drift_warning();
     // The CLI owns the a2a application state. Tap its output so surfaced events
     // reach the app-side `poll`/`fetch` ring; the engine emits `NodeEvent`s
     // through `io.sink()` (`cfg.sink`) and the app's own `Output` render the

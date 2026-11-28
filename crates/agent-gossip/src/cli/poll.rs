@@ -7,8 +7,6 @@ use super::ready_state_file;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::surfaced_event;
 
-/// Query the running daemon's live peer roster. Always emits the
-/// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
 pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
     // First, so `--max-secs` counts from the process start like the harness
     // clock does, readiness wait included.

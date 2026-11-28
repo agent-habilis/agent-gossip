@@ -18,7 +18,6 @@ use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::a2a_app::SurfacedIo;
-use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::emission::{Output, OutputEvent, PingPeer, capture_events};
 
@@ -335,19 +334,7 @@ impl MeshSession {
         &self,
         artifact: TaskArtifactParams,
     ) -> Result<Authored, SessionError> {
-        let TaskArtifactParams {
-            task_id,
-            text,
-            file,
-            file_name,
-            file_mime,
-        } = artifact;
-        let file = file.map(|path| FileRef {
-            path,
-            name: file_name,
-            mime: file_mime,
-        });
-        self.core.task_artifact(task_id, text, file).await
+        self.core.task_artifact(artifact).await
     }
 
     /// Call a peer's A2A server over gossip (request/response). Returns the

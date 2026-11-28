@@ -1,6 +1,6 @@
 use std::process::Output;
 
-use crate::test_cmd;
+use crate::task_create_command;
 
 /// Create a task on `to` via the CLI and return the raw `Output`.
 ///
@@ -18,21 +18,7 @@ use crate::test_cmd;
 /// Panics if the CLI process fails to spawn.
 #[must_use]
 pub fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &str) -> Output {
-    test_cmd()
-        .args([
-            "a2a",
-            "call",
-            "--gossip",
-            mesh,
-            "--nickname",
-            nickname,
-            "--to",
-            to,
-            "--method",
-            "SendMessage",
-            "--text",
-            text,
-        ])
+    task_create_command(mesh, nickname, to, text)
         .output()
         .expect("a2a call command failed to spawn")
 }

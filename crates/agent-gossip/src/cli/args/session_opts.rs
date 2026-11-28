@@ -1,7 +1,5 @@
 use clap::Parser;
 
-use super::legacy_output::LegacyOutput;
-
 #[derive(Parser, Debug)]
 pub(crate) struct SessionOpts {
     /// The agent-session process to report for: a daemon counts as this
@@ -11,9 +9,6 @@ pub(crate) struct SessionOpts {
     /// init owns every daemon.
     #[arg(long)]
     pub session_pid: Option<u32>,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

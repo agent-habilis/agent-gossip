@@ -31,7 +31,7 @@ use super::status_update_params::ReaderBeat;
 use super::{META_REASON, TaskId, TaskState, status_update_params, wire};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::tuning::{
-    TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs,
+    TASK_SKILL_SILENCE_MAX_SECS, TASK_SURFACED_LEGS_CAP, task_keepalive_secs,
     task_stall_check_secs, task_timeout_secs,
 };
 use crate::a2a::{broadcast_params, tuning};
@@ -51,20 +51,6 @@ impl TaskRole {
             TaskRole::Initiator => TaskRole::Receiver,
             TaskRole::Receiver => TaskRole::Initiator,
         }
-    }
-}
-
-/// When the status leg that set or cleared `waiting` was sent: its wire second,
-/// and its order value when its peer sent one.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct WaitingMark {
-    at: UnixSecs,
-    order: Option<u64>,
-}
-
-impl WaitingMark {
-    fn new(at: UnixSecs, order: Option<u64>) -> Self {
-        Self { at, order }
     }
 }
 
@@ -103,27 +89,21 @@ pub(crate) struct TaskRecord {
     /// measures how long both agents have left the task alone, and a forgotten
     /// task stops being beaten.
     pub last_skill_activity: Instant,
-    /// Whether the counterparty has beaten this task at least once. A 0.8/0.9
-    /// peer beats only while it owes the next move, so until it has, its
-    /// silence cannot be read as death.
-    pub peer_beats: bool,
     /// Ids of the peer's legs already surfaced for this task. The engine
     /// forgets a frame id after a bounded count, and a relay can then deliver
     /// the same leg again, so the app remembers what it has shown. Beats are
     /// never recorded: at one every 30 s they would evict every real id.
     pub surfaced_legs: BoundedFifoSet<MessageId>,
-    /// Last progress fraction reported, replayed on keepalives.
-    pub last_fraction: Option<(u64, u64)>,
     /// Which role currently owes the next move.
     pub ball: TaskRole,
     /// Why the worker waits on its own user, from the `mesh:waiting` key of its
     /// last status leg. Any other status leg clears it.
     pub waiting: Option<String>,
-    /// The status leg that last set or cleared `waiting`. A leg older than this
-    /// is a replay and changes nothing. A worker clock that steps back drops
-    /// newer waiting updates until it passes this time again, the same exposure
-    /// as `is_stale`, accepted.
-    pub waiting_mark: Option<WaitingMark>,
+    /// The order value of the status leg that last set or cleared `waiting`. A leg with a lower
+    /// value is a replay and changes nothing. A worker that restarts with its clock set back
+    /// drops newer waiting updates until its clock passes this value again, the same exposure as
+    /// `is_stale`, accepted.
+    pub waiting_order: Option<u64>,
     /// When this node last told its agent that the worker's reader is silent,
     /// so one task raises one event per interval.
     pub last_stall_event: Option<Instant>,
@@ -136,6 +116,27 @@ impl TaskRecord {
     fn end(&mut self, state: TaskState) {
         self.state = state;
         self.waiting = None;
+    }
+
+    /// A record as its opening leg leaves it: `Submitted`, with the next move owed by the
+    /// receiver.
+    fn open(peer_key: AuthorKey, peer: Nickname, role: TaskRole, now: Instant) -> Self {
+        Self {
+            peer_key,
+            peer,
+            role,
+            state: TaskState::Submitted,
+            review: false,
+            last_activity: now,
+            last_sent: now,
+            last_peer_activity: now,
+            last_skill_activity: now,
+            surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
+            waiting: None,
+            waiting_order: None,
+            last_stall_event: None,
+            ball: TaskRole::Receiver,
+        }
     }
 
     /// Both parties beat every live task, whoever holds the ball: a human
@@ -152,7 +153,7 @@ impl TaskRecord {
 
     fn skill_silence_exceeded(&self, now: Instant) -> bool {
         now.duration_since(self.last_skill_activity)
-            > Duration::from_secs(task_skill_silence_max_secs())
+            > Duration::from_secs(TASK_SKILL_SILENCE_MAX_SECS)
     }
 }
 
@@ -182,7 +183,7 @@ fn stalled(reader: ReaderBeat, rec: &TaskRecord, interval: Duration, now: Instan
 
 /// Check the reader keys of a fresh inbound beat (the value [`ingest`] returns)
 /// for a silent worker, and mark the task so the next notice waits one
-/// interval. A beat from an old peer carries no keys, so it never gets here.
+/// interval. A beat from a worker that never polled carries no keys, so it never gets here.
 pub(crate) fn stall_notice(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     task_id: &TaskId,
@@ -230,8 +231,6 @@ pub(crate) struct LegInfo<'source> {
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
-    /// `done/total` carried by a beat (else `None`).
-    pub fraction: Option<(u64, u64)>,
 }
 
 /// The value cluster [`ingest`] needs beyond its `tasks` registry handle.
@@ -246,7 +245,7 @@ pub(crate) struct IngestLegParams<'caller> {
 /// Feed one **validated logical** task frame into the registry from the
 /// broadcast (`mine = true`) or receive (`mine = false`) path. The single
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
-/// peer and the beat fraction) and advances the machine. A frame that
+/// peer) and advances the machine. A frame that
 /// belongs to no task is a no-op.
 ///
 /// Returns the worker's [`ReaderBeat`] when the frame is a fresh inbound beat
@@ -280,23 +279,23 @@ pub(crate) fn ingest(
     let mut waiting = None;
     let mut order = None;
     let mut reader = None;
-    let (kind, fraction) = match tag.as_str() {
+    let kind = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = status_update_params::status_payload(frame) else {
                 return None;
             };
             if status_update_params::is_beat(&payload) {
                 reader = status_update_params::beat_reader(&payload);
-                (LegKind::Beat, status_update_params::beat_fraction(&payload))
+                LegKind::Beat
             } else {
                 if payload.status.state == TaskState::Working {
                     waiting = status_update_params::status_waiting(&payload);
                 }
                 order = status_update_params::status_order(&payload);
-                (LegKind::Status(payload.status.state), None)
+                LegKind::Status(payload.status.state)
             }
         }
-        wire::ARTIFACT => (LegKind::Artifact, None),
+        wire::ARTIFACT => LegKind::Artifact,
         _ => return None,
     };
     if kind == LegKind::Beat && !mine && is_stale(frame) {
@@ -312,41 +311,31 @@ pub(crate) fn ingest(
             peer: None,
             kind,
             mine,
-            fraction,
         },
         now,
     );
     // Every status leg restates whether the worker waits, so a plain one clears
     // it. A relay can replay an old leg, so two checks gate the waiting update
-    // only: `is_newer_than_waiting` drops a leg older than the last answer, and
-    // `surfaced_legs` drops a leg already shown, which covers a replay in the
-    // same second as the answer. `apply` above still runs for every leg and
-    // `advance` is idempotent. A finished task waits for nothing.
+    // only: the order value drops a leg older than the last answer, and
+    // `surfaced_legs` drops a leg already shown, which covers a replay of the
+    // answer itself. `apply` above still runs for every leg and `advance` is
+    // idempotent. A finished task waits for nothing: `end` cleared its reason. Only the cancel that a
+    // daemon sends on its own has no order value, and it is terminal.
     if matches!(kind, LegKind::Status(_))
         && let Some(rec) = tasks.get_mut(task_id)
         && !rec.state.is_terminal()
-        && is_newer_than_waiting(rec, frame.timestamp, order)
+        && let Some(order) = order
+        && rec.waiting_order.is_none_or(|last| order >= last)
         && !rec.surfaced_legs.contains(&frame.id)
     {
         rec.waiting = waiting;
-        rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
-        // Remembered here, not only by `note_surfaced`: a replay in the
-        // same second as this leg must not pass the clock check again.
+        rec.waiting_order = Some(order);
+        // Remembered here, not only by `note_surfaced`: a replay of this
+        // leg has the same order value, so it must not pass the check again.
         rec.surfaced_legs.insert(frame.id.clone());
     }
     // Only a beat from the other party says anything about its reader.
     reader.filter(|_| !mine)
-}
-
-/// Whether a status leg is not older than the one that last set `waiting`. When
-/// both legs carry an order value it decides, so two legs of one second stay in
-/// the order they were sent. Otherwise the wire second decides, as before.
-fn is_newer_than_waiting(rec: &TaskRecord, at: UnixSecs, order: Option<u64>) -> bool {
-    rec.waiting_mark
-        .is_none_or(|mark| match (order, mark.order) {
-            (Some(order), Some(last)) => order >= last,
-            _ => at >= mark.at,
-        })
 }
 
 /// A beat older than one idle timeout proves nothing about the peer now. The
@@ -506,21 +495,7 @@ pub(crate) fn adopt_initiator(
             // First adoption (task creation): open the initiator-side record at
             // the server-minted state.
             slot.insert(TaskRecord {
-                peer_key: *peer_key,
-                peer: peer.clone(),
-                role: TaskRole::Initiator,
                 state: task_state,
-                review: false,
-                last_activity: now,
-                last_sent: now,
-                last_peer_activity: now,
-                last_skill_activity: now,
-                peer_beats: false,
-                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
-                last_fraction: None,
-                waiting: None,
-                waiting_mark: None,
-                last_stall_event: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
                 ball: if task_state == TaskState::InputRequired {
@@ -528,6 +503,7 @@ pub(crate) fn adopt_initiator(
                 } else {
                     TaskRole::Receiver
                 },
+                ..TaskRecord::open(*peer_key, peer.clone(), TaskRole::Initiator, now)
             });
         }
         Entry::Occupied(mut slot) => {
@@ -578,30 +554,14 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         && let Some(peer) = leg.peer
     {
         // The opening leg mints the record; a duplicate offer just touches it.
+        let role = if leg.mine {
+            TaskRole::Initiator
+        } else {
+            TaskRole::Receiver
+        };
         tasks
             .entry(leg.task_id.clone())
-            .or_insert_with(|| TaskRecord {
-                peer_key: *leg.peer_key,
-                peer: peer.clone(),
-                role: if leg.mine {
-                    TaskRole::Initiator
-                } else {
-                    TaskRole::Receiver
-                },
-                state: TaskState::Submitted,
-                review: false,
-                last_activity: now,
-                last_sent: now,
-                last_peer_activity: now,
-                last_skill_activity: now,
-                peer_beats: false,
-                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
-                last_fraction: None,
-                waiting: None,
-                waiting_mark: None,
-                last_stall_event: None,
-                ball: TaskRole::Receiver,
-            });
+            .or_insert_with(|| TaskRecord::open(*leg.peer_key, peer.clone(), role, now));
     }
 
     let Some(rec) = tasks.get_mut(leg.task_id) else {
@@ -622,18 +582,13 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     }
 
     advance(rec, leg.kind, leg.mine);
-    if let Some(fraction) = leg.fraction {
-        rec.last_fraction = Some(fraction);
-    }
     rec.last_activity = now;
     if leg.mine {
         rec.last_sent = now;
     } else {
         rec.last_peer_activity = now;
     }
-    if leg.kind == LegKind::Beat {
-        rec.peer_beats |= !leg.mine;
-    } else {
+    if leg.kind != LegKind::Beat {
         rec.last_skill_activity = now;
     }
 }
@@ -747,16 +702,7 @@ async fn send_cancels(
             status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
                 .with_metadata(serde_json::json!({ META_REASON: reason })),
         );
-        broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key,
-                task_id,
-                update: &update,
-            },
-        )
-        .await;
+        broadcast_status(state, context, peer_key, &update).await;
     }
 }
 
@@ -854,8 +800,7 @@ fn sweep_registry(
     let mut expired = Vec::new();
     for (task_id, rec) in tasks.iter_mut() {
         let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
-        let peer_gone = rec.peer_beats || rec.skill_silence_exceeded(now);
-        if !rec.state.is_terminal() && peer_silent && peer_gone {
+        if !rec.state.is_terminal() && peer_silent {
             rec.end(TaskState::Canceled);
             rec.last_activity = now;
             expired.push((task_id.clone(), rec.peer_key));
@@ -923,9 +868,6 @@ pub(crate) async fn tick_task_keepalive(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
-    /// `(task_id, peer, state, last_fraction)` for one keepalive-due task.
-    type KeepaliveDue = (TaskId, AuthorKey, TaskState, Option<(u64, u64)>);
-
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
     let (bell, last_poll) = super::node::reader_liveness(app, context);
@@ -937,43 +879,23 @@ pub(crate) async fn tick_task_keepalive(
         .tasks
         .iter()
         .filter(|(_, rec)| rec.should_keepalive(now, cadence));
-    let due: Vec<KeepaliveDue> = quiet
-        .map(|(task_id, rec)| (task_id.clone(), rec.peer_key, rec.state, rec.last_fraction))
+    let due: Vec<(TaskId, AuthorKey, TaskState)> = quiet
+        .map(|(task_id, rec)| (task_id.clone(), rec.peer_key, rec.state))
         .collect();
 
-    for (task_id, peer_key, task_state, fraction) in due {
+    for (task_id, peer_key, task_state) in due {
         let update = status_update_params::status_update(
             context.mesh,
-            status_update_params::StatusUpdateParams::new(&task_id, task_state).with_metadata(
-                status_update_params::beat_metadata_with_reader(fraction, reader),
-            ),
+            status_update_params::StatusUpdateParams::new(&task_id, task_state)
+                .with_metadata(status_update_params::beat_metadata_with_reader(reader)),
         );
-        let sent = broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key: &peer_key,
-                task_id: &task_id,
-                update: &update,
-            },
-        )
-        .await;
+        let sent = broadcast_status(state, context, &peer_key, &update).await;
         if sent && let Some(rec) = app.tasks.get_mut(&task_id) {
             let sent_at = Instant::now();
             rec.last_activity = sent_at;
             rec.last_sent = sent_at;
         }
     }
-}
-
-/// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
-/// handles.
-struct BroadcastStatusParams<'caller> {
-    peer_key: &'caller AuthorKey,
-    /// The task id rides inside the status payload body (8.0); the envelope no
-    /// longer carries it, so this is unused here beyond documenting the leg.
-    task_id: &'caller TaskId,
-    update: &'caller super::TaskStatusUpdate,
 }
 
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
@@ -985,13 +907,9 @@ struct BroadcastStatusParams<'caller> {
 async fn broadcast_status(
     state: &EventLoopState,
     context: &HandlerCtx<'_>,
-    params: BroadcastStatusParams<'_>,
+    peer_key: &AuthorKey,
+    update: &super::TaskStatusUpdate,
 ) -> bool {
-    let BroadcastStatusParams {
-        peer_key,
-        task_id: _task_id,
-        update,
-    } = params;
     let Ok(body) = status_update_params::payload_body(update) else {
         return false;
     };
@@ -1035,9 +953,7 @@ mod tests {
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
     use crate::a2a::status_update_params::ReaderBeat;
-    use crate::a2a::{
-        TaskId, extensions, rpc_error, status_update_params, task_record, tuning, wire,
-    };
+    use crate::a2a::{TaskId, rpc_error, status_update_params, task_record, tuning, wire};
 
     fn tid() -> TaskId {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
@@ -1240,44 +1156,6 @@ mod tests {
         );
     }
 
-    /// A 0.8/0.9 peer beats only while it owes the next move, so its silence
-    /// says nothing about whether it lives. Reaping it after one idle timeout
-    /// cancelled a working task 2 min after accept, sooner than before the
-    /// heartbeat.
-    #[test]
-    fn a_peer_that_never_beat_is_not_reaped_for_silence() {
-        let timeout = Duration::from_mins(2);
-        let now = Instant::now();
-        let accepted = now
-            .checked_sub(timeout * 2)
-            .expect("the test instant is far from the clock origin");
-        let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, false), accepted);
-        apply(
-            &mut tasks,
-            &leg(LegKind::Status(TaskState::Working), true),
-            accepted,
-        );
-
-        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
-        assert!(expired.is_empty(), "an old peer's silence is not death");
-    }
-
-    /// The silence cap still ends a task with a peer that never beat.
-    #[test]
-    fn a_peer_that_never_beat_is_reaped_after_the_silence_cap() {
-        let timeout = Duration::from_mins(2);
-        let now = Instant::now();
-        let day_ago = now
-            .checked_sub(Duration::from_hours(25))
-            .expect("the test instant is far from the clock origin");
-        let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
-
-        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
-        assert_eq!(expired.len(), 1, "the one expired task is reported");
-    }
-
     /// A beat is only evidence while it is fresh. The engine dedups by a
     /// bounded count, not by age, so a relay that re-injects an old beat after
     /// the peer died must not keep the task alive.
@@ -1294,7 +1172,7 @@ mod tests {
         let payload = status_update_params::status_update(
             &mesh,
             status_update_params::StatusUpdateParams::new(&tid(), TaskState::Working)
-                .with_metadata(status_update_params::beat_metadata(None)),
+                .with_metadata(status_update_params::beat_metadata()),
         );
         let mut beat = Message::new_app(
             &mesh,
@@ -1338,7 +1216,7 @@ mod tests {
     fn status_leg(beat: bool) -> Message {
         status_frame(
             TaskState::Working,
-            beat.then(|| status_update_params::beat_metadata(None)),
+            beat.then(status_update_params::beat_metadata),
         )
     }
 
@@ -1400,9 +1278,7 @@ mod tests {
     fn beat_from_worker(reader: Option<ReaderBeat>) -> Message {
         status_frame(
             TaskState::Working,
-            Some(status_update_params::beat_metadata_with_reader(
-                None, reader,
-            )),
+            Some(status_update_params::beat_metadata_with_reader(reader)),
         )
     }
 
@@ -1515,7 +1391,7 @@ mod tests {
         );
     }
 
-    /// A beat from an old peer carries no reader keys, so it is never flagged.
+    /// A beat from a worker that never polled carries no reader keys, so it is never flagged.
     #[test]
     fn a_beat_without_reader_keys_raises_no_notice() {
         let now = Instant::now();
@@ -1529,14 +1405,11 @@ mod tests {
     }
 
     /// A working status leg for `tid()` at wire time `at`, with a waiting reason
-    /// when one is given.
+    /// when one is given. Its order value is the wire second, in milliseconds.
     fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> Message {
-        let mut frame = status_frame(
-            TaskState::Working,
-            status_update_params::waiting_metadata(reason),
-        );
-        frame.timestamp = at;
-        frame
+        let order_ms =
+            u64::try_from(at.as_secs()).expect("the test time is after the epoch") * 1_000;
+        ordered_leg(reason, at, order_ms)
     }
 
     fn ingest_inbound(registry: &mut HashMap<TaskId, TaskRecord>, frame: &Message) {
@@ -1705,31 +1578,6 @@ mod tests {
         );
     }
 
-    /// A leg without an order value, from a peer that does not send one, is
-    /// ordered by its wire second, as before.
-    #[test]
-    fn a_leg_without_an_order_value_is_ordered_by_its_second() {
-        let at = UnixSecs::now();
-        let mut tasks = working_task_we_opened(Instant::now());
-        ingest_inbound(&mut tasks, &ordered_leg(None, at, 2_000));
-
-        ingest_inbound(
-            &mut tasks,
-            &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
-        );
-        assert_eq!(
-            tasks[&tid()].waiting.as_deref(),
-            Some("asks its user"),
-            "the waiting question is the one asked"
-        );
-        ingest_inbound(&mut tasks, &waiting_leg(None, at));
-        assert_eq!(
-            tasks[&tid()].waiting.as_deref(),
-            Some("asks its user"),
-            "an older second must not clear the reason"
-        );
-    }
-
     /// The clock steps back between two legs: the clear carries a higher order
     /// value but an older wire second. The order value decides, so the clear wins.
     #[test]
@@ -1754,31 +1602,21 @@ mod tests {
         );
     }
 
-    /// A reason set by a leg without an order value is ordered by its second
-    /// against a later leg that does carry one.
+    /// The skill path puts an order value on each status leg. A leg without one cannot be put
+    /// in order, so it does not change the reason.
     #[test]
-    fn an_ordered_leg_falls_back_to_the_second_after_an_unordered_waiting_leg() {
+    fn a_status_leg_without_an_order_value_does_not_change_the_waiting_reason() {
         let at = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        ingest_inbound(
-            &mut tasks,
-            &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
-        );
+        ingest_inbound(&mut tasks, &ordered_leg(Some("asks its user"), at, 1_000));
 
-        ingest_inbound(&mut tasks, &ordered_leg(None, at, 5_000));
+        let mut unordered = status_frame(TaskState::Working, None);
+        unordered.timestamp = at + Duration::from_secs(1);
+        ingest_inbound(&mut tasks, &unordered);
         assert_eq!(
             tasks[&tid()].waiting.as_deref(),
             Some("asks its user"),
-            "an older second with an order value must not clear a reason set without one"
-        );
-        ingest_inbound(
-            &mut tasks,
-            &ordered_leg(None, at + Duration::from_secs(2), 6_000),
-        );
-        assert_eq!(
-            tasks[&tid()].waiting,
-            None,
-            "the waiting question is cleared"
+            "a leg with no order value must not clear the reason"
         );
     }
 
@@ -1788,8 +1626,8 @@ mod tests {
     fn only_a_working_leg_sets_the_waiting_reason() {
         let first = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        let metadata = || status_update_params::waiting_metadata(Some("asks its user"));
-        let mut leg = status_frame(TaskState::InputRequired, metadata());
+        let metadata = status_update_params::status_metadata(Some("asks its user"), 1_000);
+        let mut leg = status_frame(TaskState::InputRequired, Some(metadata));
         leg.timestamp = first;
         ingest_inbound(&mut tasks, &leg);
         assert_eq!(
@@ -1856,7 +1694,7 @@ mod tests {
             );
         };
 
-        let waiting = serde_json::json!({ extensions::META_WAITING: "asks its user" });
+        let waiting = status_update_params::status_metadata(Some("asks its user"), 1_000);
         ingest_leg(&mut tasks, status_frame(TaskState::Working, Some(waiting)));
         assert_eq!(
             tasks[&tid()].waiting.as_deref(),
@@ -1864,7 +1702,8 @@ mod tests {
             "the waiting question is the one asked"
         );
 
-        ingest_leg(&mut tasks, status_frame(TaskState::Working, None));
+        let clear = status_update_params::status_metadata(None, 2_000);
+        ingest_leg(&mut tasks, status_frame(TaskState::Working, Some(clear)));
         assert_eq!(
             tasks[&tid()].waiting,
             None,
@@ -2072,7 +1911,6 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind,
             mine,
-            fraction: None,
         }
     }
 
@@ -2094,7 +1932,6 @@ mod tests {
             peer: Some(outsider),
             kind,
             mine: false,
-            fraction: None,
         };
 
         // We are the *initiator* — the side the attack lands on, since an
@@ -2202,7 +2039,6 @@ mod tests {
                     peer: Some(&Nickname::from("a-peer")),
                     kind: LegKind::Offer,
                     mine: false,
-                    fraction: None,
                 },
                 now,
             );
@@ -2294,7 +2130,6 @@ mod tests {
         let rec = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
-        rec.peer_beats = true;
         rec.last_peer_activity = now.checked_sub(timeout * 2).expect("test clock");
 
         let (expired, reaped) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
@@ -2339,7 +2174,6 @@ mod tests {
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
         rec.last_activity = now;
-        rec.peer_beats = true;
 
         let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
         assert_eq!(
@@ -2435,7 +2269,6 @@ mod tests {
                 peer: Some(Box::leak(Box::new(Nickname::from("wire-thistle")))),
                 kind: LegKind::Offer,
                 mine: false,
-                fraction: None,
             },
             now,
         );
@@ -2460,7 +2293,6 @@ mod tests {
             peer: Some(Box::leak(Box::new(Nickname::from(peer)))),
             kind: LegKind::Offer,
             mine: false,
-            fraction: None,
         };
         let live_id = "550e8400-e29b-41d4-a716-446655440001";
         let staying_id = "550e8400-e29b-41d4-a716-446655440002";
@@ -3050,94 +2882,6 @@ mod tests {
             tasks[&tid()].state,
             TaskState::Completed,
             "the key of the counterparty still closes the task"
-        );
-    }
-
-    /// The same rule for the snapshot that an RPC reply returns.
-    #[test]
-    fn a_returned_task_is_not_adopted_from_a_key_that_shares_the_worker_name() {
-        let now = Instant::now();
-        let mut tasks = working_task_we_opened(now);
-        super::adopt_initiator(
-            &mut tasks,
-            super::AdoptInitiatorParams {
-                task_id: &tid(),
-                peer_key: &peer_key("calm-otter-twin"),
-                peer: &Nickname::from("calm-otter"),
-                task_state: TaskState::Failed,
-                now: now + Duration::from_mins(5),
-            },
-        );
-        assert_eq!(
-            tasks[&tid()].state,
-            TaskState::Working,
-            "a twin of the worker cannot drive our task terminal"
-        );
-    }
-
-    /// The quota counts keys, not names: a key that shares the name of a flooder is another peer.
-    #[test]
-    fn the_task_quota_counts_keys_and_not_names() {
-        use super::{Admission, admit_new_task};
-        let flooder = peer_key("wire-thistle");
-        let twin = peer_key("wire-thistle-twin");
-        let mut tasks = HashMap::new();
-        for index in 0..tuning::TASKS_PER_PEER_CAP {
-            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
-            apply(
-                &mut tasks,
-                &LegInfo {
-                    task_id: &task_id,
-                    peer_key: &flooder,
-                    peer: Some(&Nickname::from("wire-thistle")),
-                    kind: LegKind::Offer,
-                    mine: false,
-                    fraction: None,
-                },
-                Instant::now(),
-            );
-        }
-        assert_eq!(
-            admit_new_task(&tasks, &flooder),
-            Admission::PeerAtCap,
-            "the live tasks of one key fill its quota"
-        );
-        assert_eq!(
-            admit_new_task(&tasks, &twin),
-            Admission::Ok,
-            "a key with the same name has its own quota"
-        );
-    }
-
-    /// Two keys can use one nickname. When one of them leaves, only its tasks end.
-    #[test]
-    fn peer_left_cancels_only_the_tasks_of_the_key_that_left() {
-        let now = Instant::now();
-        let offer = |task_id: &'static str, key_name: &'static str| LegInfo {
-            task_id: Box::leak(Box::new(TaskId::from(task_id))),
-            peer_key: Box::leak(Box::new(peer_key(key_name))),
-            peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
-            kind: LegKind::Offer,
-            mine: false,
-            fraction: None,
-        };
-        let left_id = "550e8400-e29b-41d4-a716-446655440001";
-        let twin_id = "550e8400-e29b-41d4-a716-446655440002";
-        let mut tasks = HashMap::new();
-        apply(&mut tasks, &offer(left_id, "calm-otter"), now);
-        apply(&mut tasks, &offer(twin_id, "calm-otter-twin"), now);
-
-        let out = crate::emission::Output::silent();
-        super::fail_tasks_for_departed_peer(&mut tasks, &peer_key("calm-otter"), &out);
-
-        assert_eq!(
-            tasks[&TaskId::from(left_id)].state,
-            TaskState::Canceled,
-            "the departed key loses its live task at once"
-        );
-        assert!(
-            !tasks[&TaskId::from(twin_id)].state.is_terminal(),
-            "the task of the key that stays is untouched, though it shares the name"
         );
     }
 }

@@ -5,8 +5,8 @@ use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::frame_payload_error::FramePayloadError;
 use super::{
-    EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
-    TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
+    EXT_MESH_BROADCAST, META_BEAT, META_LABEL, Message, Part, Role, TaskArtifactUpdate, TaskId,
+    TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
 /// Compose a broadcast chat payload.
@@ -50,22 +50,7 @@ pub fn send_message_payload(
     text: &str,
     label: Option<&str>,
 ) -> Message {
-    send_message_payload_parts(mesh, task_id, vec![Part::text(text)], label)
-}
-
-/// As [`send_message_payload`] but carrying arbitrary parts — used when the
-/// message attaches a file (a `Part` with a blob `url`) alongside or instead of
-/// text. Input files ride the request `Message.parts`; they are never wrapped in
-/// an `Artifact` (the A2A request has no artifact slot).
-#[must_use]
-pub(crate) fn send_message_payload_parts(
-    mesh: &MeshId,
-    task_id: Option<&TaskId>,
-    parts: Vec<Part>,
-    label: Option<&str>,
-) -> Message {
-    let mut message = Message::text(Role::User, "");
-    message.parts = parts;
+    let mut message = Message::text(Role::User, text);
     message.context_id = Some(mesh.as_str().to_string());
     message.task_id = task_id.cloned();
     // Left None without a label so an unlabeled message stays byte-identical
@@ -289,17 +274,10 @@ pub fn status_update(mesh: &MeshId, params: StatusUpdateParams<'_>) -> TaskStatu
     }
 }
 
-/// The beat metadata for a keepalive/progress status: the wire-static
-/// plumbing marker plus an optional `done/total` fraction.
+/// The beat metadata for a keepalive status: the wire-static plumbing marker.
 #[must_use]
-pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    map.insert(META_BEAT.to_string(), serde_json::Value::Bool(true));
-    if let Some((done, total)) = fraction {
-        map.insert(META_DONE.to_string(), done.into());
-        map.insert(META_TOTAL.to_string(), total.into());
-    }
-    serde_json::Value::Object(map)
+pub fn beat_metadata() -> serde_json::Value {
+    serde_json::json!({ META_BEAT: true })
 }
 
 /// Whether the local agent of a worker is reading: the answer a beat carries so
@@ -315,11 +293,8 @@ pub struct ReaderBeat {
 
 /// As [`beat_metadata`], plus the worker's [`ReaderBeat`] when it has polled.
 #[must_use]
-pub fn beat_metadata_with_reader(
-    fraction: Option<(u64, u64)>,
-    reader: Option<ReaderBeat>,
-) -> serde_json::Value {
-    let mut meta = beat_metadata(fraction);
+pub fn beat_metadata_with_reader(reader: Option<ReaderBeat>) -> serde_json::Value {
+    let mut meta = beat_metadata();
     if let (Some(reader), Some(map)) = (reader, meta.as_object_mut()) {
         map.insert(META_BELL.to_string(), reader.bell.into());
         map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
@@ -414,7 +389,7 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
 }
 
 /// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
-/// beat from an old peer, or from a worker that never polled, reads as unknown.
+/// beat from a worker that never polled reads as unknown.
 #[must_use]
 pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
     let meta = update.metadata.as_ref()?;
@@ -422,16 +397,6 @@ pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
         bell: meta.get(META_BELL)?.as_bool()?,
         last_poll_secs: meta.get(META_LAST_POLL)?.as_u64()?,
     })
-}
-
-/// The `done/total` fraction a beat carries, if any.
-#[must_use]
-pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
-    let meta = update.metadata.as_ref()?;
-    Some((
-        meta.get(META_DONE)?.as_u64()?,
-        meta.get(META_TOTAL)?.as_u64()?,
-    ))
 }
 
 /// The initiator's one-line task label (`mesh:label`), when the brief carries one.
@@ -447,13 +412,6 @@ pub fn task_label(message: &Message) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// The `mesh:waiting` metadata of a `working` status leg, when a reason is
-/// given. The counterpart of [`status_waiting`].
-#[must_use]
-pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
-    reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
-}
-
 /// The metadata of a status leg: its order value, and the `mesh:waiting` reason
 /// when it has one. The counterpart of [`status_order`] and [`status_waiting`].
 #[must_use]
@@ -465,7 +423,7 @@ pub fn status_metadata(waiting: Option<&str>, order_ms: u64) -> serde_json::Valu
     meta
 }
 
-/// The order value a status leg carries, when the peer sends one.
+/// The order value of a status leg. Only the cancel that a daemon sends on its own has none.
 #[must_use]
 pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
     update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
@@ -620,8 +578,9 @@ mod tests {
     use super::{
         Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
         msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
-        status_waiting, waiting_metadata,
+        status_waiting,
     };
+    use crate::a2a::extensions::META_WAITING;
     use crate::a2a::wire;
 
     fn mesh() -> MeshId {
@@ -752,7 +711,7 @@ mod tests {
         );
     }
 
-    /// The producer (`waiting_metadata`, used by `a2a status --waiting`) and the
+    /// The producer (`status_metadata`, used by `a2a status --waiting`) and the
     /// reader (`status_waiting`) agree, and a leg without a reason carries none.
     #[test]
     fn waiting_reason_round_trips_through_a_status_update() {
@@ -769,20 +728,19 @@ mod tests {
             )
         };
         assert_eq!(
-            status_waiting(&update(waiting_metadata(Some("asks its user")))).as_deref(),
+            status_waiting(&update(Some(status_metadata(Some("asks its user"), 1)))).as_deref(),
             Some("asks its user"),
             "the status payload is the one sent"
         );
         assert_eq!(
-            status_waiting(&update(waiting_metadata(None))),
+            status_waiting(&update(Some(status_metadata(None, 1)))),
             None,
             "a status without a waiting reason has none"
         );
     }
 
     /// A status leg carries its order value next to the reason, and the reader
-    /// still finds the reason. A leg from a peer without the order value reads
-    /// as none.
+    /// still finds the reason. A leg without the order value reads as none.
     #[test]
     fn a_status_leg_carries_its_order_value_and_its_reason() {
         let task_id = crate::a2a::TaskId::random();
@@ -806,7 +764,7 @@ mod tests {
         );
         assert_eq!(
             status_order(&update(
-                waiting_metadata(Some("asks its user")).expect("the test metadata is valid")
+                serde_json::json!({ META_WAITING: "asks its user" })
             )),
             None,
             "the status payload carries its fields"

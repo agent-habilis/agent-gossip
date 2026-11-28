@@ -474,8 +474,8 @@ COMMANDS
               on the opening brief so the worker labels it identically —
               without it each side invents its own wording for the same task
               and the two panes cannot be lined up by eye. It surfaces on the
-              worker's task event as the "label" field, and is simply absent
-              from a peer that does not send one.
+              worker's task event as the "label" field, and is absent when
+              the initiator gave none.
 
        a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state STATE [--text TEXT] [--waiting REASON]
@@ -492,8 +492,7 @@ COMMANDS
               metadata. While the key is set, the initiator's daemon does
               not send task_stalled for the task. The next status leg without
               --waiting clears the key, so when the user has answered, send
-              a plain `--state working`. A new CLI against an older daemon
-              drops --waiting with no error.
+              a plain `--state working`.
 
        a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -689,12 +688,9 @@ COMMANDS
               minutes with no leg or keepalive from the other daemon — its
               session ended or crashed. Silence from a live agent (a pending
               accept, a review, a long build) never times a task out, so a
-              skill does not re-emit `working` to keep it alive. Two limits:
+              skill does not re-emit `working` to keep it alive. One limit:
               a task neither agent touches for 24 hours stops being beaten,
-              and the other daemon cancels it about 2 minutes later; a peer
-              on an older version, which beats only while it owes the next
-              move, is not timed out for silence until its first keepalive
-              arrives.
+              and the other daemon cancels it about 2 minutes later.
 
               The keepalive proves that the worker's daemon is up, not that
               its agent works. So the worker's keepalive also carries
@@ -780,8 +776,7 @@ COMMANDS
               MCP reader sends), or null before the first one. peers asks
               each live peer when you run it, and
               waits at most 0.5 seconds. The key is absent for a peer that
-              runs an older version, or that did not answer in time. Your
-              own row never has the key.
+              did not answer in time. Your own row never has the key.
 
               reach is "direct" when a live gossip link to that peer exists,
               else "gossip" (relayed).
@@ -1512,9 +1507,7 @@ JSON EVENTS
               from is always the peer that the frame went to: the daemon
               drops a receipt from any other member. A receipt can come
               before your own echo of the frame. The same receipt can come
-              again, hours later, when anti-entropy re-sends the frame. A
-              peer that runs an older version sends no receipts, and drops
-              the receipts that you send to it.
+              again, hours later, when anti-entropy re-sends the frame.
 
                  {"event":"receipt","from":"word-word","ref":"<id>",
                   "state":"delivered","ts":1234567890}
@@ -1570,14 +1563,14 @@ JSON EVENTS
               (under the command list) for how the flow is driven.
 
        task_progress
-              The worker's liveness + percent beat (a `working` status marked
+              The worker's liveness beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
-              record. done/total are omitted when progress is indeterminate.
+              record.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "to_pubkey":"<hex>","task_id":"<uuid>","done":35,"total":100,
-                  "display":"💬️ task progress `<from>` → `<to>`: 35/100",
+                  "to_pubkey":"<hex>","task_id":"<uuid>",
+                  "display":"💬️ task progress `<from>` → `<to>`: working",
                   "self":false}
 
        task_timeout
@@ -1596,8 +1589,7 @@ JSON EVENTS
               default), while the task is working and the worker did not send
               --waiting. It states a fact and cancels nothing. The daemon
               emits it once for each interval and for each task. The event is
-              visible: print its display line. A worker on an older version
-              sends no bell data, so it never raises this event.
+              visible: print its display line.
 
                  {"event":"task_stalled","task_id":"<uuid>","peer":"word-word",
                   "last_poll_secs_ago":2100,"check_secs":1800,
@@ -1610,12 +1602,9 @@ JSON EVENTS
 
                  {"event":"state","id":"<uuid>","type":"state","gossip":"<hash>",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "merge":null,
                   "document":{"<hex of author>":{"turn":"b"}},
                   "display":"💬️ `<nick>` changed shared state","self":false}
 
-              merge     Always null. The slice of an author replaces its old
-                        slice, so the event holds no delta.
               document  The view AFTER the change: one slice for each author,
                         keyed by the author key in hex. Read it to decide
                         your reaction.
@@ -1628,15 +1617,15 @@ JSON EVENTS
        meta   The gossip's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta",
               but WITHOUT the document field: read the view on demand with
-              `meta get`. The merge and self fields and the reaction contract
-              are the same.
+              `meta get`. The self field and the reaction contract are the
+              same.
               Branch on "event" to tell the two channels apart. The
-              built-in display names the touched path (value-blind, like state);
-              by convention a change of an entry is a peer self-reporting what
-              it runs on, which the gossip skills surface in chat as a line such
-              as 💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
-              identity rendered as an inline code span, read from the merge or
-              from `meta get`).
+              built-in display is the same line as for state; by convention a
+              change of an entry is a peer self-reporting what it runs on,
+              which the gossip skills surface in chat as a line such as
+              💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
+              identity rendered as an inline code span, read from
+              `meta get`).
 
        gossip_found / gossip_lost
               From agent-gossip discover, one per directory change.

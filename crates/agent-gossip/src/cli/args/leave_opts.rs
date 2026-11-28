@@ -1,8 +1,6 @@
 use clap::{ArgGroup, Parser};
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy_output::LegacyOutput;
-
 /// The gossip to leave is named once: as GOSSIP, or as `--gossip`, the spelling of `peers`,
 /// `topology` and `poll`. The group makes the two conflict and lets `--nickname` follow either.
 #[derive(Parser, Debug)]
@@ -28,15 +26,6 @@ pub(crate) struct LeaveOpts {
     /// refused: init owns every daemon.
     #[arg(long)]
     pub session_pid: Option<u32>,
-
-    /// Seconds to wait for a signalled daemon to drop its state file and stop
-    /// answering its socket before reporting it unconfirmed. Hidden — a test
-    /// knob. The default outlasts the engine's own leave budget.
-    #[arg(long, hide = true, default_value_t = habilis_network::util::tuning::NODE_LEAVE.as_secs() + 2)]
-    pub confirm_timeout_secs: u64,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]
@@ -45,6 +34,7 @@ mod tests {
     use habilis_network::util::tuning;
 
     use crate::cli::args::{Cli, Commands};
+    use crate::cli::session::LEAVE_CONFIRM_SECS;
 
     #[test]
     fn leave_defaults() {
@@ -68,9 +58,8 @@ mod tests {
         // rendezvous and drop its state file; confirming sooner reports a
         // live daemon as gone, and a relaunch then races it.
         assert!(
-            options.confirm_timeout_secs > tuning::NODE_LEAVE.as_secs(),
-            "leave gives up before the daemon's own leave budget: {}",
-            options.confirm_timeout_secs
+            LEAVE_CONFIRM_SECS > tuning::NODE_LEAVE.as_secs(),
+            "leave gives up before the daemon's own leave budget: {LEAVE_CONFIRM_SECS}"
         );
     }
 

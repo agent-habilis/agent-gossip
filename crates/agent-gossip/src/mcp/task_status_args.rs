@@ -9,7 +9,7 @@ pub(crate) struct TaskStatusArgs {
     /// "please review" after an artifact), "completed", "failed", "canceled".
     pub(crate) state: String,
     /// Optional note — the status message (a question, a completion summary,
-    /// a failure reason), or a `done/total` progress fraction like "35/100".
+    /// a failure reason).
     #[serde(default)]
     pub(crate) note: Option<String>,
     /// Set this before you ask your own user something, with the reason. Only

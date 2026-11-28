@@ -1,10 +1,3 @@
-//! A2A-application state owned by the event loop, kept distinct from the
-//! generic mesh state in [`habilis_network::embed::EventLoopState`]. Holds the
-//! in-flight task registry, the outstanding gossip A2A-call waiters, and the
-//! lazily-bound blob server — the pieces that belong to the a2a layer, not the
-//! transport/membership engine. Threaded alongside `EventLoopState` as its own
-//! `&mut` borrow.
-
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -272,7 +265,7 @@ impl A2aApp {
     /// — for unit tests that drive handlers without a live event loop.
     #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self::detached(Output::silent())
+        Self::with_surfacing(Output::silent(), None)
     }
 
     /// Build the a2a-application state wired to a live surfacing tap: the tapped
@@ -285,39 +278,16 @@ impl A2aApp {
             // Consumed by `sink()`, which the caller already built.
             startup: _,
         } = io;
-        Self {
-            tasks: HashMap::new(),
-            closed_tasks: ClosedTasks::new(tuning::TASKS_CAP),
-            surfaced_chat: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            a2a_waiters: Vec::new(),
-            blob_server: None,
-            call_blobs: HashMap::new(),
-            orphan_blobs: Vec::new(),
-            released_groups: VecDeque::new(),
-            late_replies: Vec::new(),
-            late_replies_forgotten: 0,
-            late_cancels: Vec::new(),
-            a2a_port: None,
-            a2a_token: None,
-            member: None,
-            output,
-            surfaced: SurfacedState::new(),
-            surfaced_rx: Some(surfaced_rx),
-            surfaced_tap: Some(tap),
-            own_legs: HashMap::new(),
-            next_own_leg: 0,
-            unsent_legs: Vec::new(),
-            sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            repair_budget: RepairBudget::new(Instant::now()),
-            #[cfg(feature = "adversarial")]
-            shards_resent: 0,
-        }
+        Self::with_surfacing(output, Some((surfaced_rx, tap)))
     }
 
-    /// A detached instance around an explicit `Output` (no tap), for tests /
-    /// gossip-RPC fixtures that need an `A2aApp` without a running loop.
-    #[cfg(test)]
-    pub(crate) fn detached(output: Output) -> Self {
+    /// `tap` is the receiver and the sender of the surfacing tap, `None` for a detached test
+    /// `A2aApp` that has no live loop to drain it.
+    fn with_surfacing(
+        output: Output,
+        tap: Option<(mpsc::Receiver<OutputEvent>, SurfacedTap)>,
+    ) -> Self {
+        let (surfaced_rx, surfaced_tap) = tap.unzip();
         Self {
             tasks: HashMap::new(),
             closed_tasks: ClosedTasks::new(tuning::TASKS_CAP),
@@ -335,8 +305,8 @@ impl A2aApp {
             member: None,
             output,
             surfaced: SurfacedState::new(),
-            surfaced_rx: None,
-            surfaced_tap: None,
+            surfaced_rx,
+            surfaced_tap,
             own_legs: HashMap::new(),
             next_own_leg: 0,
             unsent_legs: Vec::new(),
@@ -356,7 +326,7 @@ impl A2aApp {
             self.own_legs_len(),
             tuning::own_legs_cap()
         );
-        self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
+        self.admit_own_bytes_within(bytes, tuning::OWN_LEGS_BYTES_CAP)
     }
 
     /// Say whether a new own content leg of `bytes` may wait for its send. Refuses past
@@ -368,7 +338,7 @@ impl A2aApp {
             self.unsent_legs.len(),
             tuning::unsent_legs_cap()
         );
-        self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
+        self.admit_unsent_bytes_within(bytes, tuning::UNSENT_LEGS_BYTES_CAP)
     }
 
     /// Count `count` cached shard frames that this node re-sent to a requester.
@@ -896,13 +866,6 @@ impl A2aApp {
     }
 }
 
-/// How a fulfilled/expired gossip A2A call's response is delivered, per
-/// transport: the CLI/IPC path wants the JSON-RPC response string to print;
-/// the in-process path wants the parsed response `Value`; the localhost
-/// JSON-RPC binding wants the `Result<Value, RpcError>` its HTTP handler
-/// returns (so an external A2A client's `message/send` to a peer is served
-/// over the same request/response waiter — task creation over the compliant
-/// transport).
 /// What a reply's task did to the initiator registry.
 enum Adoption {
     /// The task is in the registry, held for this peer.
@@ -913,6 +876,13 @@ enum Adoption {
     NoTask,
 }
 
+/// How a fulfilled/expired gossip A2A call's response is delivered, per
+/// transport: the CLI/IPC path wants the JSON-RPC response string to print;
+/// the in-process path wants the parsed response `Value`; the localhost
+/// JSON-RPC binding wants the `Result<Value, RpcError>` its HTTP handler
+/// returns (so an external A2A client's `message/send` to a peer is served
+/// over the same request/response waiter — task creation over the compliant
+/// transport).
 pub(crate) enum A2aResponder {
     Ipc(Sender<String>),
     Typed(Sender<serde_json::Value>),
@@ -950,16 +920,13 @@ impl A2aResponder {
 
     /// Fail the call with `-32000` and `message`, in each transport's shape.
     fn send_error(self, message: &str) {
+        let error = || serde_json::json!({ "error": { "code": -32000, "message": message } });
         match self {
             A2aResponder::Ipc(tx) => {
-                let _ = tx.send(
-                    serde_json::json!({ "error": { "code": -32000, "message": message } })
-                        .to_string(),
-                );
+                let _ = tx.send(error().to_string());
             }
             A2aResponder::Typed(tx) => {
-                let _ =
-                    tx.send(serde_json::json!({ "error": { "code": -32000, "message": message } }));
+                let _ = tx.send(error());
             }
             A2aResponder::Rpc(tx) => {
                 let _ = tx.send(Err(RpcError {
@@ -976,10 +943,7 @@ impl A2aResponder {
 /// returns. A malformed/absent body reads as an internal error.
 fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, RpcError> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return Err(RpcError {
-            code: -32603,
-            message: "peer returned a malformed a2a response".to_string(),
-        });
+        return Err(RpcError::internal("peer returned a malformed a2a response"));
     };
     if !value["error"].is_null() {
         let code: i64 = value["error"]["code"].as_i64().unwrap_or(-32603);
@@ -1184,10 +1148,7 @@ mod tests {
     fn a_late_reply_for_a_dropped_orphan_still_cancels_the_task_it_opened() {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
-        let reply = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        })
-        .to_string();
+        let reply = created_reply(&task_id);
         let mut waiter = waiter_with_blob("corr-late", "group-late");
         waiter.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(waiter);
@@ -1819,14 +1780,12 @@ mod tests {
         let mut app = super::A2aApp::new();
         app.a2a_waiters.push(waiter_with_blob("corr-1", "group-1"));
         let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
+        let created = created_reply(&task_id);
 
         app.fulfill_a2a_waiter(
             &wire::corr_id("corr-1"),
             (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
+            &created,
         );
 
         assert!(
@@ -1846,10 +1805,7 @@ mod tests {
     fn replies_that_return_one_task_id_never_grow_its_call_blob_list_past_the_cap() {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
-        let reply = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        })
-        .to_string();
+        let reply = created_reply(&task_id);
         let offered = 10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP;
         let mut swept = 0;
         for index in 0..offered {
@@ -1882,10 +1838,7 @@ mod tests {
     fn late_replies_that_return_one_task_id_never_grow_its_call_blob_list_past_the_cap() {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
-        let reply = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        })
-        .to_string();
+        let reply = created_reply(&task_id);
         let offered = 10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP;
         for index in 0..offered {
             let corr = format!("corr-{index}");
@@ -1977,10 +1930,7 @@ mod tests {
     fn a_task_id_from_the_wrong_peer_keeps_the_owner_blob() {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        })
-        .to_string();
+        let created = created_reply(&task_id);
         let mut to_carol = waiter_with_blob("corr-carol", "group-carol");
         to_carol.peer_key = carol_key();
         app.a2a_waiters.push(to_carol);
@@ -2028,14 +1978,8 @@ mod tests {
         );
 
         let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
-        app.fulfill_a2a_waiter(
-            &corr,
-            (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
-        );
+        let created = created_reply(&task_id);
+        app.fulfill_a2a_waiter(&corr, (&bob_key(), &Nickname::from("bob")), &created);
 
         assert!(
             app.tasks.contains_key(&task_id),
@@ -2064,14 +2008,12 @@ mod tests {
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
         let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
+        let created = created_reply(&task_id);
 
         app.fulfill_a2a_waiter(
             &wire::corr_id("corr-slow"),
             (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
+            &created,
         );
 
         assert_eq!(
@@ -2195,14 +2137,12 @@ mod tests {
         let task_id = TaskId::random();
         app.a2a_waiters
             .push(waiter_with_blob("corr-refused", "group-refused"));
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
+        let created = created_reply(&task_id);
 
         app.fulfill_a2a_waiter(
             &wire::corr_id("corr-refused"),
             (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
+            &created,
         );
 
         assert_eq!(
@@ -2214,46 +2154,6 @@ mod tests {
             app.take_late_cancels(),
             vec![(task_id, bob_key(), "task-refused")],
             "the worker is told to cancel the task it opened"
-        );
-    }
-
-    /// A cancel for a refused task names its reason, not the late-reply reason.
-    #[test]
-    fn a_refused_adoption_cancels_with_the_registry_reason() {
-        let mut app = super::A2aApp::new();
-        let (tx, _rx) = oneshot::channel();
-        let mut waiter = waiter_with_blob("corr-reason", "group-reason");
-        waiter.responder = A2aResponder::Typed(tx);
-        app.a2a_waiters.push(waiter);
-        for index in 0..tuning::TASKS_CAP {
-            let filler = TaskId::random();
-            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
-            adopt_initiator(
-                &mut app.tasks,
-                AdoptInitiatorParams {
-                    task_id: &filler,
-                    peer_key: &filler_key(index),
-                    peer: &peer,
-                    task_state: TaskState::Working,
-                    now: Instant::now(),
-                },
-            );
-        }
-        let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
-
-        app.fulfill_a2a_waiter(
-            &wire::corr_id("corr-reason"),
-            (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
-        );
-
-        assert_eq!(
-            app.take_late_cancels(),
-            vec![(task_id, bob_key(), "task-refused")],
-            "the cancel says the task could not be recorded here"
         );
     }
 
@@ -2282,14 +2182,12 @@ mod tests {
         waiter.responder = A2aResponder::Typed(tx);
         app.a2a_waiters.push(waiter);
         let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
+        let created = created_reply(&task_id);
 
         app.fulfill_a2a_waiter(
             &wire::corr_id("corr-error"),
             (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
+            &created,
         );
 
         let answer = rx.try_recv().expect("the caller is answered");
@@ -2414,15 +2312,13 @@ mod tests {
     fn a_late_reply_for_a_task_with_a_blob_adds_its_group_to_the_task() {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
-        let created = serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
-        });
+        let created = created_reply(&task_id);
         app.a2a_waiters
             .push(waiter_with_blob("corr-held", "group-held"));
         app.fulfill_a2a_waiter(
             &wire::corr_id("corr-held"),
             (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
+            &created,
         );
         let mut late = waiter_with_blob("corr-late-held", "group-late-held");
         late.deadline = tokio::time::Instant::now();
@@ -2430,11 +2326,7 @@ mod tests {
         app.expire_a2a_waiters(tokio::time::Instant::now());
         let corr = wire::corr_id("corr-late-held");
 
-        app.fulfill_a2a_waiter(
-            &corr,
-            (&bob_key(), &Nickname::from("bob")),
-            &created.to_string(),
-        );
+        app.fulfill_a2a_waiter(&corr, (&bob_key(), &Nickname::from("bob")), &created);
 
         assert!(
             !app.has_a2a_waiter(&corr, &bob_key()),

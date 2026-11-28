@@ -5,12 +5,10 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy_output::LegacyOutput;
-
 #[derive(Parser, Debug)]
 pub(crate) struct InviteOpts {
     /// The invite-only gossip to mint for (its … id).
-    #[arg(long, alias = "room")]
+    #[arg(long)]
     pub gossip: MeshId,
 
     /// Nickname of the local **creating** session (only its daemon holds the
@@ -23,9 +21,6 @@ pub(crate) struct InviteOpts {
     /// invite. Defaults to 24h.
     #[arg(long)]
     pub ttl: Option<String>,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

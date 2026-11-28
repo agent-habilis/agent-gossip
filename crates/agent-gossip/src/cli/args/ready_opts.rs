@@ -7,8 +7,6 @@
 
 use clap::Parser;
 
-use super::legacy_output::LegacyOutput;
-
 #[derive(Parser, Debug)]
 pub(crate) struct ReadyOpts {
     /// Path to the daemon's --state-file. Pass the SAME path you gave
@@ -21,7 +19,4 @@ pub(crate) struct ReadyOpts {
     /// Max seconds to wait for the daemon to start serving before giving up.
     #[arg(long, default_value_t = habilis_network::runtime::tuning::READY_MAX.as_secs())]
     pub timeout_secs: u64,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }

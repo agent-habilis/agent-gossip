@@ -40,30 +40,10 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
 
     fn topic_opts(args: &[&str]) -> super::TopicOpts {
-        match Cli::parse_from(args).command {
-            Commands::Topic { options } => options,
-            Commands::Create { .. }
-            | Commands::Join { .. }
-            | Commands::Poll { .. }
-            | Commands::Ping { .. }
-            | Commands::Discover { .. }
-            | Commands::Peers { .. }
-            | Commands::State { .. }
-            | Commands::Meta { .. }
-            | Commands::Topology { .. }
-            | Commands::A2a { .. }
-            | Commands::Ready { .. }
-            | Commands::Mcp { .. }
-            | Commands::Man
-            | Commands::Plug { .. }
-            | Commands::Unplug { .. }
-            | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Invite { .. }
-            | Commands::Session { .. }
-            | Commands::SessionFile { .. }
-            | Commands::BellCheck { .. } => panic!("expected Topic command"),
-        }
+        let Commands::Topic { options } = Cli::parse_from(args).command else {
+            panic!("expected Topic command")
+        };
+        options
     }
 
     #[test]

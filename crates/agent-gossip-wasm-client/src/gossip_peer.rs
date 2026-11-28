@@ -8,9 +8,8 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::err::err;
-use crate::gossip_driver::{GossipDriver, Inbox, Request};
+use crate::gossip_driver::{GossipDriver, Inbox};
 use crate::parse_nickname::parse_nickname;
-use crate::parse_path_mode::parse_path_mode;
 use crate::spawn_peer::spawn_peer;
 
 /// One membership of one mesh.
@@ -33,12 +32,7 @@ impl GossipPeer {
     ///
     /// # Errors
     /// Endpoint bind failure, or no reachable relay.
-    pub async fn create(
-        nickname: Option<String>,
-        path_mode: Option<String>,
-    ) -> Result<GossipPeer, JsValue> {
-        console_error_panic_hook::set_once();
-        let transports = parse_path_mode(path_mode.as_deref())?;
+    pub async fn create(nickname: Option<String>) -> Result<GossipPeer, JsValue> {
         // The relay ladder is the load-bearing leg: it is the only one a tab
         // has, and the rendezvous homes on it.
         let config = MeshConfig::new(
@@ -55,20 +49,14 @@ impl GossipPeer {
         )
         .resolve()
         .map_err(|error| err("resolve create params", &error))?;
-        spawn_peer(resolved, transports).await
+        spawn_peer(resolved).await
     }
 
     /// Join an existing mesh by its id.
     ///
     /// # Errors
     /// Unparseable id, endpoint bind failure, or no reachable relay.
-    pub async fn join(
-        mesh_id: String,
-        nickname: Option<String>,
-        path_mode: Option<String>,
-    ) -> Result<GossipPeer, JsValue> {
-        console_error_panic_hook::set_once();
-        let transports = parse_path_mode(path_mode.as_deref())?;
+    pub async fn join(mesh_id: String, nickname: Option<String>) -> Result<GossipPeer, JsValue> {
         let target: JoinTarget = mesh_id
             .trim()
             .parse()
@@ -76,7 +64,7 @@ impl GossipPeer {
         let resolved = JoinParams::new(target, parse_nickname(nickname)?, None)
             .resolve()
             .map_err(|error| err("resolve join params", &error))?;
-        spawn_peer(resolved, transports).await
+        spawn_peer(resolved).await
     }
 
     #[wasm_bindgen(getter, js_name = meshId)]
@@ -120,10 +108,6 @@ impl GossipPeer {
     /// # Errors
     /// The event loop has stopped.
     pub async fn broadcast(&self, text: String) -> Result<(), JsValue> {
-        self.request(Request::Broadcast(text)).await
-    }
-
-    async fn request(&self, request: Request) -> Result<(), JsValue> {
         // The sender is taken and the borrow dropped *before* the await. Holding
         // a `RefCell` borrow across one would panic on any re-entrant call from
         // JS, which is ordinary here: two clicks, or a send while polling.
@@ -135,7 +119,7 @@ impl GossipPeer {
             node.sender()
         };
         sender
-            .send(request)
+            .send(text)
             .await
             .map_err(|_| JsValue::from_str("the gossip event loop has stopped"))
     }

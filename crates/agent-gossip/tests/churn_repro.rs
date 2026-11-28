@@ -10,56 +10,11 @@ use agent_gossip_test_fixtures as common;
 use common::{InProcNode, Node, PresenceSubtype, cli_peers, cli_poll, ipc_raw, test_cmd};
 use habilis_network::protocol::AuthorKey;
 
-/// Idle hold for repro (a). Brief asks for more than 3 min at default timings.
-const IDLE_HOLD: Duration = Duration::from_secs(190);
-
 /// Budget for a pair to see each other at default timings.
 const ROSTER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Silence after SIGKILL that outlives the 90 s peer timeout plus one sweep.
 const KILL_SETTLE: Duration = Duration::from_secs(120);
-
-/// Repro (a), H2: an idle pair at default timings must not time out a live peer.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "190 s hold, run with --ignored"]
-async fn idle_pair_holds_without_peer_timeout_or_return() {
-    let mut creator = InProcNode::create("churn-idle").await;
-    let mesh = creator.mesh.clone();
-    let mut joiner = InProcNode::join(&mesh, "churn-b").await;
-
-    assert!(
-        creator
-            .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
-            .await,
-        "creator never saw the joiner"
-    );
-    assert!(
-        joiner
-            .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
-            .await,
-        "joiner never saw the creator"
-    );
-
-    tokio::time::sleep(IDLE_HOLD).await;
-
-    for (label, node) in [("creator", &mut creator), ("joiner", &mut joiner)] {
-        let timeouts = node
-            .events()
-            .iter()
-            .filter(|event| matches!(event, OutputEvent::PeerTimeout { .. }))
-            .count();
-        let returns = node
-            .events()
-            .iter()
-            .filter(|event| matches!(event, OutputEvent::PeerReturn { .. }))
-            .count();
-        assert_eq!(
-            timeouts + returns,
-            0,
-            "{label}: {timeouts} peer_timeout and {returns} peer_return during an idle hold of {IDLE_HOLD:?}"
-        );
-    }
-}
 
 /// Repro (b), H1: a `SIGKILL`ed peer must not come back after a fifth peer joins.
 #[test]
@@ -113,7 +68,8 @@ fn killed_peer_does_not_return_after_fifth_joins() {
     );
 }
 
-/// Repro (a) long form: six minutes covers one 270 s cycle from the notes.
+/// Repro (a), H2: an idle pair at default timings must not time out a live peer. Six minutes
+/// covers one 270 s cycle from the notes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "six-minute hold, run with --ignored"]
 async fn idle_pair_holds_six_minutes() {
@@ -126,6 +82,12 @@ async fn idle_pair_holds_six_minutes() {
             .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
             .await,
         "creator never saw the joiner"
+    );
+    assert!(
+        joiner
+            .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
+            .await,
+        "joiner never saw the creator"
     );
     tokio::time::sleep(Duration::from_secs(360)).await;
 

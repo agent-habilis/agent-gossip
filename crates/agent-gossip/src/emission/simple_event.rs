@@ -1,18 +1,8 @@
-//! The JSON wire layer: the serde shapes for every line the daemon
-//! emits on stdout (consumed by the `/mesh` skill and any `--output
-//! json` client) plus the serializers that render them. Field
-//! order/naming is part of the wire format — documented in AGENTS.md,
-//! pinned by the insta snapshots in `tests`. The `Output` sink in the
-//! parent module renders through these so the captured-event and
-//! stdout forms stay byte-identical.
-
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{
-    AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype, UnixSecs,
-};
+use habilis_network::protocol::{AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype};
 use serde::Serialize;
 
-use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
+use super::{OutputEvent, PingPeer, TaskGoneReason};
 use crate::a2a::{TaskId, status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
@@ -25,7 +15,7 @@ const DISPLAY_GLYPH: &str = "💬\u{FE0F}";
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
-pub(super) enum SimpleEvent<'source> {
+enum SimpleEvent<'source> {
     Ready {
         version: &'source str,
         gossip: &'source str,
@@ -38,9 +28,6 @@ pub(super) enum SimpleEvent<'source> {
         /// The bound `--a2a-serve` port; omitted when the binding is off.
         #[serde(skip_serializing_if = "Option::is_none")]
         a2a_port: Option<u16>,
-    },
-    MsgPosted {
-        id: &'source str,
     },
     PeerTimeout {
         nickname: &'source str,
@@ -83,6 +70,11 @@ pub(super) enum SimpleEvent<'source> {
     Error {
         message: &'source str,
     },
+    NicknameHeld {
+        nickname: &'source str,
+        /// Pre-formatted line (see [`nickname_held_display`]).
+        display: String,
+    },
     EventsLost {
         lost: u64,
         /// Pre-formatted line (see [`events_lost_display`]).
@@ -98,7 +90,7 @@ pub(super) enum SimpleEvent<'source> {
 }
 
 /// Common prefix for every `{"event":"message",...}` line. Field
-/// order is part of the wire format (see AGENTS.md).
+/// order is part of the wire format.
 #[derive(Serialize)]
 struct MessageHeader<'source> {
     pub event: &'static str,
@@ -108,11 +100,9 @@ struct MessageHeader<'source> {
     pub gossip: &'source str,
     pub author: &'source str,
     /// Author's full Ed25519 public key (hex) — the cryptographic identity
-    /// behind the display `author`. `Some` on every signed (real) message;
-    /// `None` (omitted) only for unsigned test fixtures. Agents should key
+    /// behind the display `author`. Agents should key
     /// trust/disambiguation on this, not the nickname.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pubkey: Option<String>,
+    pub pubkey: String,
     pub ts: i64,
 }
 
@@ -163,8 +153,7 @@ struct TaskLine<'source> {
     pub id: &'source str,
     pub gossip: &'source str,
     pub author: &'source str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pubkey: Option<String>,
+    pub pubkey: String,
     pub ts: i64,
     pub to: &'source str,
     /// The addressee's key. Absent on a leg that arrived over the request/response binding,
@@ -196,8 +185,7 @@ struct TaskLine<'source> {
 }
 
 /// A `{"event":"task_progress",...}` line for a liveness beat — the
-/// ball-owner's keepalive/percent heartbeat. `done`/`total` are `None` when
-/// the beat reports indeterminate progress (no fraction in its metadata).
+/// ball-owner's keepalive heartbeat.
 #[derive(Serialize)]
 struct TaskProgressLine<'source> {
     pub event: &'static str,
@@ -208,19 +196,14 @@ struct TaskProgressLine<'source> {
     pub to: &'source str,
     pub to_pubkey: &'source str,
     pub task_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub done: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total: Option<u64>,
     pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
 }
 
 /// A `{"event":"state",...}` line for a shared-state change. Its own top-level
-/// event (not the `message` family) so skills branch on `event`. Carries the
-/// merge delta and, on the `state` channel, the freshly-derived document; field
-/// order is part of the wire format.
+/// event (not the `message` family) so skills branch on `event`. Carries, on the
+/// `state` channel, the freshly-derived document; field order is part of the wire format.
 #[derive(Serialize)]
 struct StateLine<'source> {
     event: &'static str,
@@ -229,10 +212,8 @@ struct StateLine<'source> {
     ty: &'static str,
     gossip: &'source str,
     author: &'source str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pubkey: Option<String>,
+    pubkey: String,
     ts: i64,
-    merge: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     document: Option<&'source serde_json::Value>,
     display: String,
@@ -241,7 +222,7 @@ struct StateLine<'source> {
 }
 
 fn message_header<'a>(message: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
-    let pubkey = Some(message.key().to_string());
+    let pubkey = message.key().to_string();
     MessageHeader {
         event: "message",
         id: message.id.as_str(),
@@ -258,9 +239,7 @@ fn message_header<'a>(message: &'a Authored, ty: &'static str) -> MessageHeader<
 /// model never composes or re-types a body. Nicks are wrapped in literal
 /// backticks: the skill renders into markdown, where a bare `<nick>` is
 /// stripped as an HTML tag, and the code span prevents that. The body is
-/// embedded **raw** (never trimmed, escaped, or re-spaced). This is
-/// JSON-only — the Human/terminal sink renders separately (ANSI, no
-/// backticks).
+/// embedded **raw** (never trimmed, escaped, or re-spaced).
 ///
 /// `to` is the msg addressee, and the `→` it renders is the only
 /// thing distinguishing a private line from a gossip-wide one on screen.
@@ -306,32 +285,25 @@ fn task_display(params: TaskDisplayParams<'_>) -> String {
 }
 
 /// `display` line for a `task_progress` event:
-/// `` 💬️ task progress `<author>` → `<to>`: 35/100 `` (or
-/// `working` when indeterminate).
-fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Option<u64>) -> String {
-    match (done, total) {
-        (Some(done), Some(total)) => {
-            format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: {done}/{total}")
-        }
-        _ => format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working"),
-    }
+/// `` 💬️ task progress `<author>` → `<to>`: working ``.
+fn task_progress_display(author: &str, to: &str) -> String {
+    format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working")
 }
 
 /// `display` line for a presence event: `` 💬️ `<author>` has joined `` /
-/// `` 💬️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
-/// backtick rationale.
+/// `… has left`. See [`msg_display`] for the backtick rationale.
 fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
     format!("{DISPLAY_GLYPH} `<{author}>` has {subtype}")
 }
 
 /// `display` line for a `peer_timeout` event.
-pub(super) fn peer_timeout_display(nickname: &str) -> String {
+fn peer_timeout_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
 /// The `task_stalled` event. Its `display` states the silence as a fact: a
 /// worker with no bell can poll rarely while it works.
-pub(super) fn task_stalled_event<'a>(
+fn task_stalled_event<'a>(
     task_id: &'a TaskId,
     peer: &'a Nickname,
     last_poll_secs_ago: u64,
@@ -350,12 +322,18 @@ pub(super) fn task_stalled_event<'a>(
 }
 
 /// `display` line for a `peer_return` event.
-pub(super) fn peer_return_display(nickname: &str) -> String {
+fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
 }
 
+fn nickname_held_display(nickname: &str) -> String {
+    format!(
+        "`{nickname}` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"
+    )
+}
+
 /// `display` line for an `events_lost` event.
-pub(super) fn events_lost_display(lost: u64) -> String {
+fn events_lost_display(lost: u64) -> String {
     let events = if lost == 1 {
         "event was"
     } else {
@@ -366,7 +344,7 @@ pub(super) fn events_lost_display(lost: u64) -> String {
 
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
-pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
+fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
     use std::fmt::Write as _;
 
     if peers.is_empty() {
@@ -390,12 +368,6 @@ pub(super) fn emit(line: &str) {
     let mut lock = stdout.lock();
     let _ = writeln!(lock, "{line}");
     let _ = lock.flush();
-}
-
-pub(super) fn emit_json<T: Serialize>(value: &T, is_visible: bool) {
-    if let Ok(json) = serde_json::to_string(value) {
-        emit(&stamp_visibility(json, is_visible));
-    }
 }
 
 /// Whether an event's `display` line belongs in the agent's transcript — the
@@ -426,16 +398,14 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => false,
     }
 }
 
 /// Append `"is_visible":<b>` as the last field of an already-rendered event
 /// object. Spliced (like `seq` in [`surfaced_event_json`]) rather than added
-/// to every line struct: one stamp point per render path keeps the stream and
-/// poll forms byte-identical, and re-parsing to a `Value` would reorder the
-/// pinned fields.
+/// to every line struct; re-parsing to a `Value` would reorder the pinned
+/// fields.
 fn stamp_visibility(line: String, is_visible: bool) -> String {
     match line.strip_suffix('}') {
         Some(body) => format!("{body},\"is_visible\":{is_visible}}}"),
@@ -446,8 +416,8 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Format a presence message as JSON.
 ///
 /// Serializes the struct directly because the documented wire format
-/// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
-/// `ts`, …) and `Value::to_string` would sort keys alphabetically.
+/// pins the field order (`event`, `id`, `type`, `gossip`, `author`,
+/// `pubkey`, `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(
     message: &Authored,
     subtype: PresenceSubtype,
@@ -456,7 +426,7 @@ pub(super) fn format_presence_json(
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
         header: MessageHeader {
-            pubkey: Some(peer.to_string()),
+            pubkey: peer.to_string(),
             ..message_header(message, "presence")
         },
         subtype,
@@ -522,14 +492,6 @@ pub(super) fn format_msg_json(
     )
 }
 
-pub(super) fn print_message_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_msg_json(message, is_self, addressee_name));
-}
-
 /// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
 /// its JSON line. A beat renders as a `task_progress` event; every other leg
 /// as a `task` event carrying the native A2A `kind` + `state`, the text
@@ -556,12 +518,10 @@ pub(super) fn format_task_json(
     if let Ok(payload) = status_update_params::status_payload(message)
         && status_update_params::is_beat(&payload)
     {
-        let (done, total) = status_update_params::beat_fraction(&payload)
-            .map_or((None, None), |(done, total)| (Some(done), Some(total)));
         let author = message.author.as_str();
         let to_text = to_label(to, addressee_name);
         let to_pubkey = to.to_string();
-        let display = task_progress_display(author, &to_text, done, total);
+        let display = task_progress_display(author, &to_text);
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
                 event: "task_progress",
@@ -572,8 +532,6 @@ pub(super) fn format_task_json(
                 to: &to_text,
                 to_pubkey: &to_pubkey,
                 task_id,
-                done,
-                total,
                 display,
                 is_self,
             })
@@ -587,7 +545,7 @@ pub(super) fn format_task_json(
     let author = message.author.as_str();
     let to_text = to_label(to, addressee_name);
     let to_pubkey = to.to_string();
-    let pubkey = Some(message.key().to_string());
+    let pubkey = message.key().to_string();
     // Only a `working` leg carries the reason, as in the record.
     let waiting = status_update_params::status_payload(message)
         .ok()
@@ -615,7 +573,7 @@ pub(super) fn format_task_json(
             kind,
             state: state.map(crate::a2a::TaskState::friendly_name),
             // The label rides the opening brief, which arrives over the RPC
-            // binding (`format_task_message_json`), never as a frame.
+            // binding (`OutputEvent::TaskMessage`), never as a frame.
             label: None,
             waiting,
             display,
@@ -638,129 +596,16 @@ fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Val
     Some(value)
 }
 
-/// Format an RPC `message/send` task leg (the initiator's brief / answer /
-/// approval, surfaced on the worker; or the created `Task` adopted on the
-/// initiator) as a `{"event":"task","kind":"message",...}` line.
-pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
-    stamp_visibility(
-        serde_json::to_string(&TaskLine {
-            event: "task",
-            id: leg.id,
-            gossip: leg.mesh,
-            author: leg.author,
-            pubkey: Some(leg.author_key.to_string()),
-            to_pubkey: None,
-            ts: UnixSecs::now().as_secs(),
-            to: leg.peer,
-            task_id: leg.task_id.to_owned(),
-            kind: "message",
-            state: leg.state.map(crate::a2a::TaskState::friendly_name),
-            label: leg.label,
-            waiting: None,
-            display: task_display(TaskDisplayParams {
-                author: leg.author,
-                to: leg.peer,
-                kind: "message",
-                state: leg.state,
-                body: leg.text,
-            }),
-            body: leg.text.to_owned(),
-            payload: leg.message.and_then(message_without_text),
-            is_self: leg.is_self,
-        })
-        .expect("task event serialization should never fail"),
-        false,
-    )
-}
-
-pub(super) fn print_task_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_task_json(message, is_self, addressee_name));
-}
-
-/// Make a peer-controlled merge path safe to splice into the `state` display.
-/// The path is built from attacker-influenced merge keys, and the display feeds
-/// both a markdown renderer and a raw terminal `eprintln`, so strip:
-/// - control characters (a `\n` would forge a second line; `MessageBody` permits
-///   newlines),
-/// - backticks (which would unbalance the code span around the nick), and
-/// - the markdown link/image metacharacters `[` `]` `(` `)` (so a path like
-///   `[click](https://evil)` can't render as a clickable link),
-///
-/// and cap the length so one key can't flood the line.
-fn sanitize_path(path: &str) -> String {
-    let visible = path
-        .chars()
-        .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'));
-    visible.take(80).collect()
-}
-
-/// The `changed …` clause for a `state` display, built from a `State` body's
-/// already-parsed merge document: the touched paths (sanitized, deduped, capped
-/// so the line stays bounded), or `shared state` when none are present. A
-/// top-level key with a non-empty object value is descended one level (so
-/// `{"scores":{"alice":{…}}}` reads `/scores/alice`, naming the changed entry
-/// rather than its every field); anything else names the top-level key. A `null`
-/// value (a delete) still counts as touched.
-fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
-    const MAX: usize = 6;
-    let mut paths: Vec<String> = Vec::new();
-    let mut push = |raw: String| {
-        let clean = sanitize_path(&raw);
-        if !clean.is_empty() && !paths.iter().any(|seen| seen == &clean) {
-            paths.push(clean);
-        }
-    };
-    if let Some(map) = merge.and_then(serde_json::Value::as_object) {
-        for (key, value) in map {
-            push_changed_paths(key, value, &mut push);
-        }
-    }
-    if paths.is_empty() {
-        "shared state".to_owned()
-    } else if paths.len() > MAX {
-        format!("{} (+{} more)", paths[..MAX].join(", "), paths.len() - MAX)
-    } else {
-        paths.join(", ")
-    }
-}
-
-/// Push the changed path(s) for one top-level `merge` entry. A non-empty
-/// object value names its changed members one level deep (`/peers/alice`);
-/// anything else names the top-level key.
-fn push_changed_paths(key: &str, value: &serde_json::Value, push: &mut impl FnMut(String)) {
-    if let serde_json::Value::Object(sub) = value
-        && !sub.is_empty()
-    {
-        for subkey in sub.keys() {
-            push(format!("/{key}/{subkey}"));
-        }
-        return;
-    }
-    push(format!("/{key}"));
-}
-
-/// The surfaced RFC 7386 delta inside a channel-event body: the new `change`
-/// form carries it under `m`; a legacy `merge` body under `merge`. `None` when
-/// absent (an internal write, or an opaque/unparseable body).
-fn body_merge(body: &str) -> Option<serde_json::Value> {
-    let parsed = serde_json::from_str::<serde_json::Value>(body).ok()?;
-    let merged = parsed.get("m").or_else(|| parsed.get("merge"));
-    merged.filter(|value| !value.is_null()).cloned()
-}
-
-/// `display` line for a `state` event: `` 💬️ `<author>` changed /board, /turn ``,
-/// or `💬️ you changed …` for your own write (`shared state` when the touched
-/// paths aren't known). A peer's nick is backtick-wrapped like every other event
-/// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
-fn state_display(author: &str, is_self: bool, what: &str) -> String {
+/// `display` line for a `state` event: `` 💬️ `<author>` changed shared state ``,
+/// or `💬️ you changed shared state` for your own write. A peer's nick is
+/// backtick-wrapped like every other event so the skill's markdown renderer keeps
+/// the `<nick>`; "you" is plain text. The slice of an author replaces its old
+/// slice, so the event holds no delta to name.
+fn state_display(author: &str, is_self: bool) -> String {
     if is_self {
-        format!("{DISPLAY_GLYPH} you changed {what}")
+        format!("{DISPLAY_GLYPH} you changed shared state")
     } else {
-        format!("{DISPLAY_GLYPH} `<{author}>` changed {what}")
+        format!("{DISPLAY_GLYPH} `<{author}>` changed shared state")
     }
 }
 
@@ -774,23 +619,16 @@ pub(super) fn poll_carries_document(channel: Channel) -> bool {
 }
 
 /// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
-/// header, the merge delta (pulled out of the `State` body), the freshly-derived
-/// `document`, the `display` line, and `self`.
+/// header, the freshly-derived `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
     channel: Channel,
     event: &Authored,
     document: Option<&serde_json::Value>,
     is_self: bool,
 ) -> String {
-    // The surfaced delta feeds both the `merge` field and the touched-paths
-    // `display` summary. It rides the change body under `m` (a legacy `merge`
-    // body under `merge`); an internal write carries none.
-    let merge = body_merge(event.body.as_str());
-    let what = state_change_summary(merge.as_ref());
     let label = channel.label();
     let author = event.author.as_str();
-    let pubkey = Some(event.key().to_string());
-    let merge_value = merge.unwrap_or(serde_json::Value::Null);
+    let pubkey = event.key().to_string();
     stamp_visibility(
         serde_json::to_string(&StateLine {
             event: label,
@@ -800,9 +638,8 @@ pub(super) fn format_state_json(
             author,
             pubkey,
             ts: event.timestamp.as_secs(),
-            merge: merge_value,
             document: document.filter(|_| poll_carries_document(channel)),
-            display: state_display(author, is_self, &what),
+            display: state_display(author, is_self),
             is_self,
         })
         .expect("state event serialization should never fail"),
@@ -828,35 +665,20 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
     Some(format!("{{\"seq\":{seq}{sep}{rest}"))
 }
 
-/// Render a captured [`OutputEvent`] to the exact JSON line the daemon writes in `--output json` mode.
+/// Render an [`OutputEvent`] to the exact JSON line the daemon writes in `--output json` mode.
 ///
-/// Reuses the same serializers
-/// as the `Stream` sink, so in-process tests assert the byte-identical
-/// wire format the `/mesh` skill + MCP clients parse. `None` for events
+/// The `Stream` sink prints the line that this function gives, so in-process tests assert the
+/// byte-identical wire format the `/mesh` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode.
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
-    match formatted_json(event) {
-        Formatted::Line(line) => Some(line),
-        Formatted::Silent => None,
-        Formatted::Serialized => {
-            serialized_json(event).map(|line| stamp_visibility(line, is_visible(event)))
-        }
-    }
+    formatted_json(event)
+        .or_else(|| serialized_json(event).map(|line| stamp_visibility(line, is_visible(event))))
 }
 
-/// What [`formatted_json`] decides for an event.
-enum Formatted {
-    /// The formatter's line.
-    Line(String),
-    /// A formatter that prints nothing.
-    Silent,
-    /// Not a formatted event: [`serialized_json`] serializes it.
-    Serialized,
-}
-
-/// The events whose line a formatter builds.
-fn formatted_json(event: &OutputEvent) -> Formatted {
+/// The events whose line a formatter builds. `None` for the serialized ones, and for a formatted
+/// event with no line: [`serialized_json`] gives `None` for that one too, so it stays silent.
+fn formatted_json(event: &OutputEvent) -> Option<String> {
     let line = match event {
         OutputEvent::Message {
             message,
@@ -870,6 +692,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         } => format_task_json(message, *is_self, to_name.as_ref()),
         OutputEvent::TaskMessage {
             id,
+            ts,
             mesh,
             author,
             author_key,
@@ -880,22 +703,44 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             label,
             message,
             is_self,
-        } => format_task_message_json(&TaskMessageLeg {
-            id,
-            mesh,
-            author,
-            author_key: *author_key,
-            peer,
-            task_id,
-            state: *state,
-            text,
-            label: label.as_deref(),
-            message: message.as_deref(),
-            is_self: *is_self,
-        }),
+        } => {
+            let display = task_display(TaskDisplayParams {
+                author,
+                to: peer,
+                kind: "message",
+                state: *state,
+                body: text,
+            });
+            let payload = message.as_deref().and_then(message_without_text);
+            let pubkey = author_key.to_string();
+            let ts = ts.as_secs();
+            let line = TaskLine {
+                event: "task",
+                id,
+                gossip: mesh,
+                author,
+                pubkey,
+                to_pubkey: None,
+                ts,
+                to: peer,
+                task_id: task_id.clone(),
+                kind: "message",
+                state: state.map(crate::a2a::TaskState::friendly_name),
+                label: label.as_deref(),
+                waiting: None,
+                display,
+                body: text.clone(),
+                payload,
+                is_self: *is_self,
+            };
+            stamp_visibility(
+                serde_json::to_string(&line).expect("task event serialization should never fail"),
+                false,
+            )
+        }
         OutputEvent::Presence { message, peer } => {
             let MessageKind::Presence { subtype } = &message.kind else {
-                return Formatted::Silent;
+                return None;
             };
             format_presence_json(message, *subtype, peer)
         }
@@ -911,14 +756,13 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::NicknameHeld { .. }
         | OutputEvent::EventsLost { .. }
-        | OutputEvent::PingReport { .. } => return Formatted::Serialized,
+        | OutputEvent::PingReport { .. } => return None,
     };
-    Formatted::Line(line)
+    Some(line)
 }
 
 /// The events serialized straight from [`SimpleEvent`]. `None` for the formatted ones.
@@ -989,21 +833,17 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             })
             .ok()
         }
-        OutputEvent::MsgPosted { id } => {
-            serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() }).ok()
-        }
         OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }).ok(),
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
         }
-        OutputEvent::NicknameHeld { nickname } => serde_json::to_string(&serde_json::json!({
-            "event": "nickname_held",
-            "nickname": nickname,
-            "display": format!(
-                "`{nickname}` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"
-            ),
-        }))
-        .ok(),
+        OutputEvent::NicknameHeld { nickname } => {
+            serde_json::to_string(&SimpleEvent::NicknameHeld {
+                nickname,
+                display: nickname_held_display(nickname),
+            })
+            .ok()
+        }
         OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
             lost: *lost,
             display: events_lost_display(*lost),

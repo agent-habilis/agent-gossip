@@ -107,7 +107,6 @@ pub(super) async fn ready(options: ReadyOpts) -> Result<()> {
     let ReadyOpts {
         state_file,
         timeout_secs,
-        legacy_output: _,
     } = options;
     let ready = wait_for_ready(&state_file, timeout_secs).await?;
     print_ready_identity(&ready);

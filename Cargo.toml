@@ -54,7 +54,6 @@ tokio = { version = "1", features = [
   "fs",
   "signal",
   "net",
-  "process",
 ] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the MCP `fetch_messages` result embed each event's
@@ -90,13 +89,8 @@ uuid = { version = "1", features = ["v4"] }
 # E0308 between types that look identical, and it would put this repo back in
 # the business of tracking revs it has no reason to know.
 bs58 = "0.5"
-# The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
-# merge without a bespoke ordered-log fold. `default-features` stays on (the
-# `storage-v2` on-disk format is unused — we carry changes on the wire).
-automerge = "0.10"
 sha2 = "0.11"
 rand = "0.9"
-libc = "0.2"
 # Shared dev-deps (unit + integration tests, benches).
 proptest = "1.6"
 insta = "1"
@@ -129,8 +123,8 @@ unsafe_op_in_unsafe_fn = "deny"
 # NOTE: `unused_crate_dependencies` was evaluated and rejected — it is
 # per-compilation-unit, so every `tests/*.rs` integration crate
 # false-flags deps it doesn't personally use (anyhow/clap/bs58/...).
-# Not fixable without per-test `use X as _;` source shims. The genuine
-# dead deps it surfaced (`include_dir`, `schemars`) were removed below.
+# Not fixable without per-test `use X as _;` source shims. The
+# genuine dead deps it surfaced were removed.
 
 # Google Rust Style Guide D10 and D11: the rustdoc lints that judge a doc comment. `deny`, because
 # `cargo task ci` and the CI doc job run `cargo doc` with `-D warnings` and a lint level of `warn`

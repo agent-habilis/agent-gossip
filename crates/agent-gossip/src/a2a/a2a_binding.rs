@@ -249,17 +249,11 @@ async fn execute(
         response: resp_tx,
     };
     if req_tx.send(request).await.is_err() {
-        return Err(RpcError {
-            code: -32603,
-            message: "daemon event loop is gone".to_string(),
-        });
+        return Err(RpcError::internal("daemon event loop is gone"));
     }
-    resp_rx.await.unwrap_or_else(|_| {
-        Err(RpcError {
-            code: -32603,
-            message: "daemon dropped the request".to_string(),
-        })
-    })
+    resp_rx
+        .await
+        .unwrap_or_else(|_| Err(RpcError::internal("daemon dropped the request")))
 }
 
 #[cfg(test)]

@@ -28,9 +28,8 @@ pub(super) async fn discover(options: DiscoverOpts) -> Result<()> {
     .await?;
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the JSON stream isn't drowned in INFO lines on stderr.
-    if let Some((mesh, nickname)) = discoverer.session_identity() {
-        logging::attach(mesh, nickname);
-    }
+    let (mesh, nickname) = discoverer.session_identity();
+    logging::attach(mesh, nickname);
     let mut events = discoverer
         .events()
         .expect("discoverer events receiver is available exactly once");
