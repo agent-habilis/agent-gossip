@@ -531,7 +531,7 @@ pub(crate) fn adopt_initiator(
             rec.last_peer_activity = now;
             rec.last_skill_activity = now;
             if task_state.is_terminal() {
-                rec.state = task_state;
+                rec.end(task_state);
                 rec.review = false;
                 rec.ball = TaskRole::Receiver;
             }
@@ -2072,6 +2072,46 @@ mod tests {
             admit_new_task(&tasks, &flooder),
             Admission::Ok,
             "a new task is admitted under the cap"
+        );
+    }
+
+    /// A terminal snapshot of the worker ends the task of the initiator, and a finished task waits for
+    /// nothing: the adoption must clear the reason, as every other terminal set does.
+    #[test]
+    fn a_terminal_snapshot_of_the_worker_clears_the_waiting_reason() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        let task_id = tid();
+        let key = peer_key("calm-otter");
+        let peer = Nickname::from("calm-otter");
+        let adopt = |registry: &mut HashMap<TaskId, TaskRecord>, task_state| {
+            super::adopt_initiator(
+                registry,
+                super::AdoptInitiatorParams {
+                    task_id: &task_id,
+                    peer_key: &key,
+                    peer: &peer,
+                    task_state,
+                    now,
+                },
+            );
+        };
+        adopt(&mut tasks, TaskState::Working);
+        let rec = tasks
+            .get_mut(&task_id)
+            .expect("the adoption opened the record");
+        rec.waiting = Some("asking its user".to_owned());
+
+        adopt(&mut tasks, TaskState::Completed);
+
+        assert_eq!(
+            tasks[&task_id].state,
+            TaskState::Completed,
+            "the terminal snapshot of the worker closed the task"
+        );
+        assert_eq!(
+            tasks[&task_id].waiting, None,
+            "a task that the snapshot of the worker closed waits for nothing"
         );
     }
 
