@@ -180,3 +180,18 @@ fn create_config_builder_sets_only_the_named_fields() {
         "the nickname stays random when unset"
     );
 }
+
+/// The leg of a worker and its progress are public from `api`, since `TaskStatusParams::new` takes
+/// them.
+#[test]
+fn the_worker_leg_and_its_progress_are_public_from_api() {
+    let progress: super::Progress = "40".parse().expect("40 is a percentage");
+    let leg = super::WorkerLeg::parse(
+        crate::a2a::TaskState::Working,
+        Some("built it".to_owned()),
+        Some(progress),
+        false,
+    )
+    .expect("a full check-in parses");
+    assert_eq!(leg.progress(), Some(progress), "the leg keeps its progress");
+}

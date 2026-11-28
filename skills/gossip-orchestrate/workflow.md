@@ -85,6 +85,12 @@ On `input-required` kind `artifact-update` — a worker's result — **verify
 before approving**: check the artifact against the subtask's completion
 criteria, not against a general sense of done.
 
+A late leg is dropped whole. When a subtask's task waits for review (`input-required`)
+and no artifact reached you, send one follow-up with `--task-id` and
+`--text "resend your result"` before you count the subtask as failed. A task that
+ended (`completed`) takes no follow-up: open one new task to the same worker that asks
+it to resend the result of the task with that id, before you count the subtask as failed.
+
 - Every criterion met → approve with a `--task-id` follow-up so the worker
   closes, then print one line:
 
@@ -126,6 +132,13 @@ anything that is not the approval reads as a change request. When the user
 drops a subtask, every subtask depending on it drops with it — remove them
 from the queue; all of them appear on the report's `dropped:` line.
 
+A `task_gap` event
+is never shown, and its `state` is the switch. With `input-required` read its `text` and
+answer it with a follow-up per the initiator flow, as for any question of a worker; with
+`review` true, ask the worker with a follow-up to resend its result. With a state that
+ends the task, handle it as that terminal state, and open a new task that asks the worker
+to resend the result when a `completed` comes with no result.
+
 A `task_timeout` on a task still unacknowledged (no `working` yet — see the
 initiator flow in the Event handling section) is a stalled pickup: the worker's
 daemon went away before it accepted. Its re-dispatch is automatic — orchestrate
@@ -134,12 +147,12 @@ above is the escalation. When re-dispatching, prefer a worker other than the
 one that stalled. Preference only: the stalling peer stays a full candidate
 for every other subtask, with no ranking demotion.
 
-A `task_stalled` on a task that already has `working` is a different case: the
-worker acknowledged the task, but its agent has not polled for 30 minutes or
-more. The daemon cancels nothing. Probe the task with `GetTask`. If
-`mesh:waiting` is in its metadata, the worker waits for its own user, and you
-only wait. Otherwise send one follow-up with `--task-id` that asks for a
-status. If a second `task_stalled` arrives for the same task, put the choice to
+A `task_overdue` is a different case from a stalled pickup: the worker sent no
+check-in for twice the check-in interval. The daemon cancels nothing. The line
+can say `not picked up`: the worker never accepted the task. Treat it the same
+way as a task that went quiet after it accepted. If the line says `waiting on user`, show
+it and only wait. Otherwise send one follow-up with `--task-id` that asks for a
+status. If a second `task_overdue` arrives for the same task, put the choice to
 the user per the **Decisions** section: wait, ask the worker again, or reassign
 the subtask. Send `CancelTask` only when the user picks reassign, and only then
 count it as a drop of the subtask for the second-drop rule.

@@ -38,6 +38,16 @@ impl MeshSession {
         self.core.shards_resent().await
     }
 
+    /// Drop the next `count` task legs that arrive at this node, as a lossy overlay would: the
+    /// frame is lost on the way, after its sender counted it as sent. Beats are not legs and are
+    /// not dropped. Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub async fn drop_task_legs(&self, count: usize) -> Result<(), crate::api::SessionError> {
+        self.core.drop_task_legs(count).await
+    }
+
     /// The seal key of the member `key`, or `None` while the engine does not hold it.
     /// Adversarial-suite only: the suite seals a crafted frame to an honest member with it.
     ///

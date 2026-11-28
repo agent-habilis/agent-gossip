@@ -360,6 +360,7 @@ fn task_event_json_shape() {
         message: Box::new(message),
         is_self: false,
         to_name: Some(nick("calm-otter")),
+        quarter_moved: false,
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -409,6 +410,7 @@ fn task_self_echo_flag() {
         message: Box::new(message),
         is_self: true,
         to_name: Some(nick("calm-otter")),
+        quarter_moved: false,
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -425,7 +427,7 @@ fn task_self_echo_flag() {
 }
 
 #[test]
-fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
+fn task_event_carries_the_waiting_flag_only_when_the_leg_has_one() {
     use super::OutputEvent;
     let line = |metadata| {
         let message = status_frame(
@@ -442,25 +444,54 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
             message: Box::new(message),
             is_self: false,
             to_name: Some(nick("drift-oak")),
+            quarter_moved: false,
         })
         .expect("task event produces a JSON line");
         parse(&json)
     };
-    let waiting = line(Some(status_update_params::status_metadata(
-        Some("asks its user"),
-        1,
-    )));
+    let waiting = line(status_update_params::waiting_metadata(true));
     assert_eq!(waiting["event"], "task", "the event field is task");
     assert_eq!(
-        waiting["waiting"], "asks its user",
-        "the waiting field is asks its user"
+        waiting["waiting_user"], true,
+        "the waiting_user field is true"
     );
     let plain = line(None);
-    assert!(plain.get("waiting").is_none(), "got: {plain}");
+    assert!(plain.get("waiting_user").is_none(), "got: {plain}");
+    assert!(plain.get("progress").is_none(), "got: {plain}");
+}
+
+/// A check-in's progress rides the task event as a top-level integer, next to the tag.
+#[test]
+fn task_event_carries_the_progress_of_a_check_in() {
+    use super::OutputEvent;
+    let message = status_frame(
+        "calm-otter",
+        "drift-oak",
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::Working,
+            note: Some("tests pass"),
+            metadata: Some(status_update_params::status_metadata(
+                true,
+                Some("60".parse().expect("60 is a valid progress")),
+                7,
+            )),
+        },
+    );
+    let json = simple_event::event_json(&OutputEvent::Task {
+        message: Box::new(message),
+        is_self: false,
+        to_name: Some(nick("drift-oak")),
+        quarter_moved: false,
+    })
+    .expect("task event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["progress"], 60, "the progress is a percentage");
+    assert_eq!(parsed["waiting_user"], true, "the flag rides along");
 }
 
 /// The record keeps the reason from a `working` leg only, so the event key
-/// follows: a peer that sends `input-required` with `mesh:waiting` must not
+/// follows: a peer that sends `input-required` with `mesh:waiting_user` must not
 /// make the initiator badge a task that is not working.
 #[test]
 fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
@@ -473,7 +504,8 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             state: crate::a2a::TaskState::InputRequired,
             note: None,
             metadata: Some(status_update_params::status_metadata(
-                Some("asks its user"),
+                true,
+                Some("40".parse().expect("40 is a percentage")),
                 1,
             )),
         },
@@ -482,6 +514,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
         message: Box::new(message),
         is_self: false,
         to_name: Some(nick("drift-oak")),
+        quarter_moved: false,
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -489,7 +522,8 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
         parsed["state"], "input-required",
         "the state field is input-required"
     );
-    assert!(parsed.get("waiting").is_none(), "got: {parsed}");
+    assert!(parsed.get("waiting_user").is_none(), "got: {parsed}");
+    assert!(parsed.get("progress").is_none(), "got: {parsed}");
 }
 
 #[test]
@@ -502,13 +536,16 @@ fn task_progress_event_json_shape() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::Working,
             note: None,
-            metadata: Some(status_update_params::beat_metadata()),
+            metadata: Some(status_update_params::beat_metadata(Some(
+                "35".parse().expect("35 is a percentage"),
+            ))),
         },
     );
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
         to_name: Some(nick("drift-oak")),
+        quarter_moved: false,
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);
@@ -521,11 +558,12 @@ fn task_progress_event_json_shape() {
         parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
         "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
     );
-    assert!(parsed.get("done").is_none(), "a beat carries no fraction");
+    assert_eq!(parsed["progress"], 35, "the progress field is 35");
+    assert!(parsed.get("done").is_none(), "the done field is gone");
     assert!(parsed.get("phase").is_none(), "the phase key is absent");
     assert_eq!(
-        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: working",
-        "the progress line names both peers"
+        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35%",
+        "the progress line names both peers and the percentage"
     );
 }
 
@@ -559,36 +597,234 @@ fn task_timeout_event_json_shape() {
 }
 
 #[test]
-fn task_stalled_event_json_shape() {
+fn task_overdue_event_json_shape() {
     use super::OutputEvent;
     use crate::a2a::TaskId;
-    let event = OutputEvent::TaskStalled {
-        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        peer: habilis_network::protocol::Nickname::from("calm-otter"),
-        last_poll_secs_ago: 2_400,
-        check_secs: 1_800,
+    let event = OutputEvent::TaskOverdue {
+        notice: crate::output_event::OverdueNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: Some("review the diff".to_owned()),
+            age_secs: 660,
+            waiting_user: true,
+            not_picked_up: true,
+        },
     };
-    let json = simple_event::event_json(&event).expect("task_stalled event produces a JSON line");
+    let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(
-        parsed["event"], "task_stalled",
-        "the event field is task_stalled"
-    );
-    assert_eq!(
-        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
-        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+        parsed["event"], "task_overdue",
+        "the event field is task_overdue"
     );
     assert_eq!(parsed["peer"], "calm-otter", "the peer field is calm-otter");
+    assert_eq!(parsed["age_secs"], 660, "the age is in seconds");
     assert_eq!(
-        parsed["last_poll_secs_ago"], 2_400,
-        "the last_poll_secs_ago field is 2_400"
-    );
-    assert_eq!(parsed["check_secs"], 1_800, "the check_secs field is 1_800");
-    assert_eq!(
-        parsed["display"], "💬️ task stalled · `<calm-otter>` has not polled for 40 min",
-        "the stalled line names the silent peer and its 40 minutes"
+        parsed["display"],
+        "💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min \
+         · waiting on user · not picked up",
+        "the line carries every part that is set"
     );
     assert!(simple_event::is_visible(&event), "the user must see it");
+    assert!(
+        !node::wakes(&event),
+        "an alarm about a worker that waits on its user is shown without a ring"
+    );
+    assert!(node::is_pollable(&event), "poll must serve it");
+}
+
+/// A bare alarm names the short task id and leaves out every unset part.
+#[test]
+fn task_overdue_display_leaves_out_unset_parts() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskOverdue {
+        notice: crate::output_event::OverdueNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
+            age_secs: 600,
+            waiting_user: false,
+            not_picked_up: false,
+        },
+    };
+    let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
+    assert_eq!(
+        parse(&json)["display"],
+        "💬️ task overdue · `<calm-otter>` · 550e8400 · no check-in for 10 min",
+        "unset parts are absent"
+    );
+}
+
+/// The flag of a worker that never picked the task up is left out when it is not set, as are the
+/// other flags, and the silence reads in seconds under a minute.
+#[test]
+fn task_overdue_leaves_out_an_unset_flag_and_shows_short_silence_in_seconds() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let overdue = |age_secs: u64, not_picked_up: bool| OutputEvent::TaskOverdue {
+        notice: crate::output_event::OverdueNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
+            age_secs,
+            waiting_user: false,
+            not_picked_up,
+        },
+    };
+    let quiet = simple_event::event_json(&overdue(30, false)).expect("an event line");
+    assert!(
+        parse(&quiet).get("not_picked_up").is_none(),
+        "an unset flag is not on the line"
+    );
+    assert_eq!(
+        parse(&quiet)["display"],
+        "💬️ task overdue · `<calm-otter>` · 550e8400 · no check-in for 30 s",
+        "under a minute the silence is in seconds"
+    );
+    let set = simple_event::event_json(&overdue(120, true)).expect("an event line");
+    assert_eq!(
+        parse(&set)["not_picked_up"],
+        true,
+        "a set flag is on the line"
+    );
+    assert!(
+        parse(&set)["display"]
+            .as_str()
+            .is_some_and(|display| display.contains("no check-in for 2 min")),
+        "from a minute on the silence is in minutes"
+    );
+}
+
+/// An alarm that says the worker waits on its user is shown, but does not wake.
+#[test]
+fn task_overdue_waiting_on_user_does_not_wake() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskOverdue {
+        notice: crate::output_event::OverdueNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
+            age_secs: 600,
+            waiting_user: true,
+            not_picked_up: false,
+        },
+    };
+    assert!(simple_event::is_visible(&event), "the user must see it");
+    assert!(!node::wakes(&event), "nothing is done, so no wake");
+    assert!(node::is_pollable(&event), "poll must serve it");
+}
+
+/// The `task_gap` event rings the bell, is served by poll and is never shown.
+#[test]
+fn task_gap_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::{TaskId, TaskState};
+    let event = OutputEvent::TaskGap {
+        notice: crate::output_event::GapNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
+            state: TaskState::InputRequired,
+            text: Some("which port?".to_owned()),
+            truncated: false,
+            review: false,
+        },
+    };
+    let json = simple_event::event_json(&event).expect("task_gap event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_gap", "the event field is task_gap");
+    assert_eq!(
+        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+        "the line names the task"
+    );
+    assert_eq!(parsed["peer"], "calm-otter", "and the worker");
+    assert_eq!(parsed["text"], "which port?", "and the question");
+    assert!(
+        !simple_event::is_visible(&event),
+        "the user is not shown it"
+    );
+    assert!(
+        node::wakes(&event),
+        "the sender's agent is woken to read it"
+    );
+    assert!(node::is_pollable(&event), "poll must serve it");
+
+    let bare = OutputEvent::TaskGap {
+        notice: crate::output_event::GapNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: None,
+            state: TaskState::InputRequired,
+            text: None,
+            truncated: false,
+            review: true,
+        },
+    };
+    let bare_json = simple_event::event_json(&bare).expect("task_gap event produces a JSON line");
+    assert!(
+        parse(&bare_json).get("text").is_none(),
+        "a gap with no text leaves the key out"
+    );
+}
+
+/// A `task_gap` that carries the end of the task is as invisible as the one that carries a
+/// question: the agent reads its `state`, and the line names the task by its label.
+#[test]
+fn a_task_gap_that_ends_the_task_is_not_shown_either() {
+    use super::OutputEvent;
+    use crate::a2a::{TaskId, TaskState};
+    let event = OutputEvent::TaskGap {
+        notice: crate::output_event::GapNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            label: Some("port it".to_owned()),
+            state: TaskState::Completed,
+            text: Some("all done".to_owned()),
+            truncated: false,
+            review: false,
+        },
+    };
+    let json = simple_event::event_json(&event).expect("task_gap event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["state"], "completed", "the line names the end");
+    assert_eq!(parsed["label"], "port it", "and the task by its label");
+    assert!(!simple_event::is_visible(&event), "no end is shown");
+    assert!(node::wakes(&event), "the agent is woken to read it");
+}
+
+/// The worker's reminder rings the bell and is never shown.
+#[test]
+fn checkin_due_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::CheckinDue {
+        notice: crate::output_event::CheckinNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            text: Some("which port?".to_owned()),
+            truncated: true,
+            has_file: false,
+            brief: true,
+        },
+    };
+    let json = simple_event::event_json(&event).expect("checkin_due event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(
+        parsed["event"], "checkin_due",
+        "the event field is checkin_due"
+    );
+    assert_eq!(
+        parsed["text"], "which port?",
+        "the reminder repeats the follow-up"
+    );
+    assert_eq!(parsed["truncated"], true, "the cut is reported");
+    assert!(
+        parsed.get("has_file").is_none(),
+        "a flag that is not set carries no key, got: {parsed}"
+    );
+    assert_eq!(parsed["brief"], true, "the text is the opening brief");
+    assert!(!simple_event::is_visible(&event), "it is never shown");
     assert!(node::wakes(&event), "it must ring the bell");
     assert!(node::is_pollable(&event), "poll must serve it");
 }
@@ -809,7 +1045,7 @@ mod snapshots {
         insta::assert_snapshot!(snap_status(
             crate::a2a::TaskState::Working,
             None,
-            Some(status_update_params::beat_metadata()),
+            Some(status_update_params::beat_metadata("35".parse().ok())),
         ));
     }
 
@@ -820,8 +1056,10 @@ mod snapshots {
             &habilis_network::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
+            1,
         );
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
+        update.metadata = None;
         let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
             MessageKind::app_to(wire::ARTIFACT, test_key("calm-otter"), None),

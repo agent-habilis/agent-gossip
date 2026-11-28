@@ -101,7 +101,7 @@ pub(crate) enum A2aAction {
     /// A directed request/response over gossip: the peer serves a **safe method
     /// subset** — `GetTask`, `ListTasks`, `CancelTask` (a task you're a party
     /// to), `mesh/state.get`, `mesh/meta.get`, and `SendMessage` (task
-    /// creation: no `--task-id` opens a task the peer mints and returns;
+    /// creation: no `--task-id` opens a task, whose id your daemon mints and the response returns;
     /// `--task-id` is a follow-up). Mutating global ops are refused.
     /// `--file` attaches a file to a `SendMessage`, as `a2a artifact --file`
     /// does.

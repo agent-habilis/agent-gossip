@@ -6,8 +6,8 @@ use common::Node;
 
 /// A cap of 0 makes the first leg refuse, so the test needs no peer that hangs. The refusal comes
 /// from the real send path of the daemon: `a2a status` reaches it through the event loop. The
-/// offer of a call is not an own leg (the initiator learns its task from the reply), so the leg
-/// here is the status of a worker.
+/// opening of a call is not an own leg (the initiator opens its record when it dispatches the
+/// call), so the leg here is the status of a worker.
 #[test]
 fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
     let _serial = common::serial_guard();
@@ -21,7 +21,8 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
     let task_open = common::cli_task_create(&mesh, &alice.nickname, &open.nickname, "build it");
 
     let status = |worker: &Node, task: &str| {
-        common::test_cmd()
+        let mut command = common::test_cmd();
+        command
             .args([
                 "a2a",
                 "status",
@@ -31,6 +32,8 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
                 &worker.nickname,
             ])
             .args(["--task-id", task, "--state", "working"])
+            .args(["--text", "on it", "--progress", "50"]);
+        command
             .output()
             .expect("the test binary must start, or no refusal can be read")
     };
@@ -99,60 +102,5 @@ fn a_content_leg_past_the_unsent_legs_cap_is_refused_with_the_reason() {
         accepted.status.success(),
         "a node with the default cap sends its split content leg: {}",
         String::from_utf8_lossy(&accepted.stderr)
-    );
-}
-
-/// A cap of 0 refuses every call that carries a file: the refusal comes from the send path of the
-/// daemon, before the file is offloaded.
-#[test]
-fn a_call_with_a_file_past_the_blob_group_cap_is_refused_with_the_reason() {
-    let _serial = common::serial_guard();
-    let (alice, mesh) = Node::create_flags(
-        "itest-blob-cap",
-        &[("--call-blob-groups-per-task-cap", "0")],
-    );
-    let bob = Node::join(&mesh, "blob-cap-bob");
-    assert!(
-        alice.wait_ready(&mesh),
-        "the refusal comes from a daemon that serves commands"
-    );
-    assert!(
-        bob.wait_ready(&mesh),
-        "the peer must be up, or the refusal could come from a missing peer"
-    );
-    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
-    let file = std::env::temp_dir().join(format!("agent-gossip-blob-cap-{}", std::process::id()));
-    std::fs::write(&file, b"a file for the call").expect("the call needs a file to refuse");
-
-    let mut command = common::test_cmd();
-    command
-        .args([
-            "a2a",
-            "call",
-            "--gossip",
-            &mesh,
-            "--nickname",
-            &alice.nickname,
-        ])
-        .args(["--to", &bob.nickname, "--method", "SendMessage"])
-        .args(["--text", "see file", "--file"])
-        .arg(&file);
-    let refused: std::process::Output = command
-        .output()
-        .expect("the test binary must start, or no refusal can be read");
-    std::fs::remove_file(&file).ok();
-
-    let error = format!(
-        "{}{}",
-        String::from_utf8_lossy(&refused.stdout),
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    assert!(
-        !refused.status.success(),
-        "a cap of 0 leaves no room, so the command must exit with an error"
-    );
-    assert!(
-        error.contains("call files, so this call was not sent"),
-        "the caller must get the reason, got: {error}"
     );
 }

@@ -1,6 +1,6 @@
 pub use self::extensions::{
     EXT_MESH_A2A_RPC, EXT_MESH_BLOB, EXT_MESH_BROADCAST, EXT_MESH_SEAL, EXT_MESH_STATE,
-    GOSSIP_BINDING, META_BEAT, META_LABEL, META_REASON,
+    GOSSIP_BINDING, META_BEAT, META_LABEL, META_PROGRESS, META_REASON,
 };
 pub use self::model::{
     A2aRpcId, AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, Artifact,
@@ -31,3 +31,7 @@ pub(crate) mod surfaced_event;
 pub(crate) mod task_record;
 pub(crate) mod tuning;
 pub(crate) mod wire;
+mod worker_leg;
+mod worker_leg_error;
+pub use self::worker_leg::WorkerLeg;
+pub use self::worker_leg_error::WorkerLegError;

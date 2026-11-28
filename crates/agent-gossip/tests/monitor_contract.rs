@@ -1128,7 +1128,7 @@ async fn test_task_idle_timeout_after_owner_dies() {
     // Creator creates the task; the worker (joiner) holds the ball and accepts.
     let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-bob", "port it");
     await_offers(&joiner, 1);
-    common::cli_task_status(&mesh, "tk-bob", &tid, "working");
+    common::CliWorker::new(&mesh, "tk-bob").checkin(&tid, "on it", "50");
 
     // Both alive well past the 3s timeout: the joiner's keepalive must keep
     // the task alive — no spurious `task_timeout` on the creator.
@@ -1192,7 +1192,7 @@ async fn test_completed_task_is_never_reaped() {
     let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-done", "count to three");
     await_offers(&worker, 1);
 
-    common::cli_task_status(&mesh, "tk-done", &tid, "working");
+    common::CliWorker::new(&mesh, "tk-done").checkin(&tid, "on it", "50");
     common::cli_task_artifact(&mesh, "tk-done", &tid, "three");
 
     // The initiator approves *into the task* — the `--task-id` is what makes this
@@ -1207,7 +1207,7 @@ async fn test_completed_task_is_never_reaped() {
     );
 
     // The worker, as the task's server, authors the terminal state.
-    common::cli_task_status(&mesh, "tk-done", &tid, "completed");
+    common::CliWorker::new(&mesh, "tk-done").state(&tid, "completed", None);
 
     // Now wait out a window that comfortably exceeds every pre-fix deadline —
     // the old 2 s keepalive cap + timeout (3s) + a sweep tick (1s), with headroom.
@@ -1258,8 +1258,8 @@ async fn test_silent_tasks_survive_while_daemons_live() {
     let long_command = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "build");
     let review = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "review");
     await_offers(&worker, 3);
-    common::cli_task_status(&mesh, worker_nick, &long_command, "working");
-    common::cli_task_status(&mesh, worker_nick, &review, "working");
+    common::CliWorker::new(&mesh, worker_nick).checkin(&long_command, "on it", "50");
+    common::CliWorker::new(&mesh, worker_nick).checkin(&review, "on it", "50");
     common::cli_task_artifact(&mesh, worker_nick, &review, "the result");
 
     // Three idle timeouts with no skill leg from either side.
@@ -1320,18 +1320,19 @@ async fn test_silent_tasks_survive_while_daemons_live() {
     }
 }
 
-/// A peer's repeated `working` with no text changes nothing: the task is
-/// already `working`. Pre-fix each one surfaced to the initiator and woke its
-/// bell.
+/// Each check-in of a peer is data for the initiator: it goes on the ring, so
+/// poll serves all of them, but it does not wake the bell. The daemon dropped
+/// the old dedupe of a repeated `working` once a `working` leg became the
+/// proof that the task is worked on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_a_repeated_working_does_not_reach_the_initiator() {
+async fn test_every_checkin_reaches_the_initiator_poll() {
     let worker_nick = "tk-repeat";
     let (creator, worker, mesh) = task_pair(worker_nick, &[], &[]);
 
     let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "build");
     await_offers(&worker, 1);
     for _ in 0..3 {
-        common::cli_task_status(&mesh, worker_nick, &tid, "working");
+        common::CliWorker::new(&mesh, worker_nick).checkin(&tid, "on it", "50");
     }
     common::cli_task_artifact(&mesh, worker_nick, &tid, "done");
 
@@ -1366,8 +1367,8 @@ async fn test_a_repeated_working_does_not_reach_the_initiator() {
         })
         .count();
     assert_eq!(
-        working, 1,
-        "only the accept reaches the initiator: {polled:?}"
+        working, 3,
+        "each check-in must reach the initiator's poll: {polled:?}"
     );
 }
 
@@ -1396,13 +1397,13 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
 
     let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "count");
     await_offers(&worker, 1);
-    common::cli_task_status(&mesh, worker_nick, &tid, "working");
+    common::CliWorker::new(&mesh, worker_nick).checkin(&tid, "on it", "50");
     common::cli_task_artifact(&mesh, worker_nick, &tid, "three");
     let _ = common::cli_task_followup(
         &common::FollowupParams::new(&mesh, &creator.nickname, worker_nick, &tid)
             .with_text("approved"),
     );
-    common::cli_task_status(&mesh, worker_nick, &tid, "completed");
+    common::CliWorker::new(&mesh, worker_nick).state(&tid, "completed", None);
     let saw_completed: usize = wait_until(
         || {
             let events = creator.json_events();
@@ -1417,7 +1418,8 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     assert_eq!(saw_completed, 1, "the initiator never saw the task close");
 
     let late_note = |text: &str| {
-        let out = common::test_cmd()
+        let mut command = common::test_cmd();
+        command
             .args([
                 "a2a",
                 "status",
@@ -1427,8 +1429,8 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
                 worker_nick,
             ])
             .args(["--task-id", &tid, "--state", "working", "--text", text])
-            .output()
-            .expect("a2a status failed to spawn");
+            .args(["--progress", "50"]);
+        let out = command.output().expect("a2a status failed to spawn");
         assert!(out.status.success(), "late status refused: {out:?}");
     };
     // Condition 2: the initiator still holds the closed record.
@@ -2259,12 +2261,18 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
     }
 }
 
-/// A `--file` call that timed out, but that the worker still took, is
-/// cancelled at the worker: the caller was told the call failed, so no task
-/// may live on for it.
+/// A `--file` call that timed out, but that the worker still took, hands its task back
+/// unconfirmed, and the task is cancelled at the worker once nobody touches it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
-    let fast_reap = FAST_TASK_TIMERS;
+    // The daemons also stop beating a task that no agent touches for 3 s, so the sweep sees the
+    // worker silent and cancels the task: nothing else cancels a timed-out call.
+    let fast_reap = [
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--task-skill-silence-max-secs", "3"),
+        ("--sweep-interval-secs", "1"),
+    ];
     let (creator, mesh) = Node::create_flags("jtest", &fast_reap);
     let worker = Node::join_flags(&mesh, "tf-late", &fast_reap);
     assert!(
@@ -2278,8 +2286,8 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-late");
 
     let (sent, _bytes) = scratch_file("late.tar");
-    // A worker that runs can answer before a deadline of 0 s fires: the call then returns the task and proves
-    // nothing. A stopped worker cannot answer, so the call always times out, and the brief reaches it after.
+    // The frozen worker cannot answer before the deadline, whatever the timing: the reply of a
+    // worker that races the deadline is a confirmed task, not the unconfirmed one under test.
     worker.stop();
     let out: std::process::Output = cli_call(
         &mesh,
@@ -2295,11 +2303,7 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     .output()
     .expect("a2a call command failed to spawn");
     worker.cont();
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("timed out"),
-        "the call must time out before the reply: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    let handed_back = unconfirmed_task_id(&out);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     let task_id: String = loop {
@@ -2314,6 +2318,10 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
         assert!(Instant::now() < deadline, "the worker never got the brief");
         std::thread::sleep(POLL);
     };
+    assert_eq!(
+        handed_back, task_id,
+        "the unconfirmed task that the call handed back is the one that the worker took"
+    );
 
     let cancelled = || {
         worker.json_events().into_iter().any(|value| {
@@ -2330,6 +2338,173 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
         );
         std::thread::sleep(POLL);
     }
+}
+
+/// A plain call (no file) that timed out, but that the worker still took, hands its task back
+/// unconfirmed, and the task is cancelled at the worker once nobody touches it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_timed_out_plain_call_is_cancelled_at_the_worker() {
+    // Both daemons stop beating a task that no agent touches for 3 s, so the initiator's sweep
+    // sees the worker silent and cancels the task: nothing else cancels a timed-out call.
+    let fast_reap = [
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--task-skill-silence-max-secs", "3"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, mesh) = Node::create_flags("jtest", &fast_reap);
+    let worker = Node::join_flags(&mesh, "tp-late", &fast_reap);
+    assert!(
+        creator.wait_ready(&mesh),
+        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
+    );
+    assert!(
+        worker.wait_ready(&mesh),
+        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
+    );
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tp-late");
+
+    // The frozen worker cannot answer before the deadline, whatever the timing: the reply of a
+    // worker that races the deadline is a confirmed task, not the unconfirmed one under test.
+    worker.stop();
+    let out: std::process::Output = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tp-late",
+        &[
+            OsStr::new("--text"),
+            OsStr::new("a plain brief"),
+            OsStr::new("--timeout-secs"),
+            OsStr::new("0"),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    worker.cont();
+    let handed_back = unconfirmed_task_id(&out);
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let task_id: String = loop {
+        let found: Option<String> = worker.json_events().into_iter().find_map(|value| {
+            (value["event"] == "task" && value["kind"] == "message")
+                .then(|| value["task_id"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        if let Some(task_id) = found {
+            break task_id;
+        }
+        assert!(Instant::now() < deadline, "the worker never got the brief");
+        std::thread::sleep(POLL);
+    };
+    assert_eq!(
+        handed_back, task_id,
+        "the unconfirmed task that the call handed back is the one that the worker took"
+    );
+
+    let cancelled = || {
+        worker.json_events().into_iter().any(|value| {
+            value["task_id"] == task_id.as_str()
+                && (value["event"] == "task_timeout" || value["state"] == "canceled")
+        })
+    };
+    let cancel_deadline = Instant::now() + Duration::from_secs(20);
+    while !cancelled() {
+        assert!(
+            Instant::now() < cancel_deadline,
+            "the worker's plain task was never cancelled: {:#?}",
+            worker.json_events()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// A call that timed out hands its task back unconfirmed. When the worker was only slow, the
+/// task is the one that it takes up: the worker accepts it and completes it, and the sender,
+/// which holds the task from the start, follows it to the end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_an_unconfirmed_task_is_accepted_and_completed() {
+    let (creator, mesh) = Node::create_named("jtest");
+    let worker = Node::join_flags(&mesh, "tu-slow", &[]);
+    assert!(
+        creator.wait_ready(&mesh),
+        "no daemon, no mesh: a creator that never becomes ready makes every later step meaningless"
+    );
+    assert!(
+        worker.wait_ready(&mesh),
+        "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
+    );
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tu-slow");
+
+    // The frozen worker cannot answer before the deadline, whatever the timing.
+    worker.stop();
+    let out: std::process::Output = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tu-slow",
+        &[
+            OsStr::new("--text"),
+            OsStr::new("a slow brief"),
+            OsStr::new("--timeout-secs"),
+            OsStr::new("0"),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    worker.cont();
+    let handed_back = unconfirmed_task_id(&out);
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let task_id: String = loop {
+        let found: Option<String> = worker.json_events().into_iter().find_map(|value| {
+            (value["event"] == "task" && value["kind"] == "message")
+                .then(|| value["task_id"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        if let Some(task_id) = found {
+            break task_id;
+        }
+        assert!(Instant::now() < deadline, "the worker never got the brief");
+        std::thread::sleep(POLL);
+    };
+    assert_eq!(
+        handed_back, task_id,
+        "the worker took up the task that the call handed back"
+    );
+
+    let agent = common::CliWorker::new(&mesh, "tu-slow");
+    agent.checkin(&task_id, "accepted: a slow brief", "0");
+    agent.state(&task_id, "completed", Some("done"));
+    let completed = || {
+        creator
+            .json_events()
+            .into_iter()
+            .any(|value| value["task_id"] == task_id.as_str() && value["state"] == "completed")
+    };
+    let finish_deadline = Instant::now() + MSG_TIMEOUT;
+    while !completed() {
+        assert!(
+            Instant::now() < finish_deadline,
+            "the sender never saw the task complete: {:#?}",
+            creator.json_events()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The id of the task that a timed-out `a2a call` handed back, which must say that the worker has
+/// not confirmed it.
+fn unconfirmed_task_id(out: &std::process::Output) -> String {
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|error| panic!("the call prints a JSON-RPC response ({error}): {out:?}"));
+    let task = &reply["result"]["task"];
+    assert_eq!(
+        task["metadata"]["mesh:unconfirmed"], true,
+        "the call must time out before the reply and hand back its task unconfirmed: {reply}"
+    );
+    task["id"]
+        .as_str()
+        .expect("a task that is handed back has an id")
+        .to_owned()
 }
 
 /// The reach a roster gives the creator, or `None` when the roster does not list it.

@@ -19,26 +19,29 @@ pub fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Value {
         to,
         task_id,
         text,
+        file,
     } = params;
-    let out = test_cmd()
-        .args([
-            "a2a",
-            "call",
-            "--gossip",
-            mesh,
-            "--nickname",
-            nickname,
-            "--to",
-            to,
-            "--method",
-            "SendMessage",
-            "--task-id",
-            task_id,
-            "--text",
-            text,
-        ])
-        .output()
-        .expect("a2a call command failed to spawn");
+    let mut command = test_cmd();
+    command.args([
+        "a2a",
+        "call",
+        "--gossip",
+        mesh,
+        "--nickname",
+        nickname,
+        "--to",
+        to,
+        "--method",
+        "SendMessage",
+        "--task-id",
+        task_id,
+        "--text",
+        text,
+    ]);
+    if let Some(file) = file {
+        command.arg("--file").arg(file);
+    }
+    let out = command.output().expect("a2a call command failed to spawn");
     assert!(
         out.status.success(),
         "a2a follow-up failed: {}",

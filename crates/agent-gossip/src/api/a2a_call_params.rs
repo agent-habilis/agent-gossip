@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use habilis_network::protocol::Nickname;
 
-use crate::a2a::TaskId;
+use crate::a2a::{TaskId, WorkerLeg};
 
 /// The call that a directed [`MeshSession::a2a_call`](super::MeshSession::a2a_call) makes.
 ///
@@ -46,19 +46,16 @@ pub struct TaskArtifactParams {
 
 /// The status leg for [`MeshSession::task_status`](super::MeshSession::task_status).
 ///
-/// It holds the new state, plus an optional note and an optional reason that the
-/// worker waits on its own user (only meaningful with `working`).
+/// The [`WorkerLeg`] holds the state, the note, the progress and the flag that the worker waits
+/// on its user, already checked: a `working` status is a check-in and needs the note and the
+/// progress, and no other state takes a progress or the flag.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct TaskStatusParams {
     /// The task this status belongs to.
     pub task_id: TaskId,
-    /// The new state.
-    pub state: crate::a2a::TaskState,
-    /// The status message text, if any.
-    pub note: Option<String>,
-    /// Why the worker waits on its own user, if it does.
-    pub waiting: Option<String>,
+    /// The leg to send.
+    pub leg: WorkerLeg,
 }
 
 impl A2aCallParams {
@@ -101,28 +98,9 @@ impl TaskArtifactParams {
 }
 
 impl TaskStatusParams {
-    /// A status with no note and no waiting reason.
+    /// The status `leg` for the task `task_id`.
     #[must_use]
-    pub fn new(task_id: TaskId, state: crate::a2a::TaskState) -> Self {
-        Self {
-            task_id,
-            state,
-            note: None,
-            waiting: None,
-        }
-    }
-
-    /// Put `note` on the status message.
-    #[must_use]
-    pub fn with_note(mut self, note: String) -> Self {
-        self.note = Some(note);
-        self
-    }
-
-    /// The worker waits on its own user for this reason.
-    #[must_use]
-    pub fn with_waiting(mut self, reason: String) -> Self {
-        self.waiting = Some(reason);
-        self
+    pub fn new(task_id: TaskId, leg: WorkerLeg) -> Self {
+        Self { task_id, leg }
     }
 }

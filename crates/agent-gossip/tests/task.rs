@@ -1,6 +1,6 @@
 //! Native A2A task lifecycle tests (in-process, via the `InProcNode`
 //! harness). A task is created by a directed `message/send` over the gossip
-//! request/response binding — the **worker** mints the id and returns the
+//! request/response binding — the **initiator** mints the id and the worker returns the
 //! `Task` — then advanced by worker-pushed `TaskStatusUpdate` /
 //! `TaskArtifactUpdate` frames (the A2A streaming plane) and initiator
 //! `message/send` follow-ups, and closed by the **worker's** `completed`
@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::output_event::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
@@ -97,8 +98,12 @@ async fn full_lifecycle_worker_completes_after_approval() {
     );
 
     // Worker accepts (working) → initiator sees it.
-    bob.task_status(&task_id, TaskState::Working, Some("on it"))
-        .await;
+    bob.task_checkin(
+        &task_id,
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
     assert!(
         alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "initiator never saw the worker accept"
@@ -129,8 +134,7 @@ async fn full_lifecycle_worker_completes_after_approval() {
     );
 
     // The worker authors the terminal `completed`.
-    bob.task_status(&task_id, TaskState::Completed, Some("done"))
-        .await;
+    bob.task_state(&task_id, TaskState::Completed, "done").await;
     assert!(
         alice
             .wait_task_state(TaskState::Completed, MSG_TIMEOUT)
@@ -165,8 +169,12 @@ async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
         bob.wait_task_message(MSG_TIMEOUT).await,
         "bob saw the brief"
     );
-    bob.task_status(&task_id, TaskState::Working, Some("on it"))
-        .await;
+    bob.task_checkin(
+        &task_id,
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
     assert!(
         alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "initiator never saw the worker accept"
@@ -255,13 +263,16 @@ async fn own_sharded_status_leg_completes_the_workers_own_record() {
 
     // A worker cannot close a task it never accepted, so take the offer first —
     // the sharded leg under test is the `completed` one.
-    bob.task_status(&task_id, TaskState::Working, Some("on it"))
-        .await;
+    bob.task_checkin(
+        &task_id,
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
 
     // Comfortably past MAX_MESSAGE_SIZE (3840), so the leg must split.
     let note = "x".repeat(8 * 1024);
-    bob.task_status(&task_id, TaskState::Completed, Some(&note))
-        .await;
+    bob.task_state(&task_id, TaskState::Completed, &note).await;
 
     assert_eq!(
         served_state(&alice, "t-shard-bob", &task_id).await,
@@ -318,8 +329,7 @@ async fn cancel_advances_the_cancellers_own_record_and_response() {
     bob.leave().await;
 }
 
-/// Two tasks created on the same worker get **distinct** server-minted ids and
-/// advance independently.
+/// Two tasks created to the same worker get **distinct** ids and advance independently.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_tasks_get_distinct_ids() {
     let alice = InProcNode::create("t-two").await;
@@ -328,7 +338,38 @@ async fn two_tasks_get_distinct_ids() {
 
     let first = task_id_of(&alice.create_task("t-two-bob", "task one").await);
     let second = task_id_of(&alice.create_task("t-two-bob", "task two").await);
-    assert_ne!(first, second, "each task gets its own server-minted id");
+    assert_ne!(first, second, "each task gets its own id");
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
+/// An opening answers with a `submitted` task whose id is the one that the initiator minted and
+/// stamped on the brief, so the id that the worker surfaces is the id of the reply.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opening_returns_submitted_task_with_initiator_minted_id() {
+    let alice = InProcNode::create("t-open").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-open-bob").await;
+    common::warm_up(&alice, &mut [&mut bob]).await;
+
+    let reply = alice.create_task("t-open-bob", "the brief").await;
+    let returned = task_id_of(&reply);
+    assert_eq!(
+        reply["result"]["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
+        "a task that nobody accepted yet is submitted"
+    );
+    assert!(
+        bob.wait_task_message(MSG_TIMEOUT).await,
+        "bob saw the brief"
+    );
+    let surfaced = bob
+        .task_message_task_id()
+        .expect("the brief surfaced with its task id");
+    assert_eq!(
+        surfaced,
+        returned.as_str(),
+        "the worker holds the id that the initiator stamped, not one of its own"
+    );
 
     alice.leave().await;
     bob.leave().await;
@@ -345,7 +386,12 @@ async fn not_surfaced_to_third_party() {
         .create_task(bob.nickname.as_str(), "private work")
         .await;
     let task_id = task_id_of(&response);
-    bob.task_status(&task_id, TaskState::Working, None).await;
+    bob.task_checkin(
+        &task_id,
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
     assert!(
         bob.wait_task_message(MSG_TIMEOUT).await,
         "the worker is a party and sees the task"
@@ -393,8 +439,12 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
         "bob accepted the second key of the name: the gate admits one key for a nickname"
     );
 
-    bob.task_status(&task_id, TaskState::Working, Some("on it"))
-        .await;
+    bob.task_checkin(
+        &task_id,
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
 
     assert!(
         alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
@@ -434,7 +484,12 @@ async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares
         bob.wait_task_message(MSG_TIMEOUT).await,
         "bob saw the brief"
     );
-    bob.task_status(&task_id, TaskState::Working, None).await;
+    bob.task_checkin(
+        &task_id,
+        "on it",
+        Progress::try_from(50).expect("50 is a percentage"),
+    )
+    .await;
     assert!(
         alice.wait_task_state(TaskState::Working, MSG_TIMEOUT).await,
         "the task is running"

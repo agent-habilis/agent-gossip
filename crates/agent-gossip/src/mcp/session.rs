@@ -157,7 +157,9 @@ mod tests {
             | OutputEvent::StateChanged { .. }
             | OutputEvent::TaskMessage { .. }
             | OutputEvent::TaskTimeout { .. }
-            | OutputEvent::TaskStalled { .. }
+            | OutputEvent::TaskOverdue { .. }
+            | OutputEvent::CheckinDue { .. }
+            | OutputEvent::TaskGap { .. }
             | OutputEvent::Receipt { .. } => None,
         }
     }

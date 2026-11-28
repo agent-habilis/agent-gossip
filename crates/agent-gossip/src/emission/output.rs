@@ -9,10 +9,9 @@ use tokio::sync::mpsc::error::TrySendError;
 
 use super::simple_event::{self, emit};
 use super::{
-    OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, StateChangedParams,
-    TaskGoneReason, TaskId,
+    CheckinNotice, GapNotice, OutputEvent, OutputMode, OverdueNotice, PingPeer, ReadyParams,
+    ReceiptParams, StateChangedParams, TaskGoneReason, TaskId,
 };
-use crate::a2a::task_record::StallNotice;
 use crate::a2a::{node, wire};
 
 /// Per-event-loop output destination, not a process global: several
@@ -48,6 +47,16 @@ pub(crate) enum Output {
         tx: UnboundedSender<OutputEvent>,
         tap: Option<SurfacedTap>,
     },
+}
+
+/// Where a task leg that is shown comes from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskOrigin {
+    /// The echo of a leg that this node sent.
+    Own,
+    /// A leg of the peer. `quarter_moved` says that its progress is in another quarter than the
+    /// last one that the record held, which wakes the sender.
+    Peer { quarter_moved: bool },
 }
 
 /// The sender end of the tap that feeds the surfaced ring: a bounded channel, so a loop that does not
@@ -217,9 +226,14 @@ impl Output {
     pub(crate) fn print_task(
         &self,
         message: &Authored,
-        is_self: bool,
         addressee_name: Option<&Nickname>,
+        origin: TaskOrigin,
     ) {
+        let is_self = origin == TaskOrigin::Own;
+        let quarter_moved = origin
+            == TaskOrigin::Peer {
+                quarter_moved: true,
+            };
         // Only worker-pushed status/artifact frames surface as a `task` event.
         let MessageKind::App {
             tag, to: Some(_), ..
@@ -237,6 +251,7 @@ impl Output {
             message: Box::new(message.clone()),
             is_self,
             to_name: addressee_name.cloned(),
+            quarter_moved,
         });
     }
 
@@ -263,14 +278,25 @@ impl Output {
         });
     }
 
-    /// A worker's agent has not polled for `check_secs` with no bell armed. JSON
-    /// mode emits a visible `task_stalled` event; nothing is canceled.
-    pub(crate) fn task_stalled(&self, notice: &StallNotice) {
-        self.dispatch(|| OutputEvent::TaskStalled {
-            task_id: notice.task_id.clone(),
-            peer: notice.peer.clone(),
-            last_poll_secs_ago: notice.last_poll_secs,
-            check_secs: notice.check_secs,
+    /// A worker's agent has not checked in for 2·X. JSON mode emits a visible
+    /// `task_overdue` event; nothing is canceled.
+    pub(crate) fn task_overdue(&self, notice: &OverdueNotice) {
+        self.dispatch(|| OutputEvent::TaskOverdue {
+            notice: notice.clone(),
+        });
+    }
+
+    /// This worker owes a check-in. It rings the bell and is never shown.
+    pub(crate) fn checkin_due(&self, notice: &CheckinNotice) {
+        self.dispatch(|| OutputEvent::CheckinDue {
+            notice: notice.clone(),
+        });
+    }
+
+    /// A question of the worker was lost on the way. It rings the bell and is never shown.
+    pub(crate) fn task_gap(&self, notice: &GapNotice) {
+        self.dispatch(|| OutputEvent::TaskGap {
+            notice: notice.clone(),
         });
     }
 

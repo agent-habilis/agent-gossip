@@ -190,17 +190,10 @@ impl InProcessSession {
         &self,
         status: TaskStatusParams,
     ) -> Result<Authored, SessionError> {
-        let TaskStatusParams {
-            task_id,
-            state,
-            note,
-            waiting,
-        } = status;
+        let TaskStatusParams { task_id, leg } = status;
         self.call_loop(|response| SessionRequest::TaskStatus {
             task_id,
-            state,
-            note,
-            waiting,
+            leg,
             response,
         })
         .await
@@ -347,6 +340,16 @@ impl InProcessSession {
     #[cfg(feature = "adversarial")]
     pub(crate) async fn shards_resent(&self) -> Result<usize, SessionError> {
         self.call(|response| SessionRequest::ShardsResent { response })
+            .await
+    }
+
+    /// Drop the next `count` task legs that arrive here. Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn drop_task_legs(&self, count: usize) -> Result<(), SessionError> {
+        self.call(|response| SessionRequest::DropTaskLegs { count, response })
             .await
     }
 

@@ -95,6 +95,9 @@ pub enum OutputEvent {
         /// The addressee's name, read from the roster when the line printed. `None` when the
         /// addressee is not live.
         to_name: Option<Nickname>,
+        /// `true` when the progress of this check-in is in another quarter than the last one
+        /// the record held, which wakes the sender so its row can show the move.
+        quarter_moved: bool,
     },
     /// A task leg that arrived over the request/response binding, so no frame backs it.
     TaskMessage {
@@ -120,7 +123,7 @@ pub enum OutputEvent {
         /// one — absent from a peer that does not set it.
         label: Option<String>,
         /// The A2A `Message` the leg carried, for its non-text parts (a file's
-        /// `Part.url`). `None` on the initiator's adopted-`Task` leg.
+        /// `Part.url`). `None` when the leg has no message to show.
         message: Option<Box<crate::a2a::Message>>,
         /// `true` when the local node sent the leg.
         is_self: bool,
@@ -132,17 +135,23 @@ pub enum OutputEvent {
         /// Which trigger removed it.
         reason: TaskGoneReason,
     },
-    /// The worker's agent has not polled for `check_secs` and holds no bell.
-    /// States the fact only; the task is not canceled.
-    TaskStalled {
-        /// The stalled task.
-        task_id: TaskId,
-        /// The worker whose agent is not reading.
-        peer: Nickname,
-        /// Whole seconds since the agent last polled.
-        last_poll_secs_ago: u64,
-        /// The silence threshold, in seconds, that triggered this event.
-        check_secs: u64,
+    /// The worker's agent has not checked in for 2·X. States the fact only; the
+    /// task is not canceled.
+    TaskOverdue {
+        /// What the alarm says.
+        notice: OverdueNotice,
+    },
+    /// This worker owes a check-in. Rings its bell only; it is never shown.
+    CheckinDue {
+        /// What the reminder says.
+        notice: CheckinNotice,
+    },
+    /// The worker told this sender, by a beat, of a leg that never arrived, and the task that the
+    /// worker then reported is waiting on the sender's answer. Rings its bell only; it is never
+    /// shown.
+    TaskGap {
+        /// What the event says.
+        notice: GapNotice,
     },
     /// A delivery or read receipt for a message the local node sent.
     Receipt {
@@ -191,4 +200,89 @@ pub enum TaskGoneReason {
     Timeout,
     /// The counterparty left the mesh gracefully.
     PeerLeft,
+}
+
+/// The alarm a sender raises when a worker's agent has not checked in for 2·X. The fields are
+/// the keys of the `task_overdue` line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct OverdueNotice {
+    /// The overdue task.
+    pub task_id: TaskId,
+    /// The worker whose agent has not checked in.
+    pub peer: Nickname,
+    /// The initiator's name for the task, when the brief carried one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Whole seconds since the last check-in.
+    pub age_secs: u64,
+    /// Whether the worker said in its last check-in that it waits on its own user.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub waiting_user: bool,
+    /// `true` when the worker never accepted the task.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub not_picked_up: bool,
+}
+
+/// The event of a question that was lost on the way.
+///
+/// The friendly name of a task state, the one the agent surface speaks.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's `serialize_with` passes the field by reference"
+)]
+fn friendly_state<S: serde::Serializer>(state: &TaskState, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_str(state.friendly_name())
+}
+
+/// The beat of the worker showed a leg that never arrived, and the task that the worker then
+/// reported waits for the answer of the sender, or is over. The fields are the keys of the
+/// `task_gap` line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct GapNotice {
+    /// The task that waits for an answer.
+    pub task_id: TaskId,
+    /// The worker.
+    pub peer: Nickname,
+    /// The initiator's `mesh:label` for the task, so the agent can tie the notice to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The state that the worker reported: `input-required`, or an end.
+    #[serde(serialize_with = "friendly_state")]
+    pub state: TaskState,
+    /// What the worker said last, which is the question when the worker asked one. Absent when the
+    /// task waits on a result to review, because the last words are then an older check-in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// `true` when the cap cut `text`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// `true` when the task waits on a result to review, which the lost leg carried.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub review: bool,
+}
+
+/// The reminder a worker raises when it owes a check-in. The fields are the keys of the
+/// `checkin_due` line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct CheckinNotice {
+    /// The task that waits for a check-in.
+    pub task_id: TaskId,
+    /// The initiator.
+    pub peer: Nickname,
+    /// The brief or follow-up the worker has not answered yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// `true` when the cap cut `text`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// `true` when that message carries a file the reminder does not repeat.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_file: bool,
+    /// `true` when that message is the opening brief, so a worker that lost its todo can tell a
+    /// brief from a follow-up.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub brief: bool,
 }

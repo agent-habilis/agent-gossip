@@ -22,13 +22,17 @@ use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
-use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
-use crate::a2a::rpc_error::PeerRef;
+use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, Opening, UnsentLeg};
+use crate::a2a::extensions::META_SEQ;
+use crate::a2a::rpc_error::{PeerRef, RpcError, is_send_message};
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{ipc_command, receipt, served, status_update_params, task_record, tuning, wire};
+use crate::a2a::{
+    META_LABEL, WorkerLeg, ipc_command, node, receipt, served, status_update_params, task_record,
+    tuning, wire,
+};
 use crate::emission;
 
 /// Write the dev log of a just-built outbound `Msg` and — when `echo` — print
@@ -160,6 +164,16 @@ fn needs_unsent_slot(wire_len: usize, content: bool) -> bool {
 /// Whether a frame of `wire_len` bytes goes out whole, and is not split into shards.
 fn fits_one_frame(wire_len: usize) -> bool {
     wire_len <= MAX_MESSAGE_SIZE
+}
+
+/// The bytes that an own task leg holds in the queue while its send waits: the plaintext body.
+fn own_leg_bytes(body: &str) -> usize {
+    body.len()
+}
+
+/// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
+pub(crate) fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
+    live.filter(|nick| *nick == peer).count()
 }
 
 /// The bytes that an own content leg holds in the list while its send waits: the sealed frames,
@@ -693,7 +707,7 @@ async fn broadcast_directed_frame(
     } = frame;
     if task_id.is_some() {
         // An own task leg holds its plaintext body in the queue while its send waits.
-        app.admit_own_leg(echo_body.as_str().len())?;
+        app.admit_own_leg(own_leg_bytes(echo_body.as_str()))?;
     }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
@@ -896,7 +910,7 @@ fn print_echo(
     addressee: Option<&Nickname>,
 ) {
     match echo_as {
-        EchoAs::Task => out.print_task(echo, true, addressee),
+        EchoAs::Task => out.print_task(echo, addressee, emission::TaskOrigin::Own),
         EchoAs::Chat => out.print_message(echo, true, addressee),
     }
 }
@@ -909,23 +923,20 @@ pub(crate) struct TaskStatusParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
-    pub(crate) task_state: crate::a2a::TaskState,
-    pub(crate) note: Option<&'caller str>,
-    /// Why a `working` task waits on the worker's own user; rides the leg as
-    /// `mesh:waiting`.
-    pub(crate) waiting: Option<&'caller str>,
+    pub(crate) leg: WorkerLeg,
     pub(crate) app: &'caller mut A2aApp,
 }
 
-/// Worker-emit a `TaskStatusUpdate` (`a2a status`) for a task we're serving:
-/// resolve the other party from the task record, compose the A2A status payload
-/// and push it to that key fire-and-forget. `--text` becomes the status note
-/// and nothing more.
+/// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the other
+/// party from the task record and push the status to it.
+///
+/// A `working` leg is a check-in: it says what changed and how far the work is. The
+/// [`WorkerLeg`] holds that rule, so every caller meets it before the request reaches the
+/// daemon, and the receiving side drops a `working` leg that breaks it.
 ///
 /// # Errors
-/// `waiting requires state working` if a reason comes with another state;
-/// `unknown task` if we hold no record for `task_id`; otherwise a
-/// serialize/broadcast failure.
+/// `unknown task` if we hold no record for `task_id`; otherwise a serialize/broadcast
+/// failure.
 pub(crate) async fn emit_task_status(
     params: TaskStatusParams<'_>,
     state: &mut EventLoopState,
@@ -936,21 +947,19 @@ pub(crate) async fn emit_task_status(
         mesh,
         author,
         task_id,
-        task_state,
-        note,
-        waiting,
+        leg,
         app,
     } = params;
-    let leg = WorkerLeg::parse(task_state, waiting)?;
     let Some(to) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
+    let seq = task_record::next_seq(&app.tasks, task_id)
+        .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
     let update = worker_status_leg(StatusLegParams {
         mesh,
         task_id,
-        state: leg.state(),
-        note,
-        waiting: leg.waiting(),
+        leg: &leg,
+        seq,
     });
     let plain = status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, &to, &plain)?;
@@ -959,7 +968,8 @@ pub(crate) async fn emit_task_status(
         to: Some(to),
         corr: None,
     };
-    broadcast_directed_frame(
+    task_record::take_seq(&mut app.tasks, task_id, seq);
+    let sent = broadcast_directed_frame(
         DirectedFrameParams {
             mesh,
             author,
@@ -970,50 +980,17 @@ pub(crate) async fn emit_task_status(
             content: true,
             echo_as: EchoAs::Task,
             id: None,
-            app,
+            app: &mut *app,
         },
         state,
         sender,
         out,
     )
-    .await
-    .map(|(_id, message, pending)| (message, pending))
-}
-
-/// A worker's status leg, parsed once from its state and waiting reason. The
-/// reason rides a `working` leg only, so no other state can hold one. Only
-/// [`WorkerLeg::parse`] builds a `WorkerLeg`, so the rule has one place.
-#[derive(Clone, Copy)]
-pub(crate) enum WorkerLeg<'source> {
-    Working { waiting: Option<&'source str> },
-    Other(crate::a2a::TaskState),
-}
-
-impl<'a> WorkerLeg<'a> {
-    pub(crate) fn parse(
-        state: crate::a2a::TaskState,
-        waiting: Option<&'a str>,
-    ) -> anyhow::Result<Self> {
-        match (state == crate::a2a::TaskState::Working, waiting) {
-            (true, waiting) => Ok(Self::Working { waiting }),
-            (false, None) => Ok(Self::Other(state)),
-            (false, Some(_)) => anyhow::bail!("waiting requires state working"),
-        }
+    .await;
+    if sent.is_err() {
+        task_record::give_back_seq(&mut app.tasks, task_id, seq);
     }
-
-    fn state(self) -> crate::a2a::TaskState {
-        match self {
-            Self::Working { .. } => crate::a2a::TaskState::Working,
-            Self::Other(state) => state,
-        }
-    }
-
-    fn waiting(self) -> Option<&'a str> {
-        match self {
-            Self::Working { waiting } => waiting,
-            Self::Other(_) => None,
-        }
-    }
+    sent.map(|(_id, message, pending)| (message, pending))
 }
 
 /// A worker-emitted artifact leg's identity, task, result text/file, and the
@@ -1029,13 +1006,12 @@ pub(crate) struct TaskArtifactEmitParams<'caller> {
     pub(crate) app: &'caller mut A2aApp,
 }
 
-/// Worker-emit a `TaskArtifactUpdate` (`a2a artifact`, the result) for a task
-/// we're serving: resolve the other party from the task record, compose the A2A
-/// artifact payload and push it to that key fire-and-forget.
+/// Worker-emit a `TaskArtifactUpdate` (`a2a artifact`, the result) for a task we're serving.
 ///
 /// # Errors
-/// `unknown task` if we hold no record for `task_id`; otherwise a
-/// serialize/broadcast failure.
+/// An artifact with no text and no file, which would park the task for review
+/// with nothing to review; `unknown task` if we hold no record for `task_id`;
+/// otherwise a serialize/broadcast failure.
 pub(crate) async fn emit_task_artifact(
     params: TaskArtifactEmitParams<'_>,
     state: &mut EventLoopState,
@@ -1050,12 +1026,14 @@ pub(crate) async fn emit_task_artifact(
         file,
         app,
     } = params;
+    if text.trim().is_empty() && file.is_none() {
+        anyhow::bail!("an artifact needs a text or a file");
+    }
     let Some(to) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
-    // Before the offload: a refused artifact must not copy its file into the blob store for
-    // nothing. An own task leg holds its plaintext body in the queue while its send waits.
-    app.admit_own_leg(text.len())?;
+    // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
+    app.admit_own_leg(own_leg_bytes(text))?;
     let parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1068,7 +1046,9 @@ pub(crate) async fn emit_task_artifact(
         app,
     )
     .await?;
-    let update = status_update_params::artifact_update_parts(mesh, task_id, parts);
+    let seq = task_record::next_seq(&app.tasks, task_id)
+        .ok_or_else(|| anyhow::anyhow!("task '{task_id}' is unknown or has used every seq"))?;
+    let update = status_update_params::artifact_update_parts(mesh, task_id, parts, seq);
     let plain = status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
@@ -1076,7 +1056,8 @@ pub(crate) async fn emit_task_artifact(
         to: Some(to),
         corr: None,
     };
-    broadcast_directed_frame(
+    task_record::take_seq(&mut app.tasks, task_id, seq);
+    let sent = broadcast_directed_frame(
         DirectedFrameParams {
             mesh,
             author,
@@ -1087,14 +1068,17 @@ pub(crate) async fn emit_task_artifact(
             content: true,
             echo_as: EchoAs::Task,
             id: None,
-            app,
+            app: &mut *app,
         },
         state,
         sender,
         out,
     )
-    .await
-    .map(|(_id, message, pending)| (message, pending))
+    .await;
+    if sent.is_err() {
+        task_record::give_back_seq(&mut app.tasks, task_id, seq);
+    }
+    sent.map(|(_id, message, pending)| (message, pending))
 }
 
 /// Seal a directed payload `body` to the published X25519 key of the member `to`. A directed
@@ -1118,21 +1102,18 @@ pub(crate) fn seal_directed(
     habilis_network::protocol::seal_to_body(key, body.as_str()).map_err(anyhow::Error::from)
 }
 
-/// The status leg a worker emits: its state and note, the order value that
-/// tells it apart from the other legs of its second, and the waiting reason.
+/// The status leg a worker emits: its state and note, its `mesh:seq`, and the check-in fields.
 fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
     let StatusLegParams {
         mesh,
         task_id,
-        state,
-        note,
-        waiting,
+        leg,
+        seq,
     } = leg;
-    let metadata =
-        status_update_params::status_metadata(waiting, status_update_params::leg_order_ms());
+    let metadata = status_update_params::status_metadata(leg.waiting_user(), leg.progress(), seq);
     let update =
-        status_update_params::StatusUpdateParams::new(task_id, state).with_metadata(metadata);
-    let update = match note {
+        status_update_params::StatusUpdateParams::new(task_id, leg.state()).with_metadata(metadata);
+    let update = match leg.note() {
         Some(note) => update.with_note(note),
         None => update,
     };
@@ -1145,14 +1126,8 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
 struct StatusLegParams<'caller> {
     mesh: &'caller MeshId,
     task_id: &'caller crate::a2a::TaskId,
-    state: crate::a2a::TaskState,
-    note: Option<&'caller str>,
-    waiting: Option<&'caller str>,
-}
-
-/// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
-pub(crate) fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
-    live.filter(|nick| *nick == peer).count()
+    leg: &'caller WorkerLeg,
+    seq: u64,
 }
 
 /// The identity, addressee and text of one outbound msg — grouped
@@ -1336,54 +1311,30 @@ pub(crate) struct CallFile<'source> {
     pub(crate) file: FileRef,
 }
 
-/// The id a call's blob group is named by, and whether that group is new.
-/// A follow-up on a task we hold joins that task's group. Any other call has
-/// no task of ours to reap its blob (a first call has none yet, and a follow-up
-/// on an unknown task may be rejected or accepted by the worker), so it owns a
-/// group under its own id: a retry's file must not share a group with the
-/// timed-out call that it replaces.
-fn call_blob_group(
-    task_id: Option<crate::a2a::TaskId>,
-    tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
-) -> (crate::a2a::TaskId, bool) {
-    match task_id {
-        Some(task_id) if tasks.contains_key(&task_id) => (task_id, false),
-        _ => (crate::a2a::TaskId::random(), true),
-    }
-}
-
-/// The blob group a call owns until a task adopts it.
-pub(crate) struct CallBlob {
-    pub(crate) group: ContentId,
-    /// Whether the call creates the task, rather than follows up on one.
-    pub(crate) opens_task: bool,
-}
-
 /// Offload `file` and put its `Part.url` first among the parts of the
 /// `SendMessage` in `params` (`a2a call --file`). An empty text part — the
 /// `--text`-less sugar — is dropped, as `build_offload_parts` drops it.
 ///
-/// A follow-up's blob on a task we hold joins its task's content group, so the
-/// task sweep reaps it. Any other call's blob goes in a fresh group, which is
-/// returned: the caller owns its eviction. A first call has no task id yet —
-/// the worker mints it.
+/// The blob goes in the content group of the task that the message names, which the task sweep
+/// evicts when it reaps the task.
 ///
 /// # Errors
-/// When `params` carries no A2A `message`, or the offload fails.
+/// When `params` carries no A2A `message` with a `taskId`, or the offload fails.
 pub(crate) async fn attach_call_file(
     params: &mut serde_json::Value,
     attachment: CallFile<'_>,
     state: &EventLoopState,
     app: &mut A2aApp,
-) -> anyhow::Result<Option<CallBlob>> {
+) -> anyhow::Result<()> {
     let CallFile { mesh, author, file } = attachment;
     let slot = params
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
-    app.admit_call_blob_group(message.task_id.as_ref())?;
-    let opens_task = message.task_id.is_none();
-    let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
+    let group_id = message
+        .task_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a task"))?;
     let mut parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1404,10 +1355,7 @@ pub(crate) async fn attach_call_file(
     );
     message.parts = parts;
     *slot = serde_json::to_value(message)?;
-    Ok(fresh_group.then(|| CallBlob {
-        group: ContentId::new(group_id.as_str()),
-        opens_task,
-    }))
+    Ok(())
 }
 
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
@@ -1729,6 +1677,138 @@ pub(crate) struct BroadcastA2aCallParams<'caller> {
     pub(crate) file: Option<FileRef>,
 }
 
+/// The peer a call goes to, as the record of a task it opens names it.
+struct CallPeer {
+    key: AuthorKey,
+    name: Option<Nickname>,
+}
+
+/// Stamp the `SendMessage` in `params` as the initiator. An opening gets a task id that this node
+/// mints, `mesh:seq` 1, and a record in `submitted` that exists from now on, so a call that times
+/// out leaves a task to follow. A follow-up gets the next `mesh:seq` of the record it names, which
+/// the record counts only once the follow-up was sent. Returns the id of the task that the call
+/// opened.
+///
+/// # Errors
+/// An opening over the quota or to a peer with no name, and a follow-up for a task that this node
+/// does not hold as its initiator.
+fn stamp_send_message(
+    params: &mut serde_json::Value,
+    peer: &CallPeer,
+    app: &mut A2aApp,
+) -> Result<Option<crate::a2a::TaskId>, RpcError> {
+    let Some(message) = params.get_mut("message").filter(|slot| slot.is_object()) else {
+        return Ok(None);
+    };
+    let (task_id, seq, opened) = if message["taskId"].is_null() {
+        if let Some(error) = node::task_admission_error(app, &peer.key) {
+            return Err(error);
+        }
+        let name = peer
+            .name
+            .clone()
+            .ok_or_else(|| RpcError::invalid_params("the peer of a new task has no name"))?;
+        let task_id = crate::a2a::TaskId::random();
+        let mut rec = TaskRecord::open(
+            (peer.key, name),
+            task_record::TaskRole::Initiator,
+            crate::a2a::TaskState::Submitted,
+            Instant::now(),
+        );
+        rec.take_seq_applied(1);
+        rec.label = message["metadata"][META_LABEL]
+            .as_str()
+            .and_then(status_update_params::clean_label);
+        app.tasks.insert(task_id.clone(), rec);
+        (task_id.clone(), 1, Some(task_id))
+    } else {
+        let unheld =
+            || RpcError::invalid_params("SendMessage names a taskId with no task on this node");
+        let named = message["taskId"]
+            .as_str()
+            .and_then(crate::a2a::TaskId::from_uuid_str)
+            .ok_or_else(unheld)?;
+        let rec = app
+            .tasks
+            .get(&named)
+            .filter(|rec| rec.role == task_record::TaskRole::Initiator && rec.peer_key == peer.key)
+            .ok_or_else(unheld)?;
+        // The record takes the seq when the follow-up was sent, not before: a failed send
+        // consumes none.
+        let seq = rec
+            .seq
+            .checked_add(1)
+            .ok_or_else(|| RpcError::invalid_params("the task has used every seq"))?;
+        (named, seq, None)
+    };
+    message["taskId"] = serde_json::Value::from(task_id.as_str());
+    if !message["metadata"].is_object() {
+        message["metadata"] = serde_json::json!({});
+    }
+    message["metadata"][META_SEQ] = serde_json::Value::from(seq);
+    Ok(opened)
+}
+
+/// What [`prepare_call`] needs to know about the call beyond its params and handles.
+struct PreparedCall<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    method: &'caller str,
+    peer: &'caller PeerRef,
+    peer_key: AuthorKey,
+    file: Option<FileRef>,
+}
+
+/// Stamp a `SendMessage` as the initiator and attach its file, so that the call is ready to seal.
+/// Returns the task that the call opened.
+///
+/// # Errors
+/// What [`stamp_send_message`] refuses, and a file that cannot be attached. The record of an
+/// opening is taken back in that case.
+async fn prepare_call(
+    call: PreparedCall<'_>,
+    params: &mut serde_json::Value,
+    state: &EventLoopState,
+    app: &mut A2aApp,
+) -> Result<Option<Opening>, RpcError> {
+    let PreparedCall {
+        mesh,
+        author,
+        method,
+        peer,
+        peer_key,
+        file,
+    } = call;
+    let has_file = file.is_some();
+    let opening = if is_send_message(method) {
+        let name = match peer {
+            PeerRef::Nickname(nickname) => Some(nickname.clone()),
+            PeerRef::Key(key) => state.known_nickname_of(key),
+        };
+        let call_peer = CallPeer {
+            key: peer_key,
+            name,
+        };
+        stamp_send_message(params, &call_peer, app)?.map(|task_id| Opening {
+            task_id,
+            file: has_file,
+        })
+    } else {
+        None
+    };
+    let Some(file) = file else {
+        return Ok(opening);
+    };
+    let attachment = CallFile { mesh, author, file };
+    match attach_call_file(params, attachment, state, app).await {
+        Ok(()) => Ok(opening),
+        Err(error) => {
+            app.drop_opening(opening.as_ref());
+            Err(RpcError::invalid_params(&error.to_string()))
+        }
+    }
+}
+
 /// Client side of the gossip A2A request/response: mint an `rpc_id`, park a
 /// waiter (keyed by `rpc_id` + `peer`, with `timeout`), and broadcast an
 /// `A2aReq` directed at `peer` carrying the JSON-RPC `{method, params}`. The
@@ -1773,27 +1853,33 @@ pub(crate) async fn broadcast_a2a_call(
             return;
         }
     };
-    let blob = match file {
-        None => None,
-        Some(file) => {
-            let attachment = CallFile { mesh, author, file };
-            match attach_call_file(&mut params, attachment, state, app).await {
-                Ok(blob) => blob,
-                Err(error) => {
-                    responder.send_response(&rpc_error(-32602, &error.to_string()));
-                    return;
-                }
-            }
+    let prepared = prepare_call(
+        PreparedCall {
+            mesh,
+            author,
+            method,
+            peer: &peer,
+            peer_key,
+            file,
+        },
+        &mut params,
+        state,
+        app,
+    )
+    .await;
+    let opening = match prepared {
+        Ok(opening) => opening,
+        Err(error) => {
+            responder.send_response(&rpc_error(error.code, &error.message));
+            return;
         }
     };
-    let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
-    let blob_group = blob.map(|blob| blob.group);
     if let Some(message_id) = params["message"]["messageId"].as_str() {
         app.note_sent_ref(message_id, &peer_key);
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
-        app.orphan_blob(blob_group);
+        app.drop_opening(opening.as_ref());
         responder.send_response(&rpc_error(
             -32602,
             "request params contain control characters",
@@ -1804,7 +1890,7 @@ pub(crate) async fn broadcast_a2a_call(
     let body = match seal_directed(state, &peer_key, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
-            app.orphan_blob(blob_group);
+            app.drop_opening(opening.as_ref());
             responder.send_response(&rpc_error(-32603, &error.to_string()));
             return;
         }
@@ -1812,36 +1898,28 @@ pub(crate) async fn broadcast_a2a_call(
     // The a2a layer mints a UUID rpc id; the engine correlates on the generic
     // `CorrId` carried by the app frame.
     let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
+    let sent_corr = corr.clone();
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::REQ),
         to: Some(peer_key),
         corr: Some(corr.clone()),
     };
-    // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
-    // overflow the platform `Instant` and panic the event loop.
-    let max_timeout = std::time::Duration::from_secs(A2A_CALL_MAX_TIMEOUT_SECS);
-    if timeout > max_timeout {
-        tracing::warn!(
-            requested_secs = timeout.as_secs(),
-            capped_secs = A2A_CALL_MAX_TIMEOUT_SECS,
-            "a2a call timeout clamped to the maximum"
-        );
-    }
-    let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
+    let deadline = call_deadline(timeout);
     if let Some(unregistered) = app.register_a2a_waiter(A2aWaiter {
         corr,
         peer_key,
         deadline,
         responder,
-        blob_group,
-        opens_task,
+        opening: opening.clone(),
+        mesh: mesh.clone(),
     }) {
+        app.drop_opening(opening.as_ref());
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
     // Directed request over the shared RPC sender: unicast per frame,
     // transparently splitting a large sealed body into shard frames.
-    if let Err(error) = send_directed_rpc(
+    let sent = send_directed_rpc(
         DirectedRpcParams {
             mesh,
             author,
@@ -1851,12 +1929,93 @@ pub(crate) async fn broadcast_a2a_call(
         state,
         sender,
     )
-    .await
-    {
-        if method == served::READER_GET {
-            tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
-        } else {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+    .await;
+    let dispatched = DispatchedCall {
+        method,
+        peer_key,
+        corr: &sent_corr,
+        opening: opening.as_ref(),
+        seq: params["message"]["metadata"][META_SEQ].as_u64(),
+    };
+    settle_dispatch(sent, &dispatched, &params, app);
+}
+
+/// The deadline of a call: `timeout` from now, clamped before it is added to the `Instant`, since
+/// an unclamped client `timeout_secs` would overflow the platform `Instant` and panic the loop.
+fn call_deadline(timeout: std::time::Duration) -> tokio::time::Instant {
+    let max_timeout = std::time::Duration::from_secs(A2A_CALL_MAX_TIMEOUT_SECS);
+    if timeout > max_timeout {
+        tracing::warn!(
+            requested_secs = timeout.as_secs(),
+            capped_secs = A2A_CALL_MAX_TIMEOUT_SECS,
+            "a2a call timeout clamped to the maximum"
+        );
+    }
+    tokio::time::Instant::now() + timeout.min(max_timeout)
+}
+
+/// The call whose request was just sent, as [`settle_dispatch`] needs it.
+#[derive(Clone, Copy)]
+struct DispatchedCall<'caller> {
+    method: &'caller str,
+    peer_key: AuthorKey,
+    corr: &'caller habilis_network::protocol::CorrId,
+    opening: Option<&'caller Opening>,
+    /// The `mesh:seq` that the request carried.
+    seq: Option<u64>,
+}
+
+/// Book the outcome of sending a call's request. A follow-up hands the task back to the worker at
+/// dispatch, so a reply that never arrives leaves no record parked on us with the check-in clock
+/// stopped. An opening that never left is refused now: parked, it would report a task that the
+/// worker never heard of.
+fn settle_dispatch(
+    sent: anyhow::Result<()>,
+    call: &DispatchedCall<'_>,
+    params: &serde_json::Value,
+    app: &mut A2aApp,
+) {
+    let DispatchedCall {
+        method,
+        peer_key,
+        corr,
+        opening,
+        seq,
+    } = *call;
+    match sent {
+        Ok(()) => {
+            if is_send_message(method)
+                && opening.is_none()
+                && let (Some(task_id), Some(seq)) = (
+                    params["message"]["taskId"]
+                        .as_str()
+                        .and_then(crate::a2a::TaskId::from_uuid_str),
+                    seq,
+                )
+            {
+                task_record::note_follow_up_sent(
+                    &mut app.tasks,
+                    &task_id,
+                    &peer_key,
+                    (seq, Instant::now()),
+                );
+            }
+        }
+        Err(error) => {
+            // A call whose request never left is answered now, with the task of an opening taken
+            // back: parked, it would wait out its deadline for a reply that cannot come.
+            if method == served::READER_GET {
+                tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
+            } else {
+                tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+            }
+            if let Some(waiter) = app.take_a2a_waiter(corr) {
+                let refusal = serde_json::json!({
+                    "error": { "code": -32603, "message": error.to_string() }
+                });
+                waiter.responder.send_response(&refusal.to_string());
+            }
+            app.drop_opening(opening);
         }
     }
 }
@@ -2000,9 +2159,7 @@ async fn session_msg(
 /// The fields of a [`SessionRequest::TaskStatus`].
 struct SessionTaskStatus(
     crate::a2a::TaskId,
-    crate::a2a::TaskState,
-    Option<String>,
-    Option<String>,
+    WorkerLeg,
     Sender<anyhow::Result<Authored>>,
 );
 
@@ -2012,15 +2169,13 @@ async fn session_task_status(
     app: &mut A2aApp,
     state: &mut EventLoopState,
 ) -> bool {
-    let SessionTaskStatus(task_id, task_state, note, waiting, response) = request;
+    let SessionTaskStatus(task_id, leg, response) = request;
     let outcome = emit_task_status(
         TaskStatusParams {
             mesh: scope.mesh,
             author: scope.author,
             task_id: &task_id,
-            task_state,
-            note: note.as_deref(),
-            waiting: waiting.as_deref(),
+            leg,
             app,
         },
         state,
@@ -2203,12 +2358,10 @@ pub(crate) async fn handle_session_request(
         }
         SessionRequest::TaskStatus {
             task_id,
-            state: task_state,
-            note,
-            waiting,
+            leg,
             response,
         } => {
-            let fields = SessionTaskStatus(task_id, task_state, note, waiting, response);
+            let fields = SessionTaskStatus(task_id, leg, response);
             session_task_status(fields, scope, app, state).await
         }
         SessionRequest::TaskArtifact {
@@ -2280,6 +2433,12 @@ pub(crate) async fn handle_session_request(
         #[cfg(feature = "adversarial")]
         SessionRequest::ShardsResent { response } => {
             let _ = response.send(app.shards_resent);
+            false
+        }
+        #[cfg(feature = "adversarial")]
+        SessionRequest::DropTaskLegs { count, response } => {
+            app.legs_to_drop = count;
+            let _ = response.send(());
             false
         }
         #[cfg(feature = "adversarial")]
@@ -2372,464 +2531,23 @@ mod split_body_tests {
 }
 
 #[cfg(test)]
-mod call_blob_group_tests {
-    use std::collections::HashMap;
-    use std::time::Instant;
-
-    use habilis_network::protocol::{AuthorKey, Nickname};
-
-    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
-    use crate::a2a::{TaskId, TaskState};
-
-    /// A follow-up on a task this node does not hold has no task of ours to
-    /// reap its blob, whether the worker rejects it or holds the task itself:
-    /// the call must own a fresh group for the waiter to evict.
-    #[test]
-    fn a_follow_up_on_an_unknown_task_owns_a_fresh_group() {
-        let tasks = HashMap::new();
-        let unknown = TaskId::random();
-
-        let (group_id, fresh_group) = super::call_blob_group(Some(unknown.clone()), &tasks);
-
-        assert_ne!(
-            group_id, unknown,
-            "the group is not the content group of a task"
-        );
-        assert!(fresh_group, "the blob has no task to be reaped with");
-    }
-
-    /// A follow-up on a held task joins that task's group, which the task sweep
-    /// reaps.
-    #[test]
-    fn a_follow_up_on_a_known_task_joins_its_group() {
-        let mut tasks = HashMap::new();
-        let known = TaskId::random();
-        adopt_initiator(
-            &mut tasks,
-            AdoptInitiatorParams {
-                task_id: &known,
-                peer_key: &AuthorKey::from([0xb0; 32]),
-                peer: &Nickname::from("bob"),
-                task_state: TaskState::Working,
-                now: Instant::now(),
-            },
-        );
-
-        let (task_id, fresh_group) = super::call_blob_group(Some(known.clone()), &tasks);
-
-        assert_eq!(task_id, known, "the known task is the one found");
-        assert!(!fresh_group, "the task sweep reaps the blob");
-    }
-
-    /// Two timed-out follow-ups on the same unknown task are two calls with two
-    /// files. Each owns its group, so the eviction of one cannot take the blob
-    /// of a retry that the task now holds.
-    #[test]
-    fn a_retried_follow_up_on_an_unknown_task_gets_its_own_group() {
-        let tasks = HashMap::new();
-        let unknown = TaskId::random();
-
-        let (first, _) = super::call_blob_group(Some(unknown.clone()), &tasks);
-        let (retry, _) = super::call_blob_group(Some(unknown), &tasks);
-
-        assert_ne!(first, retry, "a retry gets a different group");
-    }
-
-    #[test]
-    fn a_first_call_owns_a_fresh_group() {
-        let (_, fresh_group) = super::call_blob_group(None, &HashMap::new());
-
-        assert!(
-            fresh_group,
-            "with no earlier task to reuse, the blob needs its own group to be cleaned up"
-        );
-    }
-}
-
-#[cfg(test)]
-mod echo_when_sent_tests {
-    use habilis_network::protocol::messages::Authored;
-    use habilis_network::protocol::{
-        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
-    };
-    use tokio::sync::mpsc::UnboundedReceiver;
-    use tokio::sync::oneshot;
-
-    use super::{EchoAs, OwnEcho, PendingSend, echo_when_sent};
-    use crate::a2a::wire;
-    use crate::emission;
-    use crate::output_event::OutputEvent;
-
-    fn echo() -> Authored {
-        echo_raw()
-            .sign(&habilis_network::protocol::Identity::generate())
-            .authored()
-    }
-
-    fn echo_raw() -> Message {
-        Message::new_frame(
-            &MeshId::from("test"),
-            &Nickname::from("alice"),
-            MessageKind::app_to(wire::MSG, AuthorKey::from([0xb0; 32]), None),
-            MessageBody::try_new("hi").expect("valid body"),
-        )
-    }
-
-    fn echoes(events: &mut UnboundedReceiver<OutputEvent>) -> usize {
-        std::iter::from_fn(|| events.try_recv().ok())
-            .filter(|event| matches!(event, OutputEvent::Message { is_self: true, .. }))
-            .count()
-    }
-
-    #[tokio::test]
-    async fn a_delivered_send_prints_the_echo() {
-        let (out, mut events) = emission::capture_events::capture_events();
-        let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
-
-        let own_echo = OwnEcho {
-            message: echo(),
-            echo_as: EchoAs::Chat,
-            addressee: None,
-        };
-        let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
-        verdict_tx.send(Ok(())).expect("receiver is held");
-        let verdict = pending.into_iter().next().expect("verdict handle");
-        verdict
-            .await
-            .expect("the echo task sends the outcome before it drops its end")
-            .expect("the test fed Ok(()), and the echo task passes it on unchanged");
-
-        assert_eq!(echoes(&mut events), 1, "one echo is sent");
-    }
-
-    #[tokio::test]
-    async fn a_failed_send_prints_no_echo_and_passes_the_error_on() {
-        let (out, mut events) = emission::capture_events::capture_events();
-        let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
-
-        let own_echo = OwnEcho {
-            message: echo(),
-            echo_as: EchoAs::Chat,
-            addressee: None,
-        };
-        let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
-        verdict_tx
-            .send(Err(anyhow::anyhow!("unicast dial failed")))
-            .expect("receiver is held");
-        let verdict = pending
-            .into_iter()
-            .next()
-            .expect("verdict handle")
-            .await
-            .expect("the echo task sends the outcome before it drops its end");
-
-        assert!(verdict.is_err(), "the caller still sees the failure");
-        assert_eq!(echoes(&mut events), 0, "no echo follows a failure");
-    }
-}
-
-#[cfg(test)]
-mod sharded_leg_tests {
-    use habilis_network::protocol::messages::Verified;
-    use habilis_network::protocol::{
-        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
-    };
-    use tokio::sync::oneshot;
-
-    use super::{
-        MAX_MESSAGE_SIZE, OwnLeg, PendingSend, ingest_own_leg_when_sent, needs_unsent_slot,
-        queue_sharded_leg, send_deadline, settle, take_sent_legs,
-    };
-    use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
-    use crate::a2a::{tuning, wire};
-
-    fn shard(text: &str) -> Verified {
-        shard_raw(text).sign(&habilis_network::protocol::Identity::generate())
-    }
-
-    fn shard_raw(text: &str) -> Message {
-        Message::new_frame(
-            &MeshId::from("test"),
-            &Nickname::from("alice"),
-            MessageKind::app_to(wire::MSG, AuthorKey::from([0xb0; 32]), None),
-            MessageBody::try_new(text).expect("valid body"),
-        )
-    }
-
-    fn verdict(outcome: anyhow::Result<()>) -> PendingSend {
-        let (verdict_tx, verdict_rx) = oneshot::channel();
-        verdict_tx.send(outcome).expect("receiver is held");
-        verdict_rx
-    }
-
-    #[test]
-    fn only_a_content_leg_that_does_not_fit_one_frame_takes_a_slot() {
-        assert!(
-            needs_unsent_slot(MAX_MESSAGE_SIZE + 1, true),
-            "a content leg that must be split waits for the verdict of every shard"
-        );
-        assert!(
-            !needs_unsent_slot(MAX_MESSAGE_SIZE, true),
-            "a content leg of one frame has its verdict at once, so a full list cannot refuse it"
-        );
-        assert!(
-            !needs_unsent_slot(MAX_MESSAGE_SIZE + 1, false),
-            "a beat is never split, so it takes no slot"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_sharded_leg_with_one_failed_shard_enters_no_log() {
-        let mut app = A2aApp::new();
-        let pending = vec![
-            Some(verdict(Ok(()))),
-            Some(verdict(Err(anyhow::anyhow!("dial failed")))),
-        ];
-
-        let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(
-            settle(handles, send_deadline()).await.is_err(),
-            "one lost shard makes the receiver unable to reassemble the whole payload"
-        );
-
-        let logged: usize = take_sent_legs(&mut app)
-            .iter()
-            .map(|leg| leg.frames.len())
-            .sum();
-        assert_eq!(logged, 0, "no shard of a failed leg may enter the log");
-    }
-
-    #[tokio::test]
-    async fn a_leg_whose_send_task_ended_without_a_verdict_is_dropped() {
-        let mut app = A2aApp::new();
-        let (sent_tx, sent) = oneshot::channel::<bool>();
-        drop(sent_tx);
-        app.unsent_legs.push(UnsentLeg {
-            frames: vec![shard("a")],
-            cache: None,
-            sent,
-        });
-
-        assert!(
-            take_sent_legs(&mut app).is_empty(),
-            "nothing enters the log"
-        );
-        assert!(app.unsent_legs.is_empty(), "the leg is not kept waiting");
-    }
-
-    #[tokio::test]
-    async fn a_sharded_leg_whose_shards_were_all_sent_enters_the_log_whole() {
-        let mut app = A2aApp::new();
-        let pending = vec![None, Some(verdict(Ok(())))];
-
-        let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(
-            settle(handles, send_deadline()).await.is_ok(),
-            "the leg was sent"
-        );
-
-        let logged: usize = take_sent_legs(&mut app)
-            .iter()
-            .map(|leg| leg.frames.len())
-            .sum();
-        assert_eq!(logged, 2, "two shards are logged");
-    }
-
-    fn verdict_after(delay: std::time::Duration) -> PendingSend {
-        let (verdict_tx, verdict_rx) = oneshot::channel();
-        tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            let _ = verdict_tx.send(Ok(()));
-        });
-        verdict_rx
-    }
-
-    /// The limit is for the whole leg, not for each send in it: the first shard answers late and
-    /// the second never does.
-    #[tokio::test(start_paused = true)]
-    async fn the_timeout_covers_all_the_shards_of_a_leg_together() {
-        let mut app = A2aApp::new();
-        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
-        let late = verdict_after(std::time::Duration::from_secs(100));
-        let handles = queue_sharded_leg(
-            &mut app,
-            vec![shard("a"), shard("b")],
-            None,
-            vec![Some(late), Some(silent)],
-        );
-        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
-
-        let [verdict] = <[PendingSend; 1]>::try_from(handles).expect("one verdict for the leg");
-        let outcome = tokio::time::timeout(limit, verdict).await;
-
-        assert!(
-            matches!(outcome, Ok(Ok(Err(_)))),
-            "the leg must fail at the limit, not at the limit of each shard"
-        );
-    }
-
-    /// The layers of one leg wrap each other's verdict. When the caller was told that the leg
-    /// failed, the shard cache must not keep it: a repair ask would send a leg that the user thinks is lost.
-    #[tokio::test(start_paused = true)]
-    async fn a_leg_that_the_caller_was_told_failed_is_not_logged_by_a_late_shard() {
-        let mut app = A2aApp::new();
-        let early = verdict_after(std::time::Duration::from_secs(50));
-        let late = verdict_after(std::time::Duration::from_secs(130));
-        let inner = queue_sharded_leg(
-            &mut app,
-            vec![shard("a"), shard("b")],
-            None,
-            vec![Some(early), Some(late)],
-        );
-        let task = crate::a2a::TaskId::from("550e8400-e29b-41d4-a716-446655440000");
-        let outer = ingest_own_leg_when_sent(
-            &mut app,
-            OwnLeg {
-                echo: shard("echo").authored(),
-                task_id: Some(&task),
-            },
-            inner,
-        );
-        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
-        let [verdict] = <[PendingSend; 1]>::try_from(outer).expect("one verdict for the leg");
-
-        let outcome = tokio::time::timeout(limit, verdict).await;
-        tokio::time::sleep(std::time::Duration::from_secs(100)).await;
-
-        assert!(
-            matches!(outcome, Ok(Ok(Err(_)))),
-            "the caller must hear a failure at the limit"
-        );
-        assert!(
-            take_sent_legs(&mut app).is_empty(),
-            "a leg that the caller was told failed must not enter the log"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_send_that_gives_no_outcome_fails_after_the_timeout() {
-        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
-        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
-
-        let outcome = tokio::time::timeout(limit, settle(vec![silent], send_deadline())).await;
-
-        assert!(
-            matches!(outcome, Ok(Err(_))),
-            "a send with no outcome must end as a failure, not wait for ever"
-        );
-    }
-}
-
-#[cfg(test)]
-mod waiting_tests {
-    use super::WorkerLeg;
-    use crate::a2a::TaskState;
-
-    /// The shared sender refuses a reason on any state but `working`, so a
-    /// library caller cannot leave `mesh:waiting` on an `input-required` task.
-    #[test]
-    fn a_waiting_reason_needs_the_working_state() {
-        assert!(
-            WorkerLeg::parse(TaskState::Working, Some("asks its user")).is_ok(),
-            "a worker leg may wait on its user while working"
-        );
-        assert!(
-            WorkerLeg::parse(TaskState::InputRequired, None).is_ok(),
-            "an input-required leg parses without a wait"
-        );
-        for state in [
-            TaskState::InputRequired,
-            TaskState::Completed,
-            TaskState::Failed,
-            TaskState::Canceled,
-            TaskState::Rejected,
-        ] {
-            let error = WorkerLeg::parse(state, Some("asks its user"))
-                .err()
-                .expect("a reason with a non-working state must be refused");
-            assert_eq!(
-                error.to_string(),
-                "waiting requires state working",
-                "waiting requires a working state"
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod status_leg_tests {
-    use habilis_network::protocol::MeshId;
-
-    use super::{StatusLegParams, worker_status_leg};
-    use crate::a2a::TaskState;
-    use crate::a2a::status_update_params::{status_order, status_waiting};
-
-    /// The worker's status leg carries the order value next to the waiting
-    /// reason. Without the order value the initiator cannot tell two legs of one
-    /// second apart.
-    #[test]
-    fn a_worker_status_leg_carries_its_order_value_and_reason() {
-        let mesh = MeshId::from("test");
-        let task_id = crate::a2a::TaskId::random();
-        let leg = worker_status_leg(StatusLegParams {
-            mesh: &mesh,
-            task_id: &task_id,
-            state: TaskState::Working,
-            note: None,
-            waiting: Some("asks its user"),
-        });
-        assert!(status_order(&leg).is_some(), "the leg has no mesh:order_ms");
-        assert_eq!(
-            status_waiting(&leg).as_deref(),
-            Some("asks its user"),
-            "the status waiting reason is kept"
-        );
-    }
-}
-
-#[cfg(test)]
-mod leg_bytes_tests {
-    #[test]
-    fn an_own_content_leg_holds_its_body_twice() {
-        assert_eq!(
-            super::unsent_leg_bytes("abcd"),
-            8,
-            "sealed frames and shard cache"
-        );
-        assert_eq!(
-            super::unsent_leg_bytes(&"x".repeat(16)),
-            32,
-            "the estimate scales with the body"
-        );
-    }
-}
-
-#[cfg(test)]
-mod live_holder_tests {
-    use habilis_network::protocol::Nickname;
-
-    #[test]
-    fn a_name_held_by_two_live_keys_counts_twice() {
-        let shared = Nickname::from("dup-name");
-        let other = Nickname::from("other-name");
-        let live = [&shared, &other, &shared];
-        assert_eq!(
-            super::live_holders(live.into_iter(), &shared),
-            2,
-            "two live keys under one name are two holders"
-        );
-    }
-}
-
-#[cfg(test)]
 mod open_task_gate_tests {
     use std::collections::HashMap;
     use std::time::Instant;
 
     use habilis_network::protocol::{AuthorKey, Nickname};
 
-    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::task_record::{TaskRecord, TaskRole};
     use crate::a2a::{TaskId, TaskState};
+
+    fn working_task_of(peer_key: AuthorKey) -> TaskRecord {
+        TaskRecord::open(
+            (peer_key, Nickname::from("bob")),
+            TaskRole::Initiator,
+            TaskState::Working,
+            Instant::now(),
+        )
+    }
 
     /// A call by the name of a gone task peer must reach the unknown-peer check. The task belongs
     /// to the key that opened it, and a key that holds the name now is another member.
@@ -2838,16 +2556,7 @@ mod open_task_gate_tests {
         let mut tasks = HashMap::new();
         let gone = AuthorKey::from([0xb0; 32]);
         let holder_now = AuthorKey::from([0xb1; 32]);
-        adopt_initiator(
-            &mut tasks,
-            AdoptInitiatorParams {
-                task_id: &TaskId::random(),
-                peer_key: &gone,
-                peer: &Nickname::from("bob"),
-                task_state: TaskState::Working,
-                now: Instant::now(),
-            },
-        );
+        tasks.insert(TaskId::random(), working_task_of(gone));
 
         assert!(
             super::holds_open_task_with(&tasks, &gone),
@@ -2866,16 +2575,7 @@ mod open_task_gate_tests {
         let mut tasks = HashMap::new();
         let task_id = TaskId::random();
         let holder = AuthorKey::from([0xb0; 32]);
-        adopt_initiator(
-            &mut tasks,
-            AdoptInitiatorParams {
-                task_id: &task_id,
-                peer_key: &holder,
-                peer: &Nickname::from("bob"),
-                task_state: TaskState::Working,
-                now: Instant::now(),
-            },
-        );
+        tasks.insert(task_id.clone(), working_task_of(holder));
         let follow_up = serde_json::json!({ "message": { "taskId": task_id.as_str() } });
         let read = serde_json::json!({ "id": task_id.as_str() });
 
@@ -2888,6 +2588,304 @@ mod open_task_gate_tests {
         assert_eq!(
             other_name, None,
             "a call that names another peer is not redirected"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use std::time::Instant;
+
+    use habilis_network::protocol::{AuthorKey, MeshId, Nickname};
+    use tokio::sync::oneshot;
+
+    use super::{CallPeer, DispatchedCall, settle_dispatch, stamp_send_message};
+    use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter};
+    use crate::a2a::task_record::{self, TaskRole};
+    use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
+    use crate::a2a::{META_LABEL, TaskId, TaskState, wire};
+
+    fn bob() -> CallPeer {
+        CallPeer {
+            key: AuthorKey::from([0xb0; 32]),
+            name: Some(Nickname::from("bob")),
+        }
+    }
+
+    fn send(message: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "message": message })
+    }
+
+    /// The daemon of the initiator mints the id and opens the record before the request leaves.
+    #[test]
+    fn an_opening_gets_an_id_a_seq_of_one_and_a_submitted_record() {
+        let mut app = A2aApp::new();
+        let mut params = send(&serde_json::json!({
+            "messageId": "m1",
+            "metadata": { META_LABEL: "docs" },
+        }));
+
+        let opened = stamp_send_message(&mut params, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+
+        assert_eq!(
+            params["message"]["taskId"],
+            opened.as_str(),
+            "the minted id rides the message"
+        );
+        assert_eq!(
+            params["message"]["metadata"]["mesh:seq"], 1,
+            "the first message of a task carries seq 1"
+        );
+        let rec = &app.tasks[&opened];
+        assert_eq!(
+            rec.state,
+            TaskState::Submitted,
+            "the record starts submitted"
+        );
+        assert_eq!(rec.role, TaskRole::Initiator, "this node opened it");
+        assert_eq!(
+            rec.label.as_deref(),
+            Some("docs"),
+            "the record keeps the label of the brief"
+        );
+        assert_eq!(rec.seq, 1, "the record counts the opening");
+    }
+
+    /// Each follow-up takes the next seq once the one before it was sent, and the record holds the
+    /// last one sent.
+    #[test]
+    fn each_follow_up_takes_the_next_seq() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+
+        for expected in [2, 3] {
+            let mut follow_up = send(&serde_json::json!({
+                "messageId": format!("m{expected}"),
+                "taskId": task_id.as_str(),
+            }));
+            let opened = stamp_send_message(&mut follow_up, &bob(), &mut app)
+                .expect("a follow-up on a held task is admitted");
+            assert!(opened.is_none(), "a follow-up opens no task");
+            assert_eq!(
+                follow_up["message"]["metadata"]["mesh:seq"], expected,
+                "the seq counts up"
+            );
+            task_record::note_follow_up_sent(
+                &mut app.tasks,
+                &task_id,
+                &bob().key,
+                (expected, Instant::now()),
+            );
+        }
+        assert_eq!(
+            app.tasks[&task_id].seq, 3,
+            "the record holds the last seq sent"
+        );
+    }
+
+    /// A seq is consumed by a leg that was sent: a follow-up whose send failed leaves the record
+    /// where it was, and the next one takes the same seq.
+    #[test]
+    fn a_follow_up_that_was_not_sent_consumes_no_seq() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+        let follow_up = serde_json::json!({ "messageId": "m2", "taskId": task_id.as_str() });
+
+        let mut failed = send(&follow_up);
+        stamp_send_message(&mut failed, &bob(), &mut app).expect("the follow-up is stamped");
+        let mut retry = send(&follow_up);
+        stamp_send_message(&mut retry, &bob(), &mut app).expect("the retry is stamped");
+
+        assert_eq!(
+            retry["message"]["metadata"]["mesh:seq"], 2,
+            "a follow-up that never left gave its seq back"
+        );
+        assert_eq!(
+            app.tasks[&task_id].seq, 1,
+            "the record counts sent legs only"
+        );
+    }
+
+    /// A counter at its end cannot take another follow-up: the call is refused, and the record
+    /// stays as it was.
+    #[test]
+    fn a_follow_up_past_the_last_seq_is_refused() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+        app.tasks
+            .get_mut(&task_id)
+            .expect("the opening made the record")
+            .seq = u64::MAX;
+        let mut follow_up =
+            send(&serde_json::json!({ "messageId": "m2", "taskId": task_id.as_str() }));
+
+        let error = stamp_send_message(&mut follow_up, &bob(), &mut app)
+            .expect_err("a counter at its end has no next seq");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert_eq!(
+            app.tasks[&task_id].seq,
+            u64::MAX,
+            "the record stays as it was"
+        );
+        assert!(
+            follow_up["message"]["metadata"].is_null(),
+            "the refused message is not stamped"
+        );
+    }
+
+    /// A call whose request never left is answered at once, not at its deadline.
+    #[test]
+    fn a_call_whose_request_never_left_is_answered_at_once() {
+        let mut app = A2aApp::new();
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        let corr = wire::corr_id("corr-failed");
+        let parked = A2aWaiter {
+            corr: corr.clone(),
+            peer_key: bob().key,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
+            responder: A2aResponder::Typed(reply_tx),
+            opening: None,
+            mesh: MeshId::from("test"),
+        };
+        assert!(
+            app.register_a2a_waiter(parked).is_none(),
+            "the registry has room for the call"
+        );
+        let call = DispatchedCall {
+            method: "GetTask",
+            peer_key: bob().key,
+            corr: &corr,
+            opening: None,
+            seq: None,
+        };
+
+        settle_dispatch(
+            Err(anyhow::anyhow!("no route")),
+            &call,
+            &serde_json::json!({}),
+            &mut app,
+        );
+
+        let reply = reply_rx.try_recv().expect("the caller hears of it now");
+        assert_eq!(reply["error"]["code"], -32603, "the send failed inside");
+        assert!(app.a2a_waiters.is_empty(), "nothing waits for a reply");
+    }
+
+    /// A raw call that names an id this node holds no record for is refused here.
+    #[test]
+    fn a_follow_up_for_a_task_we_do_not_hold_is_refused() {
+        let mut app = A2aApp::new();
+        let mut params = send(&serde_json::json!({
+            "messageId": "m1",
+            "taskId": TaskId::random().as_str(),
+        }));
+
+        let error = stamp_send_message(&mut params, &bob(), &mut app)
+            .expect_err("no record means no follow-up");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert!(
+            app.tasks.is_empty(),
+            "a refused follow-up creates no record"
+        );
+    }
+
+    /// A follow-up on a task of another peer is not ours to send to this one.
+    #[test]
+    fn a_follow_up_to_another_peer_than_the_workers_is_refused() {
+        let mut app = A2aApp::new();
+        let mut opening = send(&serde_json::json!({ "messageId": "m1" }));
+        let task_id = stamp_send_message(&mut opening, &bob(), &mut app)
+            .expect("an opening is admitted")
+            .expect("an opening reports the task it made");
+        let carol = CallPeer {
+            key: AuthorKey::from([0xc0; 32]),
+            name: Some(Nickname::from("carol")),
+        };
+        let mut follow_up = send(&serde_json::json!({
+            "messageId": "m2",
+            "taskId": task_id.as_str(),
+        }));
+
+        let error = stamp_send_message(&mut follow_up, &carol, &mut app)
+            .expect_err("the task belongs to bob");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert_eq!(
+            app.tasks[&task_id].seq, 1,
+            "the refused follow-up took no seq"
+        );
+    }
+
+    /// The registry cap binds the initiator too: with every slot held by a task of another peer,
+    /// an opening is refused at dispatch, and it leaves no record.
+    #[test]
+    fn an_opening_over_the_registry_cap_is_refused() {
+        let mut app = A2aApp::new();
+        for index in 0..TASKS_CAP {
+            let mut bytes = [0xc0_u8; 32];
+            bytes[..8].copy_from_slice(&u64::try_from(index).expect("the cap fits").to_le_bytes());
+            let peer = CallPeer {
+                key: AuthorKey::from(bytes),
+                name: Some(Nickname::from("peer")),
+            };
+            let mut params = send(&serde_json::json!({ "messageId": "m" }));
+            stamp_send_message(&mut params, &peer, &mut app)
+                .expect("an opening under the registry cap is admitted");
+        }
+        let mut over = send(&serde_json::json!({ "messageId": "over" }));
+
+        let error = stamp_send_message(&mut over, &bob(), &mut app)
+            .expect_err("every slot of the registry is held");
+
+        assert_eq!(error.code, -32004, "the refusal is the quota code");
+        assert!(
+            error.message.contains("maximum"),
+            "the reason names the registry cap, got {}",
+            error.message
+        );
+        assert_eq!(
+            app.tasks.len(),
+            TASKS_CAP,
+            "the refused opening made no record"
+        );
+    }
+
+    /// The per-peer quota binds the initiator too: an opening over it is refused at dispatch.
+    #[test]
+    fn an_opening_over_the_peer_quota_is_refused() {
+        let mut app = A2aApp::new();
+        for _ in 0..TASKS_PER_PEER_CAP {
+            let mut params = send(&serde_json::json!({ "messageId": "m" }));
+            stamp_send_message(&mut params, &bob(), &mut app)
+                .expect("an opening under the quota is admitted");
+        }
+        let mut over = send(&serde_json::json!({ "messageId": "over" }));
+
+        let error =
+            stamp_send_message(&mut over, &bob(), &mut app).expect_err("the quota is spent");
+
+        assert_eq!(error.code, -32004, "the refusal is the quota code");
+        assert_eq!(
+            app.tasks.len(),
+            TASKS_PER_PEER_CAP,
+            "the refused opening made no record"
+        );
+        assert!(
+            over["message"]["taskId"].is_null(),
+            "the refused message is not stamped"
         );
     }
 }

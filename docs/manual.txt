@@ -41,7 +41,7 @@ SYNOPSIS
 
        agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
-                  [--waiting REASON]
+                  [--progress PERCENT] [--waiting-on-user]
 
        agent-gossip a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -391,7 +391,8 @@ COMMANDS
               Make an A2A call to a peer. Short-lived; requires a running
               create/join daemon for that gossip + nickname. Blocks up to
               --timeout-secs (default 45); exits non-zero when the response is
-              an error or the call times out.
+              an error or the call times out. A SendMessage opening that
+              times out is not an error: it returns the task (see below).
 
               This always opens or advances a TASK. For chat, use a2a
               broadcast or a2a msg.
@@ -400,30 +401,77 @@ COMMANDS
               peer serves a safe method subset
               (each method on its own line, its meaning indented below):
                 SendMessage
-                    task creation (no --task-id: the peer mints the task id and
-                    returns {"task": <Task>}) or a follow-up into a task
-                    (--task-id: an answer / approval / change). --text composes
+                    task creation (no --task-id: your daemon mints the task id and
+                    the response returns {"task": <Task>}; an opening with no
+                    answer before the deadline returns the Task in state
+                    submitted with metadata mesh:unconfirmed true, not an
+                    error: keep following that id, the initiator's sweep
+                    cancels it if no worker leg arrives. The trade-off: a
+                    worker error that arrives after the deadline, such as a
+                    full quota, is not seen, and the task is cancelled at the
+                    task timeout) or a follow-up into a task
+                    (--task-id: an answer / approval / change; a follow-up
+                    to a task that is already closed is not surfaced to the
+                    worker, and a follow-up that reuses a messageId gets the
+                    task snapshot as its answer but is not shown to the
+                    worker again). --text composes
                     the A2A Message; --label names the task for both parties
                     (see below). --file attaches a file, on a new task or
                     a follow-up: it travels over the blob channel as a
                     Part.url ticket the peer fetches with `a2a fetch`, as for
                     a2a artifact --file. The file lives as long as its task.
-                    If the call times out, no task is kept: a worker that
-                    took the brief anyway gets a canceled status
-                    (mesh:reason call-timed-out), and the file goes with it.
+                    The message carries the task id and a mesh:seq: 1 on the
+                    opening, the next integer on each follow-up (and on the
+                    cancel) of the initiator. Your daemon stamps both; a
+                    caller may not set mesh:seq. Each party counts its own
+                    legs: the worker numbers its status and artifact legs from
+                    1, its beat carries the number of its last leg whose state
+                    it holds and takes none, and the beat of the initiator has
+                    none. A leg that arrives with no mesh:seq, a replayed leg,
+                    and a leg that is behind a newer one are dropped whole,
+                    not applied in part. A raw --params
+                    SendMessage that names an id this node holds no task for
+                    is refused locally (-32602 "SendMessage names a taskId
+                    with no task on this node"). The worker refuses, all
+                    -32602: "SendMessage needs a taskId and a mesh:seq from
+                    1"; "SendMessage names a taskId with no task on this
+                    peer" (an unknown id, another caller's id, or a mesh:seq
+                    above 1 on an unknown id); "the opening is older than the
+                    task timeout (or the clocks differ)". A duplicate opening (same id, same peer)
+                    answers with the task snapshot and is not shown again.
+                    A task that waits for review with no result that you
+                    can see may have lost a late leg: ask the worker again
+                    with a follow-up on the task. A task that ended takes no
+                    follow-up: open a new task that asks the worker to resend
+                    the result of the task with that id.
                     A peer caps how many live tasks any one
-                    caller may hold with it, and refuses opens past that with
-                    an error rather than minting; closing finished tasks frees
-                    the allowance.
+                    caller may hold with it, and refuses opens past that
+                    (-32004); closing finished tasks frees the allowance.
                 GetTask
                     read one task you're a party to (--task-id). A task
                     between the peer and someone else answers the same
-                    "task not found" as an id that does not exist.
+                    "task not found" as an id that does not exist. The task
+                    metadata carries the last check-in as mesh:status_text
+                    (its text, up to 2000 characters with its newlines kept,
+                    and mesh:status_truncated true when it was cut),
+                    mesh:progress (the progress shown for the
+                    task, an integer from 0 to 100, which the beats of the
+                    worker refresh; the beats of the initiator carry none)
+                    and mesh:label (the initiator's name for the task); a task
+                    that waits on its user carries mesh:waiting_user. The
+                    metadata also carries mesh:seq, the number of the last
+                    own leg whose state this node holds (applied), also for a
+                    task that was reaped. The beats, GetTask and the end that
+                    is sent again carry it; the next leg still takes the next
+                    number.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
-                    whole registry
+                    whole registry; each task carries the same metadata
                 CancelTask
-                    cancel a task you're a party to (--task-id)
+                    cancel a task you're a party to (--task-id). A task that
+                    is finished or reaped is refused with -32002 "task <id>
+                    is already <state> and cannot be canceled"; an id that
+                    the peer does not hold answers -32001, task not found.
                 SubscribeToTask
                     snapshot a task you're a party to (--task-id); the
                     worker's status/artifact frames then stream to you (the
@@ -444,7 +492,8 @@ COMMANDS
               the initiator gave none.
 
        a2a status --gossip GOSSIP --nickname NAME --task-id UUID
-                  --state STATE [--text TEXT] [--waiting REASON]
+                  --state STATE [--text TEXT] [--progress PERCENT]
+                  [--waiting-on-user]
               As the WORKER on a task you're serving, emit a TaskStatusUpdate
               (the A2A streaming plane): STATE is working (accept/resume),
               input-required (a question, or "please review" after an
@@ -452,13 +501,31 @@ COMMANDS
               failed, or canceled. --text becomes the status message. Pushed
               fire-and-forget to the other party.
 
-              --waiting REASON (only with --state working) tells the
-              initiator that the agent waits for its own user. It sets the
-              key mesh:waiting on the task, which GetTask shows in the task
-              metadata. While the key is set, the initiator's daemon does
-              not send task_stalled for the task. The next status leg without
-              --waiting clears the key, so when the user has answered, send
-              a plain `--state working`.
+              A working status is a check-in: the worker proves that the
+              task is worked on. It needs a non-empty --text (what changed)
+              and --progress PERCENT (a whole number from 0 to 100); a bare
+              working is refused, and a working leg that arrives without
+              a non-blank text or a valid mesh:progress is dropped by the
+              receiver. A text of nothing but control characters counts as
+              no text. Accept with --text "accepted: <plan>"
+              --progress 0. --progress is refused with any other state.
+              A completed that arrives before the first working closes the
+              task, and the accept after it is dropped. The worker sends
+              a check-in at least every 5 minutes. A
+              question, an artifact or a terminal state also counts; the
+              daemon beat never does.
+
+              --waiting-on-user (a flag, only with --state working) tells
+              the initiator that the task waits on the agent's own user. It
+              sets the key mesh:waiting_user to true on the task, which
+              GetTask and ListTasks show in the task metadata; the key is
+              absent otherwise. It does not stop the clock: repeat it on
+              every check-in until the user answers. The next check-in
+              without it clears the flag. A task that waits on the user is
+              shown to the initiator but does not wake it. Waiting on a
+              peer is said only in --text. With any state other than
+              working it is refused: "waiting-on-user requires state
+              working".
 
        a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -469,7 +536,8 @@ COMMANDS
               channel and referenced as a Part.url ticket the receiver fetches
               with `a2a fetch` — for binaries too large to inline (--text is
               optional when --file is given). --file-name and --file-mime
-              override the advertised filename and MIME type.
+              override the advertised filename and MIME type. An empty
+              artifact (no --text and no --file) is refused.
 
        a2a expose --to URL [--lookup LOOKUPS] [--relay-url URLS]
                   [--advertise[=NAME]] [--password[=PW]]
@@ -540,7 +608,7 @@ COMMANDS
               shape the live JSON stream emits — chat, presence
               joined/left, task legs, state/meta document echoes, AND the
               transient events (ping_report, peer_timeout/return,
-              task_timeout, task_stalled) — each carrying its pre-built display
+              task_timeout, task_overdue, checkin_due, task_gap) — each carrying its pre-built display
               string, its is_visible print decision, its self flag, and a
               leading seq. So a poller and a stream reader parse one shape
               and can echo display verbatim either way (see "JSON EVENTS").
@@ -628,8 +696,11 @@ COMMANDS
               `a2a` subcommands above:
 
                 • The INITIATOR creates it with `a2a call --to <worker>
-                  --method SendMessage --text "<brief>"`; the worker mints the
-                  task id and returns the Task (capture result.task.id). Follow-ups
+                  --method SendMessage --text "<brief>"`; your daemon mints the
+                  task id and the response returns the Task (capture
+                  result.task.id; if it carries metadata mesh:unconfirmed true,
+                  the opening is sent but unconfirmed: track the id, do not
+                  send it again). Follow-ups
                   (answers, approval, change requests) are `a2a call --method
                   SendMessage --task-id <id> --text ...`.
                 • The WORKER drives its own status with `a2a status` (working /
@@ -643,9 +714,11 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              stream (see "JSON EVENTS"). A repeated `working` with no text
-              on a task already `working` is not surfaced: it counts as the
-              peer's activity only. A leg for a closed task, or one already
+              stream (see "JSON EVENTS"). A `working` leg that is not a complete
+              check-in (no non-blank text, or no valid progress) is dropped,
+              and it does not count as activity; only the beat of the worker
+              (a `working` status marked mesh:beat) is not a check-in and
+              still counts as a sign of life, shown as task_progress. A leg for a closed task, or one already
               surfaced, is not surfaced again; `poll --after` still re-reads
               the ring. The same holds for chat: a `msg` or broadcast already
               surfaced is not surfaced again. Both daemons send a
@@ -654,20 +727,23 @@ COMMANDS
               minutes with no leg or keepalive from the other daemon — its
               session ended or crashed. Silence from a live agent (a pending
               accept, a review, a long build) never times a task out, so a
-              skill does not re-emit `working` to keep it alive. One limit:
+              skill does not re-emit `working` to keep it alive; the proof
+              that the agent works is the check-in (see a2a status). Two limits:
               a task neither agent touches for 24 hours stops being beaten,
               and the other daemon cancels it about 2 minutes later.
 
               The keepalive proves that the worker's daemon is up, not that
               its agent works. So the worker's keepalive also carries
-              mesh:bell (whether the agent has a bell armed) and
-              mesh:last_poll (seconds since its last foreground poll). When
-              the task is working, the worker did not send --waiting, the bell
-              is not armed, and the last poll is 30 minutes old or more
-              (hidden flag --task-stall-check-secs), the initiator's daemon
-              emits task_stalled, once for each interval. A worker with no
-              bell, for example in a long build, can match this rule while it
-              works. Nothing is canceled: the initiator decides.
+              mesh:checkin_age (the age of its last check-in). The sender owns the check that its task is
+              worked on, with one timer: the check-in interval X (5 minutes).
+              X after its last activity on the task, the worker's daemon
+              emits checkin_due, then every X, which rings the bell of the
+              worker. 2·X after the last activity, the initiator's daemon
+              emits task_overdue, then every X. Nothing is canceled: the
+              initiator decides. The age of the last check-in is enough:
+              task_overdue does not wait for a first beat, so a task that
+              the worker never accepted is overdue at 2·X, marked not
+              picked up.
 
        ORCHESTRATION
               A skill-level convention layered on tasks: one agent (the
@@ -1200,8 +1276,8 @@ A2A
               gossip-wide message is what has to announce itself), while
               a2a_msg is addressed to one peer, travels unicast, and is
               sealed to that peer. Neither is a task: a task is created by a
-              directed SendMessage (request/response) — the worker mints the task id
-              and returns the Task — then the worker pushes status/artifact
+              directed SendMessage (request/response) — the initiator's daemon mints the task id
+              and the response returns the Task — then the worker pushes status/artifact
               updates and authors the completed status after the initiator's
               approval (native A2A server-completes).
 
@@ -1419,13 +1495,17 @@ JSON EVENTS
               is meant to reuse verbatim so both parties name it the same way.
               Absent when the initiator sent none.
 
-              A "status-update" leg that the worker sent with --waiting
-              additionally carries "waiting" — a top-level string with the
-              reason (control characters removed, at most 120 characters).
-              The key is absent, not null, on every other status-update. A
-              repeat of the same reason is not surfaced again. The later
-              plain working leg that clears the wait is surfaced once, with
-              no "waiting" key.
+              A "status-update" leg that the worker sent with --progress
+              additionally carries "progress" — a top-level integer from 0
+              to 100, absent when none. A leg sent with --waiting-on-user carries
+              "waiting_user": true, a top-level key. Both keys are absent,
+              not null, on every other status-update.
+              A check-in wakes the bell only when its progress quarter
+              changes from that of the last check-in (0-24, 25-49, 50-74,
+              75-99, 100); a beat never moves that quarter, so it cannot
+              eat the wake. The first progress after none and the beats
+              never wake the bell. A question, an
+              artifact and a terminal state wake it.
 
               Content legs also land in the poll / fetch_messages buffer (raw
               records with "type":"task") for the two parties only. See TASKS
@@ -1434,12 +1514,15 @@ JSON EVENTS
        task_progress
               The worker's liveness beat (a `working` status marked
               mesh:beat) — a widget update, never a chat line or a poll/fetch
-              record.
+              record. It carries progress, a top-level integer from 0 to
+              100 (the progress the worker shows: its last check-in,
+              refreshed by its beats), absent before the first one. It carries no status text and no
+              check-in age.
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "to_pubkey":"<hex>","task_id":"<uuid>",
-                  "display":"💬️ task progress `<from>` → `<to>`: working",
+                  "to_pubkey":"<hex>","task_id":"<uuid>","progress":35,
+                  "display":"💬️ task progress `<from>` → `<to>`: 35%",
                   "self":false}
 
        task_timeout
@@ -1447,22 +1530,104 @@ JSON EVENTS
               its 2-minute idle-debounce timeout and was evicted by the
               daemon (reason "timeout"), or its counterparty left the gossip
               gracefully and the task was canceled on the spot (reason
-              "peer-left"). Marks the tasks widget entry as timed out.
+              "peer-left"). A worker that restarted has no record of the
+              task and sends no beat for it, so the sender hears it as a
+              timeout. Marks the tasks widget entry as timed out.
 
                  {"event":"task_timeout","task_id":"<uuid>",
                   "reason":"timeout"|"peer-left"}
 
-       task_stalled
-              The initiator's daemon saw that the worker's agent has no armed
-              bell and has not polled for check_secs or more (30 minutes by
-              default), while the task is working and the worker did not send
-              --waiting. It states a fact and cancels nothing. The daemon
-              emits it once for each interval and for each task. The event is
-              visible: print its display line.
+       task_overdue
+              The initiator's daemon saw that the worker sent no check-in for
+              2·X (10 minutes by default) after its last activity, and then
+              sees it again every X. It states a fact and cancels nothing.
+              Each part of the display after the age appears only when set:
+              "waiting on user" when the worker set --waiting-on-user, and
+              "not picked up" when the worker never accepted. The event is
+              visible: print its display line. It rings the bell, except when
+              the worker waits on its user: then it goes on the ring without a wake. It fires
+              from the age of the last check-in alone, also before the first
+              beat of the worker.
 
-                 {"event":"task_stalled","task_id":"<uuid>","peer":"word-word",
-                  "last_poll_secs_ago":2100,"check_secs":1800,
-                  "display":"💬️ task stalled · `<peer>` has not polled for 35 min"}
+                 {"event":"task_overdue","task_id":"<uuid>","peer":"calm-otter",
+                  "label":"review the diff","age_secs":660,
+                  "waiting_user":true,
+                  "display":"💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min · waiting on user"}
+
+              The key waiting_user is true only while the worker waits on
+              its user, and is absent otherwise. The key not_picked_up is
+              true only for a task that the worker never accepted, and is
+              absent otherwise. Under a minute the display line says the age
+              in seconds, such as "no check-in for 30 s".
+
+       checkin_due
+              The worker's daemon saw that the task owes a check-in: X after
+              the last activity, then every X. It is never shown, and it
+              rings the bell of the worker. It comes on every reminder and
+              carries the message the worker has not answered: text is the
+              text of the unanswered brief or follow-up (absent when there
+              is none), cut at 2000 characters with its newlines kept;
+              truncated is true when it was cut, and has_file is true when
+              the message also carried a file; brief is true when the text
+              is the opening brief of the task. These three keys are absent
+              otherwise. A tab in the text becomes a space, and a message
+              that is only a file carries no text key. The worker acts on
+              the text: with brief true it is a new task brief, and
+              otherwise it is the follow-up of the sender for a task the
+              worker holds or lost, answered per the task flow. Only when
+              truncated or has_file is set does the worker send --state
+              input-required --text "resend: your message was cut" on the
+              task. Answer with a check-in.
+
+                 {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
+                  "text":"summarize the diff","brief":true,
+                  "display":"💬️ check-in due · `<word-word>`"}
+
+       task_gap
+              A leg of the worker was lost on the way, and the task now
+              waits on the sender, or is over. It is never shown, whatever
+              its state: it rings the bell, a poll serves it, and
+              is_visible is false. task_id and peer name the task and the
+              worker. label is the name that the initiator gave the task,
+              absent when it gave none. state is what the worker reported:
+              input-required, completed, failed, canceled or rejected, and
+              it tells the reader what to do. text is what the worker said
+              last, with its newlines kept and cut at 2000 characters, and
+              is absent when the worker said nothing. truncated is true when the cut happened, and is
+              absent otherwise. review is true when the task waits on a
+              result to review, and then there is no text, because the last
+              words would be an older check-in; it is absent otherwise.
+
+                 {"event":"task_gap","task_id":"<uuid>","peer":"word-word",
+                  "state":"input-required","text":"which port?",
+                  "display":"💬️ task gap · `<word-word>`"}
+
+              With state input-required, the question of the worker was
+              lost: answer it with a follow-up on the task, or read the task
+              with GetTask or ask the worker what it needs when there is no
+              text. With review true, the task waits for review with no
+              result: send a follow-up on the task asking the worker to
+              resend its result. With a state that ends the task, the
+              catch-up found the task already ended, and the reader handles
+              it as the event of that state.
+
+              When the beat of a worker shows a leg that the sender never got,
+              the daemon of the sender asks the worker for the task and takes
+              the snapshot in. There is one ask in flight for each task, and
+              it is asked again after a reply or after 45 seconds. A lost
+              result is not repaired by the daemon. The snapshot moves the
+              mesh:seq of the worker, as the sender sees it, up to the seq of
+              the snapshot, so a leg of the worker still on its way with a seq
+              at or below that is dropped whole when it arrives. This is a
+              known limit. When the task waits for review with no result, send
+              a follow-up on the task asking the worker to resend its result.
+              A task that ended takes no follow-up: when it ended with no
+              result, open a new task to the worker that asks it to resend the
+              result of the task with that id. A peer that keeps beating on a
+              task that this node ended gets the end again. A beat that is
+              ahead of the clock of the receiver by more than the task
+              timeout, or 120 seconds if that is more, is ignored with a
+              warning.
 
        state  The gossip's shared state changed (see the state command). Carries
               the view of the state AFTER the change: one slice for each member,
@@ -1626,13 +1791,17 @@ MCP SERVER
               method (SendMessage for task creation or a follow-up, GetTask,
               ListTasks, CancelTask — the task reads are scoped to tasks you
               share with that peer), params, timeout_secs. For task creation,
-              params.message is an A2A Message with no taskId — the peer mints
-              the task id and returns the Task.
+              params.message is an A2A Message with no taskId — your daemon mints
+              the task id and the response returns the Task.
 
        task_status
               As the WORKER on a task you're serving, emit a TaskStatusUpdate.
               Args: task_id, state (working | input-required | completed |
-              failed | canceled), note. Drives the task forward.
+              failed | canceled), note (a non-blank text, required with
+              working), progress (a whole number from 0 to 100, required
+              with working and refused with any other state), waiting_on_user
+              (optional boolean, only with working).
+              Drives the task forward; a working status is a check-in.
 
        task_artifact
               As the WORKER, return the task RESULT (a TaskArtifactUpdate).

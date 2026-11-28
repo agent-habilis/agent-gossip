@@ -10,6 +10,7 @@ use super::advertised_file_name::advertised_file_name;
 use super::args::{A2aAction, ArtifactArgs, CallArgs, ExposeArgs, SessionAddress, StatusArgs};
 use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
+use crate::a2a::WorkerLeg;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::tunnel::bridge;
 
@@ -158,17 +159,12 @@ async fn status(args: StatusArgs) -> Result<()> {
         task_id,
         state,
         text,
-        waiting,
+        progress,
+        waiting_on_user,
     } = args;
-    crate::a2a::broadcast_params::WorkerLeg::parse(state, waiting.as_deref())
-        .map_err(|_| anyhow::anyhow!("--waiting requires --state working"))?;
-    let command = IpcCommand::A2aStatus {
-        mesh,
-        task_id,
-        state,
-        note: text,
-        waiting,
-    };
+    let leg = WorkerLeg::parse(state, text, progress, waiting_on_user)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let command = IpcCommand::A2aStatus { mesh, task_id, leg };
     send_and_print_id(&command, &nickname, "task status").await
 }
 
@@ -184,8 +180,9 @@ async fn artifact(args: ArtifactArgs) -> Result<()> {
         file_name,
         file_mime,
     } = args;
-    if text.is_none() && file.is_none() {
-        anyhow::bail!("provide --text and/or --file");
+    let blank_text = text.as_deref().is_none_or(|text| text.trim().is_empty());
+    if blank_text && file.is_none() {
+        anyhow::bail!("an artifact needs a text or a file");
     }
     let file = file.map(std::path::absolute).transpose()?;
     let file_name = advertised_file_name(file.as_deref(), file_name);

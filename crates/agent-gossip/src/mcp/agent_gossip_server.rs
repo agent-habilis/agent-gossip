@@ -23,9 +23,11 @@ use super::{
     SendMsgArgs, SendResult, TaskArtifactArgs, TaskStatusArgs, TopicMeshArgs, VersionResult,
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_nickname,
     parse_task_id, parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
+    worker_leg_message,
 };
 use crate::a2a::ipc_command::MetaView;
-use crate::a2a::reader_asks;
+use crate::a2a::status_update_params::Progress;
+use crate::a2a::{WorkerLeg, reader_asks};
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
@@ -358,7 +360,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept/resume, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\" to end it. A directed task is created by `a2a_call` message/send (the worker mints the id and returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason). Before you ask your own user something, send \"working\" with `waiting` set to the reason, so the initiator can tell a wait from a stall; the next status clears it."
+        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept, resume and check in, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\"/\"rejected\" to end it. A directed task is created by `a2a_call` SendMessage (your daemon mints the id and the response returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason). Every \"working\" status is a check-in and needs a non-empty `note` (what changed) and a `progress` (0 to 100); accept with note \"accepted: <plan>\" and progress 0. Send one at least every check-in interval, and answer each `checkin_due` reminder with one. Before you ask your own user something, send a check-in with `waiting_on_user` set to true; the next check-in clears it. `progress` and `waiting_on_user` are refused with any other state."
     )]
     async fn task_status(
         &self,
@@ -368,16 +370,17 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
         let state = parse_task_state(&args.state)?;
-        crate::a2a::broadcast_params::WorkerLeg::parse(state, args.waiting.as_deref())
-            .map_err(|_| McpError::invalid_params("waiting requires state \"working\"", None))?;
+        let progress = args
+            .progress
+            .map(Progress::try_from)
+            .transpose()
+            .map_err(|error| McpError::invalid_params(error, None))?;
+        let leg = WorkerLeg::parse(state, args.note, progress, args.waiting_on_user)
+            .map_err(|error| McpError::invalid_params(worker_leg_message(error), None))?;
+        let params = TaskStatusParams::new(task_id, leg);
         let message = session
             .core
-            .task_status(TaskStatusParams {
-                task_id,
-                state,
-                note: args.note,
-                waiting: args.waiting,
-            })
+            .task_status(params)
             .await
             .map_err(to_mcp_error)?;
         ok_json(SendResult::from(message))
@@ -393,6 +396,12 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
+        if args.text.trim().is_empty() && args.file.is_none() {
+            return Err(McpError::invalid_params(
+                "an artifact needs a text or a file",
+                None,
+            ));
+        }
         let file = args.file.map(std::path::PathBuf::from);
         let file_name: Option<String> = args.file_name.or_else(|| {
             let path_name = file.as_ref().and_then(|path| path.file_name());
@@ -413,7 +422,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Call a peer's A2A server over gossip (request/response) and return its JSON-RPC response. The peer serves a SAFE subset of A2A v1.0 (PascalCase) methods: \"GetTask\" (params {id}), \"CancelTask\" (params {id}), \"SubscribeToTask\" (params {id}; snapshot + the worker's pushed frames) — all three only for a task you're a party to, and a task between that peer and someone else answers the same \"task not found\" as an id that does not exist; \"ListTasks\", which lists only the tasks you share with that peer, not its whole registry; \"mesh/state.get\", \"mesh/meta.get\"; and \"SendMessage\" (params {message: <A2A Message>}) directed at that peer — no taskId opens a task the worker mints and returns as {\"task\": <Task>}; a taskId is a follow-up. A peer caps how many live tasks any one caller may hold with it and refuses further opens past that, so treat a task as a resource to close rather than to accumulate. Global-state writes (mesh/state.merge, mesh/meta.merge) and broadcast SendMessage are refused. Blocks until the peer answers or times out; the result is the JSON-RPC response object ({result} or {error})."
+        description = "Call a peer's A2A server over gossip (request/response) and return its JSON-RPC response. The peer serves a SAFE subset of A2A v1.0 (PascalCase) methods: \"GetTask\" (params {id}), \"CancelTask\" (params {id}), \"SubscribeToTask\" (params {id}; snapshot + the worker's pushed frames) — all three only for a task you're a party to, and a task between that peer and someone else answers the same \"task not found\" as an id that does not exist; \"ListTasks\", which lists only the tasks you share with that peer, not its whole registry; \"mesh/state.get\", \"mesh/meta.get\"; and \"SendMessage\" (params {message: <A2A Message>}) directed at that peer — no taskId opens a task, whose id your daemon mints and the response returns as {\"task\": <Task>} (an opening that gets no answer in time returns the Task in state submitted with metadata mesh:unconfirmed true: keep following that task id, do not send it again); a taskId is a follow-up. A peer caps how many live tasks any one caller may hold with it and refuses further opens past that, so treat a task as a resource to close rather than to accumulate. Global-state writes (mesh/state.merge, mesh/meta.merge) and broadcast SendMessage are refused. Blocks until the peer answers or times out; the result is the JSON-RPC response object ({result} or {error})."
     )]
     async fn a2a_call(
         &self,

@@ -18,9 +18,15 @@ Give every question real options, not a yes/no. Each option's description says
 what will actually happen if it is picked — for a task brief, that is the
 command that goes on the wire:
 
-- **Accept** — `a2a status --state working`, then do the work.
+- **Accept** — `a2a status --state working --text "accepted: <plan>" --progress 0`, then do the work.
 - **Decline** — `a2a status --state failed --text "$REASON"`; the initiator is
   told the task was not picked up.
+
+Ask accept or decline as a question of its own. Never put a question about the
+work itself (which file, which option) in the same widget: while the widget is
+open you send nothing, and the initiator sees `not picked up` when the truth is
+that you wait on your user. Accept first and send the accepted status. Then, if
+the work needs your user, send the `--waiting-on-user` check-in and ask.
 
 ### Question widget — Claude Code
 

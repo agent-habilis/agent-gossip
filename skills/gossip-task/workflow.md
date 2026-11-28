@@ -48,7 +48,6 @@ The worker authors the terminal `completed` once you approve; you never set a
 task's state. The task is done when the worker's `completed` arrives, not when
 you send the approval.
 
-A visible `task stalled` line means that the agent of the worker has not
-polled for 30 minutes or more and did not say that it waits for its user. It
-cancels nothing. Handle it per step 6 of the initiator flow in the Event
+A visible `task overdue` line means that the worker sent no check-in for twice
+the check-in interval. It cancels nothing. Handle it per step 6 of the initiator flow in the Event
 handling section.

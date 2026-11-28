@@ -42,9 +42,13 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_KEEPALIVE_SECS)]
     pub task_keepalive_secs: u64,
 
-    /// Worker-agent silence after which the initiator's daemon raises `task_stalled` (seconds).
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_STALL_CHECK_SECS)]
-    pub task_stall_check_secs: u64,
+    /// Task silence from both agents after which the daemons stop beating it (seconds).
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_SKILL_SILENCE_MAX_SECS)]
+    pub task_skill_silence_max_secs: u64,
+
+    /// Check-in interval X of a task: the worker's reminder is due after X and the sender's `task_overdue` after 2·X (seconds).
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_CHECKIN_SECS, value_parser = clap::value_parser!(u64).range(1..))]
+    pub task_checkin_secs: u64,
 
     /// Own task legs that may wait for their send before a new one is refused.
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::OWN_LEGS_CAP)]
@@ -54,9 +58,13 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_CAP)]
     pub unsent_legs_cap: usize,
 
-    /// Blob groups of calls that one task may hold before a call with a file is refused.
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::CALL_BLOB_GROUPS_PER_TASK_CAP)]
-    pub call_blob_groups_per_task_cap: usize,
+    /// Bytes of body that the own task legs may hold before a new one is refused.
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::OWN_LEGS_BYTES_CAP)]
+    pub own_legs_bytes_cap: usize,
+
+    /// Bytes that the own content legs may hold before a new one is refused.
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_BYTES_CAP)]
+    pub unsent_legs_bytes_cap: usize,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = secs(defaults::BEACON_COHOST_GRACE))]
@@ -131,11 +139,13 @@ impl TuningOpts {
         A2aTuning {
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
-            task_stall_check_secs: self.task_stall_check_secs,
+            task_skill_silence_max_secs: self.task_skill_silence_max_secs,
+            task_checkin_secs: self.task_checkin_secs,
             longpoll_max_ms: self.longpoll_max_ms,
             own_legs_cap: self.own_legs_cap,
             unsent_legs_cap: self.unsent_legs_cap,
-            call_blob_groups_per_task_cap: self.call_blob_groups_per_task_cap,
+            own_legs_bytes_cap: self.own_legs_bytes_cap,
+            unsent_legs_bytes_cap: self.unsent_legs_bytes_cap,
         }
     }
 }

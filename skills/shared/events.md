@@ -96,8 +96,8 @@ send and echoes it at once.
 `peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
 `bell` is false and `last_poll_secs_ago` is large or null, no agent reads that
 peer.
-The key is absent for your own row and for a peer that did not answer in time. `last_poll_secs_ago` is null before the
-first poll of that peer.
+The key is absent for your own row and for a peer that did not answer in time.
+`last_poll_secs_ago` is null before the first poll of that peer.
 
 ### Answering
 
@@ -124,12 +124,14 @@ Do not answer ping messages. The daemon handles ping/pong and emits
 Task events are interactions, not chat lines (`is_visible` is false on them).
 
 A task event that reports state — `task_timeout`, `task_progress`,
-`task_stalled`, a status-update, a terminal state — for a `task_id` you are not tracking
+`task_overdue`, `task_gap`, a status-update, a terminal state — for a `task_id` you are not tracking
 **live** (no *open* todo for it; a task you already closed as dropped counts
 as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
 silently — no todo, no printed line, no badge change, no recovery — and never
-read it as a signal about a task you are tracking. A directed `message` on an untracked id
+read it as a signal about a task you are tracking. `checkin_due` is never
+stale: for a `task_id` you hold no todo for, handle it per step 0 of the worker
+flow. A directed `message` on an untracked id
 is different, and its `state` field says which kind it is: `submitted` is a
 new task's opening brief — start the worker flow as ever. Any later state is
 a follow-up on a task you lost track of (the daemon still holds the record
@@ -160,7 +162,7 @@ and status, not the full task id or the counterparty. Read each row's descriptio
 with `TaskGet` for those. Compare the ids with every live task, sent or received,
 and open one todo for each missing task. A missing task with no full id in any
 source cannot be restored: say so, and do not guess an id. Do not recover a task
-when only an untracked `task_stalled` event names it: the event is stale. When
+when only an untracked `task_overdue` event names it: the event is stale. When
 the user asks for the task list, call the native task-list operation and show
 what it returns.
 
@@ -173,7 +175,9 @@ Four things go in every task todo, whichever harness you are on:
 - a **badge** — one word for what the task is doing right now, from the table
   below. It comes right after the counterparty, because a long row truncates
   from the right and the badge is the part that must survive. A nickname is
-  usually two short words, so the badge stays in view.
+  usually two short words, so the badge stays in view. On a task that reports
+  progress the badge carries a **progress glyph** after the word (see
+  **Progress glyph** below).
 - the **task label** — the initiator's one-line name for the task. The
   initiator sends it on the brief (`--label`) and it arrives on the opening
   task event's `label` field; **use it verbatim**, so the same task reads the
@@ -192,17 +196,24 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 |---|---|---|
 | sent (initiator) | open it, in progress, owned by the worker | `waiting` |
 | accepted (worker) | open it, in progress | `working` |
-| `working`, `task_progress` | refresh it, still in progress | `working` |
+| a worker check-in, kind `status-update` `working` (not the `task_progress` beat) | refresh it, still in progress | `working` |
+| `task_progress` | liveness only: change nothing, the badge stays | unchanged |
 | `input-required`, kind `artifact-update` | leave it in progress; the result is in, awaiting your approval | `result` |
 | `input-required`, kind `status-update` | leave it in progress; surface the worker's question | `question` |
 | you asked a question (worker) | parked on the initiator | `asked` |
 | you wait for your own user (worker) | still in progress, parked on your user | `waiting-user` |
-| status-update with a `waiting` key (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
-| a `working` status-update without the `waiting` key, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
-| `task_stalled` (initiator) | leave it in progress; the worker may be stuck | `stalled` |
+| check-in with `waiting_user` (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
+| a check-in without `waiting_user`, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
+| `task_overdue` (initiator), the line does not say `waiting on user` | leave it in progress; the worker has not checked in | `overdue` |
+| `task_overdue` (initiator), the line says `waiting on user` | leave it in progress; the badge stays | `waiting-user` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
+| a follow-up that says `resend your result`, or a new task that asks for the result of an ended task `<id>` (worker) | send that result again as an artifact (`a2a artifact`) | `sent` |
 | `completed`, after approval | close it | `done` |
+| `completed` on a report-back task (initiator), and you never saw its result | not done: close it with the reason `no result`, then open a new task to the same worker (`SendMessage`, no `--task-id`) that asks it to resend the result of task `<id>`, and track that one | `dropped`; the new task `waiting` |
+| `task_gap`, state `input-required` (initiator) | leave it as it is; answer the worker, or ask it to resend its result when `review` is true | unchanged |
+| `task_gap`, state `failed`, `canceled` or `rejected` (initiator) | the task ended: handle it as `failed`, from the row below | `dropped` |
+| `task_gap`, state `completed` (initiator) | the task ended: handle it as `completed`, from the rows above: on a report-back task whose result you never saw, the no-result row (close it as `no result`, open the resend task); otherwise `completed` after approval | `dropped` with the new task `waiting`, or `done` |
 | `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
 | leaving the gossip | close whatever is still open | `dropped` |
 
@@ -224,20 +235,31 @@ approval — show it and approve or ask for changes. `status-update` is the work
 follow-up that carries `--task-id` (see the initiator flow below).
 
 `task_progress` is a **liveness** beat. It says the daemon of the worker is up,
-and it does not say that the agent is working.
+and it does not say that the agent is working. It carries the progress the
+worker shows as `progress` (an integer from 0 to 100), and no status text.
 
-`task_stalled` is the one task event with `is_visible` true. The daemon of the
-initiator emits it when the worker beat shows that the agent of the worker has
-no armed bell and has not polled for 30 minutes or more, and the worker did not
-send `--waiting`. It states a fact, and it cancels nothing. The `display` line
-reads:
+A **check-in** is a `working` status leg from the worker, with a text (what
+changed) and a progress (0 to 100), and optionally `waiting_user`. The worker
+sends one at least every check-in interval (5 min by default). A check-in
+wakes you when its quarter changes from that of the last check-in (0–24,
+25–49, 50–74, 75–99, 100). The first progress after none and the beats never
+wake you.
+Otherwise its badge update, `working`, waits for your next batch. A
+`task_overdue`, a question, an artifact or a terminal state wakes you.
+
+`task_overdue` is the one task event with `is_visible` true. The daemon of the
+initiator emits it when the worker has sent no check-in for twice the check-in
+interval, then again every interval. It states a fact, and it cancels nothing.
+The `display` line reads:
 
 ```text
-💬️ task stalled · `<peer>` has not polled for <n> min
+💬️ task overdue · `<worker>` · <label> · no check-in for 11 min[ · waiting on user][ · not picked up]
 ```
 
-Print it verbatim, set the badge `stalled`, and follow the initiator flow
-below.
+Each bracketed part appears only when it is set. Print it verbatim. A line that
+says `waiting on user` does not wake you: show it, keep the badge
+`waiting-user` (do not set `overdue` first), and do nothing else. For any other
+line, set the badge `overdue` and follow the initiator flow below.
 
 Whether a todo tool exists is a fact about the **session**, not the harness: the
 same machine can hand you one session with the tool and the next without it, and
@@ -290,7 +312,9 @@ This rule is for `subject` and `activeForm` only. `owner` stays the bare nicknam
 | | Form |
 |---|---|
 | Right | `💬 <yard-lore> · waiting · summarize the diff · 02bd5883` |
+| Right | `💬 <yard-lore> · working ◔ · summarize the diff · 02bd5883` |
 | Wrong | `💬 yard-lore · waiting · summarize the diff · 02bd5883` |
+| Wrong | `💬 <yard-lore> · working · ◔ · summarize the diff · 02bd5883` |
 
 Then `TaskUpdate` it with `owner` set to the worker's nickname and `status`
 `in_progress`.
@@ -302,16 +326,22 @@ into the `subject` (and `activeForm`) on every transition:
 
 | Task event | `TaskUpdate` |
 |---|---|
-| `working`, `task_progress` | badge `working`, keep `in_progress` |
+| a worker check-in, kind `status-update` `working` (not the `task_progress` beat) | badge `working`, keep `in_progress` |
+| `task_progress` | liveness only: no `TaskUpdate`, the badge stays (it must not overwrite `waiting-user`, `overdue` or `question`) |
 | `input-required`, kind `status-update` | badge `question`, keep `in_progress` |
 | `input-required`, kind `artifact-update` | badge `result`, keep `in_progress` |
 | you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
 | you wait for your own user (worker) | badge `waiting-user`, keep `in_progress` |
-| status-update with a `waiting` key (initiator) | badge `waiting-user`, keep `in_progress` |
-| a `working` status-update without the `waiting` key, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
-| `task_stalled` (initiator) | badge `stalled`, keep `in_progress` |
+| check-in with `waiting_user` (initiator) | badge `waiting-user`, keep `in_progress` |
+| a check-in without `waiting_user`, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
+| `task_overdue` (initiator), the line does not say `waiting on user` | badge `overdue`, keep `in_progress` |
+| `task_overdue` (initiator), the line says `waiting on user` | no `TaskUpdate`: the badge stays `waiting-user` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
+| `completed` on a report-back task (initiator), and you never saw its result | badge `dropped`, `no result: asked again in <new id>` into `description`, `status` `completed`; `TaskCreate` the resend task |
+| `task_gap`, state `input-required` (initiator) | no `TaskUpdate`: the badge stays, `review` true or not |
+| `task_gap`, state `failed`, `canceled` or `rejected` (initiator) | as for `failed`: badge `dropped`, `status` `completed` |
+| `task_gap`, state `completed` (initiator) | as for `completed`, from the rows above: on a report-back task whose result you never saw, the no-result row (badge `dropped`, `no result: asked again in <new id>` into `description`, `TaskCreate` the resend task); otherwise badge `done`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
@@ -319,12 +349,37 @@ The badge is the only part of the subject that changes; the label, the
 counterparty and the short id are written once at `TaskCreate` and never
 rewritten.
 
-**A badge is exactly one word, and the subject is exactly four fields.** Never
-append to it — a `dropped · peer-left` is five fields, and every field after it
+**The badge field is a word, or a word and a glyph, and the subject is exactly
+four fields.** `working ◔` is one field. Never append anything else to it — a `dropped · peer-left` is five fields, and every field after it
 lands one column further right than on every other row, which moves the label
 out from under the eye on the one row that most wants reading. A reason, a
 retry count, a duration: all of them belong in `description` or in a printed
 line, never in the subject.
+
+**Progress glyph.** The glyph comes from the latest progress of the task
+(the top-level `progress` of the last `working` status-update, or `progress` of the
+`task_progress` beat), rounded down:
+
+| Progress | Glyph |
+|---|---|
+| 0–24 | ○ (U+25CB) |
+| 25–49 | ◔ (U+25D4) |
+| 50–74 | ◑ (U+25D1) |
+| 75–99 | ◕ (U+25D5) |
+| 100 | ● (U+25CF) |
+
+- It shows on `working` rows, and `done` shows ●.
+- `waiting`, `dropped`, and a peer that reports no progress show no glyph.
+  Never guess a ○.
+- The worker's own row shows its own progress the same way.
+- Rewrite the row (`subject` and `activeForm`) only when the badge or the glyph
+  changes, never on every check-in. A change of badge at the same progress (a
+  `question` that goes back to `working`) rewrites the subject too. The daemon
+  wakes the initiator when a check-in moves the progress into another quarter,
+  so the glyph stays fresh.
+- The glyph goes with these badges: `working`, `result`, `question`, `asked`,
+  `sent`, `waiting-user` and `overdue` keep the last value. `waiting`, `dropped`
+  and a peer that reports no progress show none.
 
 Finding the row for an incoming `task_id`: `TaskList`, then match its short id
 against the last field of each subject. If more than one row matches, `TaskGet`
@@ -346,42 +401,70 @@ stays the bare nickname.
 | | Form |
 |---|---|
 | Right | `💬 <yard-lore> · waiting · summarize the diff · 02bd5883` |
+| Right | `💬 <yard-lore> · working ◔ · summarize the diff · 02bd5883` |
 | Wrong | `💬 yard-lore · waiting · summarize the diff · 02bd5883` |
+| Wrong | `💬 <yard-lore> · working · ◔ · summarize the diff · 02bd5883` |
 
 Worker flow:
 
+0. A `checkin_due` event rings your bell, and it applies to a task you hold and
+   to one you do not. It is never stale. Its `text`, when present, is the
+   message you have not answered. With `brief: true` it is the opening brief:
+   handle it as a new task brief, from step 1. With a `text` and no `brief`
+   it is the follow-up of the sender for a task you hold (or lost): answer it
+   per the task flow, then send a check-in. With no `text` it is a plain
+   reminder and nothing is unanswered: the task is yours, so send your current
+   check-in (state `working`, what changed, progress). If you do not hold the
+   task (you lost your context), recover it first with `GetTask` on that task
+   id, then check in:
+   ```bash
+   agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method GetTask --task-id "$TASK_ID"
+   ```
+   with `$PEER` the event's `peer` (the initiator) and `$TASK_ID` its `task_id`. Only when the event says `truncated` or `has_file`
+   (the text was cut, or a file came with it) do you send `--state
+   input-required --text "resend: your message was cut"` on the task.
 1. On an incoming task brief, put accept/decline to the user per the
-   **Decisions** section.
+   **Decisions** section, as a question of its own.
 2. Hold `$TASK_ID` from the incoming task event's `task_id` field, and
    `$TASK_LABEL` from its `label` field — the initiator's name for this task,
    used verbatim. Only if the event carries no `label` do you condense the
    brief into one line yourself.
-3. If accepted, open the todo at badge `working` and run:
+3. If accepted, open the todo at badge `working ○` (progress 0) and run:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "accepted: $PLAN" --progress 0
    ```
-   Then do the work. Do not re-emit `working` to keep the task alive: both
-   daemons beat every live task for as long as they run, so a long build, a
-   question to your user, or a long review cannot time the task out.
+   Then do the work. You own the proof that the task is worked on: send a
+   check-in at least every 5 minutes, and sooner when something changed. A
+   check-in is a `working` status with a `--text` that says what changed and
+   a `--progress` from 0 to 100 (a bare `working` is refused):
+   ```bash
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$WHAT_CHANGED" --progress "$PERCENT"
+   ```
+   The daemon beats do not count as a check-in. Answer a `checkin_due` event
+   with a check-in (see step 0). Wrap every command you run in `timeout`, run anything that takes
+   more than 2 minutes in the background, and never wait in a shell loop: a
+   command that blocks the turn is a check-in you cannot send.
 
-   Before you ask your own user a question, tell the initiator that you wait
-   for the user. Give the reason in `--waiting`. This is only valid with
-   `--state working`:
+   Before you ask your own user a question about the work, tell the initiator,
+   even when the brief itself says to ask (then right after the accepted
+   status). Send a check-in with `--waiting-on-user`:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --waiting "$REASON"
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --text "$QUESTION_SUMMARY" --progress "$PERCENT" --waiting-on-user
    ```
-   Move the badge to `waiting-user`. The daemon of the initiator does not flag
-   a task with this key as stalled. Any other status leg clears the key. When
-   your user answers, send a plain `--state working` and move the badge back
-   to `working`. A worker with no armed bell, such as a Codex worker, must do
-   this in every wait of 30 minutes or more.
+   Move the badge to `waiting-user`. The tag does not stop the clock: keep
+   sending check-ins while you wait, and repeat `--waiting-on-user` on every
+   one of them until the wait ends (a check-in without it clears the flag). To
+   wait on a peer, say so in `--text` (`--text "waiting on <peer> for X"`): the
+   flag is only for your user. A question to the initiator is an
+   `input-required` status. When your user answers, send a check-in without
+   `--waiting-on-user` and move the badge back to `working`.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
    ```
    Move the badge to `asked`. The answer comes back as a `message` leg on the
-   same task, which resumes it to `working` — move the badge back and carry on
-   from there. Ask only when you are genuinely blocked; a question costs the
+   same task, which resumes it to `working` — move the badge back, send a
+   check-in with the current progress, and carry on from there. Ask only when you are genuinely blocked; a question costs the
    initiator a turn.
 5. For a report-back task, return the result with:
    ```bash
@@ -427,7 +510,11 @@ Initiator flow:
 1. Send the brief with `--label "$TASK_LABEL"` so the worker names the task the
    way you do. Capture the task id from the directed `SendMessage` response
    (`result.task.id`), hold it as `$TASK_ID`, and open the todo at badge
-   `waiting` with that same `$TASK_LABEL`.
+   `waiting` with that same `$TASK_LABEL`. A task whose `metadata` has
+   `mesh:unconfirmed: true` is sent but unconfirmed: the call timed out before
+   the worker answered. Track it like any other task, by its id and its task
+   events, and never send the brief again as a new task: the worker may hold
+   it already, and the daemon cancels the task if no worker leg arrives.
 2. Every follow-up into that task — an answer, an approval, a change request —
    carries `--task-id`:
    ```bash
@@ -435,10 +522,16 @@ Initiator flow:
    ```
    **A `SendMessage` without `--task-id` is not a follow-up — it opens a brand
    new task.** That is the protocol's rule, not a quirk: an absent task id means
-   "no task yet", so the worker mints one. The only `SendMessage` that omits
+   "no task yet", so your daemon mints one. The only `SendMessage` that omits
    `--task-id` is the one that creates the task.
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
+   A leg that arrives late is dropped whole. When a task waits for review
+   (`input-required`) and you see no result, ask the worker again with a
+   follow-up on the task: `--text "resend your result"`. A task that ended
+   (`completed`) takes no follow-up: with no result in sight, open a new task to
+   the same worker, with `SendMessage` and no `--task-id`, and ask it to resend
+   the result of task `$TASK_ID`.
 4. A task you initiated is **unacknowledged** until the worker's first event
    on it — `working`, or a decline `failed` — which is exactly the window its
    badge still reads `waiting`. `task_timeout` means the worker's daemon
@@ -450,8 +543,8 @@ Initiator flow:
    💬 `<$WORKER>` · $TASK_LABEL · dropped · $REASON
    ```
 
-   — with `$REASON` `no pickup` (no `working` yet) or `worker went silent`. The todo closes on the
-   bare badge `dropped`, with `$REASON` in its `description`: this line is where
+   — with `$REASON` `no pickup` (no `working` yet) or `worker went silent`.
+   The todo closes on the bare badge `dropped`, with `$REASON` in its `description`: this line is where
    the reason is read, and keeping it out of the subject is what holds the row
    at four fields. Then put the
    recovery to the user per the **Decisions** section: retry the same peer,
@@ -459,6 +552,26 @@ Initiator flow:
    user picks reassign or drop. A workflow section may override this
    recovery with its own (orchestrate reassigns on its own); the detection
    above is the same everywhere.
+   A `task_gap` event on a task you initiated says that a leg of the worker was
+   lost and your daemon caught up from a snapshot. It is never shown, in any
+   state, and it rings the bell: its `state` is the switch. With `input-required`
+   the question of the worker was lost: read its `text` and answer it with a
+   follow-up on the task (`--task-id`); with no `text`, probe the task with
+   `GetTask` or ask the worker what it needs; the badge stays. When `review` is
+   true the task waits for review with no result and there is no `text`: send a
+   follow-up on the task that asks the worker to resend its result. With
+   `completed`, `failed`, `canceled` or `rejected` the task already ended: handle
+   it exactly as that terminal state from the lifecycle tables, `rejected` as
+   `failed`: print the line the skill prints for that end and close the badge. A
+   `completed` on a report-back task whose result you never saw follows the
+   no-result row: it takes no follow-up, so open a new task to the worker that
+   asks it to resend the result of task `$TASK_ID`. `text` keeps its newlines and is cut at 2000
+   characters, and `truncated` says so; `label` is the name you gave the task.
+   Your daemon takes the snapshot in when it repairs a gap, and a leg of the
+   worker still on its way with a seq at or below the snapshot is then dropped
+   whole. This is a known limit, and the sender rule covers it: a task that waits
+   for review with no result gets a follow-up, and a task that ended with no
+   result gets a new task.
 5. To check a task's current state on demand — before re-briefing, or when a
    worker seems quiet — probe it:
    ```bash
@@ -466,15 +579,13 @@ Initiator flow:
    ```
    `TASK_STATE_SUBMITTED` on a task dispatched minutes ago is a stalled
    pickup, not a slow worker.
-6. On `task_stalled`, print its `display` line and set the badge `stalled`.
-   The event proves only that the agent of the worker has no armed bell and
-   has not polled for the time that it names. A worker with no bell can match
-   this rule in a long build, so the worker can still be alive. The daemon
-   cancels nothing and sends the event once for each interval. Probe the task
-   with `GetTask`. If `mesh:waiting` is in its metadata, the worker waits for
-   its own user, and you only wait. Otherwise send one follow-up with
-   `--task-id` that asks for a status. If a second `task_stalled` arrives for
-   the same task, put the choice to the user per the **Decisions** section:
-   wait, ask the worker again, or reassign the task. Send `CancelTask` only
+6. On `task_overdue`, print its `display` line. The event proves only that the
+   worker sent no check-in for the time that it names. The daemon cancels
+   nothing and sends the event once for each interval. If the line says
+   `waiting on user`, show it, keep the badge `waiting-user` and do nothing
+   else. Otherwise set the badge `overdue` and send one follow-up with `--task-id` that asks for a status. If a
+   second `task_overdue` arrives for the same task, put the choice to the user
+   per the **Decisions** section: wait, ask the worker again, or reassign the
+   task. Send `CancelTask` only
    when the user picks reassign. The next leg from the worker moves the badge
    back to `working`.

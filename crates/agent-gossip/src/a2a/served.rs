@@ -2,6 +2,7 @@ use habilis_network::protocol::{AuthorKey, Channel};
 use habilis_network::util::consts;
 use serde_json::Value;
 
+use super::TaskId;
 use super::rpc_error::{A2aOp, RpcError, message_param, task_id_param};
 use crate::a2a::a2a_app::A2aApp;
 
@@ -49,33 +50,29 @@ pub(crate) fn classify(
     requester: &AuthorKey,
     app: &A2aApp,
 ) -> Served {
+    // Only a task's own peer may read it. A read is not harmless here: the
+    // response carries the id, counterparty, role and state of a task the
+    // caller may have no part in, and that id set is the handle every other
+    // task-plane attack needs. A cancel is held to the same rule.
+    let party_only: Box<dyn Fn(TaskId, A2aOp) -> Served + '_> = Box::new(|wanted, op| {
+        let owner: Option<&AuthorKey> = app.tasks.get(&wanted).map(|rec| &rec.peer_key);
+        let owner = owner.or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer_key));
+        let is_peer: bool = owner.is_some_and(|peer| peer == requester);
+        if is_peer {
+            Served::Op(op)
+        } else {
+            // Same shape whether the task is absent or someone else's, so the
+            // response cannot be used to probe which ids exist.
+            Served::Reject(RpcError::task_not_found(&wanted))
+        }
+    });
     match method {
         // `SubscribeToTask` returns the same snapshot as `GetTask`; the worker's
         // status/artifact frames already flood + heal to the task's parties (the
         // push plane IS the stream), so the caller keeps receiving the pushed
         // frames after the snapshot — connectionless, no held socket.
         "GetTask" | "SubscribeToTask" => match task_id_param(params) {
-            Ok(task_id) => {
-                // Only a task's own peer may read it. A read is not harmless here: the
-                // response carries the id, counterparty, role and state of a task the
-                // caller may have no part in, and that id set is the handle every other
-                // task-plane attack needs. `CancelTask` has always made this check; the
-                // reads did not, which left the reconnaissance step open.
-                let live = app.tasks.get(&task_id).map(|rec| &rec.peer_key);
-                let closed = || {
-                    app.closed_tasks
-                        .get(&task_id)
-                        .map(|closed| &closed.peer_key)
-                };
-                let owner: Option<&AuthorKey> = live.or_else(closed);
-                if owner.is_some_and(|peer| peer == requester) {
-                    Served::Op(A2aOp::GetTask { task_id })
-                } else {
-                    // Same shape whether the task is absent or someone else's, so the
-                    // response cannot be used to probe which ids exist.
-                    Served::Reject(RpcError::task_not_found(&task_id))
-                }
-            }
+            Ok(task_id) => party_only(task_id.clone(), A2aOp::GetTask { task_id }),
             Err(error) => Served::Reject(error),
         },
         // Scoped to the caller's own tasks — the local binding, whose caller
@@ -90,21 +87,7 @@ pub(crate) fn classify(
             channel: Channel::Meta,
         }),
         "CancelTask" => match task_id_param(params) {
-            Ok(task_id) => {
-                // Party check: only a task's own peer may cancel it, so the
-                // caller can't cancel work it isn't part of.
-                let is_party = app
-                    .tasks
-                    .get(&task_id)
-                    .is_some_and(|rec| rec.peer_key == *requester);
-                if is_party {
-                    Served::Op(A2aOp::CancelTask { task_id })
-                } else {
-                    Served::Reject(RpcError::invalid_params(
-                        "not permitted: cancel is only allowed by the task's peer",
-                    ))
-                }
-            }
+            Ok(task_id) => party_only(task_id.clone(), A2aOp::CancelTask { task_id }),
             Err(error) => Served::Reject(error),
         },
         // Streaming create: identical to SendMessage (open the task); the
@@ -202,6 +185,7 @@ mod tests {
                 peer: Some(&Nickname::from(peer)),
                 kind: Offer,
                 mine: false,
+                news: true,
             },
             std::time::Instant::now(),
         );

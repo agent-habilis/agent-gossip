@@ -1,8 +1,11 @@
 use std::time::Instant;
 
-use crate::{MSG_TIMEOUT, RPC_ATTEMPT, await_peer_card_cli, is_rpc_timeout, task_create_command};
+use crate::{
+    MSG_TIMEOUT, RPC_ATTEMPT, await_peer_card_cli, is_rpc_timeout, task_create_command, test_cmd,
+    unconfirmed_task_id,
+};
 
-/// Create a task on a **known** peer and return the worker-minted task id
+/// Create a task on a **known** peer and return its task id
 /// (parsed from the JSON-RPC response the call prints on stdout). Panics on
 /// failure.
 ///
@@ -35,13 +38,15 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
             .args(["--timeout-secs", &attempt_secs])
             .output()
             .expect("a2a call command failed to spawn");
-        if attempt.status.success() || Instant::now() >= deadline {
-            break attempt;
-        }
         let body: serde_json::Value =
             serde_json::from_slice(&attempt.stdout).unwrap_or(serde_json::Value::Null);
-        if !is_rpc_timeout(&body) {
+        if !is_rpc_timeout(&body) || Instant::now() >= deadline {
             break attempt;
+        }
+        // The task that the attempt left unconfirmed must not outlive the retry. The worker may
+        // not hold it, and then the cancel is refused, which is fine.
+        if let Some(task_id) = unconfirmed_task_id(&body) {
+            cancel_attempt(mesh, nickname, to, task_id);
         }
     };
     // stdout, not just stderr: a rejected JSON-RPC call reports itself in the
@@ -59,6 +64,15 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
         serde_json::from_str(stdout.trim()).expect("a2a call prints a JSON-RPC response");
     parsed["result"]["task"]["id"]
         .as_str()
-        .expect("the worker returned a Task id")
+        .expect("the call returned a Task id")
         .to_string()
+}
+
+/// Cancel the task that a call left unconfirmed, so that the call can be re-issued.
+fn cancel_attempt(mesh: &str, nickname: &str, to: &str, task_id: &str) {
+    let params = serde_json::json!({ "id": task_id }).to_string();
+    let _ = test_cmd()
+        .args(["a2a", "call", "--gossip", mesh, "--nickname", nickname])
+        .args(["--to", to, "--method", "CancelTask", "--params", &params])
+        .output();
 }

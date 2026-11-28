@@ -260,7 +260,9 @@ fn event_bytes(event: &OutputEvent) -> usize {
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::Receipt { .. } => 0,
     }
@@ -479,7 +481,9 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
     }
@@ -530,7 +534,9 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
     }
@@ -1118,6 +1124,7 @@ mod tests {
             message: Box::new(message.sign(&Identity::generate()).authored()),
             is_self: true,
             to_name: None,
+            quarter_moved: false,
         }
     }
 
@@ -1237,6 +1244,7 @@ mod tests {
                 message: Box::new(directed_frame(tag, "worker", "me")),
                 is_self: false,
                 to_name: None,
+                quarter_moved: false,
             });
         }
         assert_eq!(

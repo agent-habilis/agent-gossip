@@ -1,12 +1,10 @@
-use std::sync::atomic::AtomicU64;
-
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
-use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
+use super::extensions::{META_CHECKIN_AGE, META_SEQ, META_WAITING_USER};
 use super::frame_payload_error::FramePayloadError;
 use super::{
-    EXT_MESH_BROADCAST, META_BEAT, META_LABEL, Message, Part, Role, TaskArtifactUpdate, TaskId,
-    TaskState, TaskStatus, TaskStatusUpdate, wire,
+    EXT_MESH_BROADCAST, META_BEAT, META_LABEL, META_PROGRESS, Message, Part, Role,
+    TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
 /// Compose a broadcast chat payload.
@@ -274,30 +272,43 @@ pub fn status_update(mesh: &MeshId, params: StatusUpdateParams<'_>) -> TaskStatu
     }
 }
 
-/// The beat metadata for a keepalive status: the wire-static plumbing marker.
+/// The beat metadata for a keepalive/progress status: the wire-static
+/// plumbing marker plus the last progress, when there is one.
 #[must_use]
-pub fn beat_metadata() -> serde_json::Value {
-    serde_json::json!({ META_BEAT: true })
+pub fn beat_metadata(progress: Option<Progress>) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert(META_BEAT.to_string(), serde_json::Value::Bool(true));
+    if let Some(progress) = progress {
+        map.insert(META_PROGRESS.to_string(), progress.percent().into());
+    }
+    serde_json::Value::Object(map)
 }
 
-/// Whether the local agent of a worker is reading: the answer a beat carries so
-/// the initiator can tell a wedged agent from a live daemon without asking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a worker adds to a beat beyond the plumbing marker.
+#[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
-pub struct ReaderBeat {
-    /// `true` when the agent armed a long poll, so a new message wakes it.
-    pub bell: bool,
-    /// Seconds since the agent last polled.
-    pub last_poll_secs: u64,
+pub struct BeatExtras {
+    /// The last progress reported, replayed so a lost check-in costs nothing.
+    pub progress: Option<Progress>,
+    /// Seconds since the worker's agent last checked in on this task. The sender takes the
+    /// smaller of it and the silence it measured itself.
+    pub checkin_age_secs: Option<u64>,
+    /// The seq of the worker's last leg, so that the sender can tell a leg it never got. A beat
+    /// does not take a seq of its own.
+    pub seq: Option<u64>,
 }
 
-/// As [`beat_metadata`], plus the worker's [`ReaderBeat`] when it has polled.
+/// As [`beat_metadata`], plus the worker's check-in age and seq.
 #[must_use]
-pub fn beat_metadata_with_reader(reader: Option<ReaderBeat>) -> serde_json::Value {
-    let mut meta = beat_metadata();
-    if let (Some(reader), Some(map)) = (reader, meta.as_object_mut()) {
-        map.insert(META_BELL.to_string(), reader.bell.into());
-        map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
+pub fn beat_metadata_with_extras(extras: BeatExtras) -> serde_json::Value {
+    let mut meta = beat_metadata(extras.progress);
+    if let Some(map) = meta.as_object_mut() {
+        if let Some(age) = extras.checkin_age_secs {
+            map.insert(META_CHECKIN_AGE.to_string(), age.into());
+        }
+        if let Some(seq) = extras.seq {
+            map.insert(META_SEQ.to_string(), seq.into());
+        }
     }
     meta
 }
@@ -305,8 +316,13 @@ pub fn beat_metadata_with_reader(reader: Option<ReaderBeat>) -> serde_json::Valu
 /// Compose a task artifact update (the worker's result): one artifact whose
 /// parts carry the result text.
 #[must_use]
-pub fn artifact_update(mesh: &MeshId, task_id: &TaskId, text: &str) -> TaskArtifactUpdate {
-    artifact_update_parts(mesh, task_id, vec![Part::text(text)])
+pub fn artifact_update(
+    mesh: &MeshId,
+    task_id: &TaskId,
+    text: &str,
+    seq: u64,
+) -> TaskArtifactUpdate {
+    artifact_update_parts(mesh, task_id, vec![Part::text(text)], seq)
 }
 
 /// As [`artifact_update`] but carrying arbitrary parts — used when the result
@@ -316,6 +332,7 @@ pub fn artifact_update_parts(
     mesh: &MeshId,
     task_id: &TaskId,
     parts: impl IntoIterator<Item = Part>,
+    seq: u64,
 ) -> TaskArtifactUpdate {
     TaskArtifactUpdate {
         task_id: task_id.clone(),
@@ -330,8 +347,14 @@ pub fn artifact_update_parts(
         },
         append: None,
         last_chunk: Some(true),
-        metadata: None,
+        metadata: Some(serde_json::json!({ META_SEQ: seq })),
     }
+}
+
+/// The `mesh:seq` an artifact leg carries, when the peer sends one.
+#[must_use]
+pub fn artifact_seq(update: &TaskArtifactUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_SEQ)?.as_u64()
 }
 
 /// Parse + validate the status payload of a logical `A2aStatus` frame:
@@ -388,15 +411,19 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
     beat.and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
-/// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
-/// beat from a worker that never polled reads as unknown.
+/// Seconds since the worker agent last checked in, as its beat states them.
 #[must_use]
-pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
-    let meta = update.metadata.as_ref()?;
-    Some(ReaderBeat {
-        bell: meta.get(META_BELL)?.as_bool()?,
-        last_poll_secs: meta.get(META_LAST_POLL)?.as_u64()?,
-    })
+pub fn beat_checkin_age(update: &TaskStatusUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_CHECKIN_AGE)?.as_u64()
+}
+
+/// The progress a beat or a check-in carries, if any. A value outside 0 to 100 reads as none.
+#[must_use]
+pub fn leg_progress(update: &TaskStatusUpdate) -> Option<Progress> {
+    let percent = update.metadata.as_ref()?.get(META_PROGRESS)?.as_u64()?;
+    u8::try_from(percent)
+        .ok()
+        .and_then(|percent| Progress::try_from(percent).ok())
 }
 
 /// The initiator's one-line task label (`mesh:label`), when the brief carries one.
@@ -405,71 +432,180 @@ pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
 /// (a `\n` would forge a second row) are stripped and the length capped.
 #[must_use]
 pub fn task_label(message: &Message) -> Option<String> {
-    let label: &str = message.metadata.as_ref()?.get(META_LABEL)?.as_str()?;
-    let visible = label.chars().filter(|ch| !ch.is_control());
-    let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
-    let trimmed = raw.trim();
+    clean_label(message.metadata.as_ref()?.get(META_LABEL)?.as_str()?)
+}
+
+/// `raw` as a task label: control characters stripped, length capped, `None`
+/// when nothing is left.
+#[must_use]
+pub(crate) fn clean_label(raw: &str) -> Option<String> {
+    clean_text(raw, super::tuning::TASK_LABEL_MAX_CHARS)
+}
+
+/// `raw` without its control characters, trimmed and then capped at `max` characters, and `None`
+/// when nothing is left. The trim comes first, so a run of spaces in front cannot use up the cap
+/// and leave nothing.
+#[must_use]
+pub(crate) fn clean_text(raw: &str, max: usize) -> Option<String> {
+    let visible: String = raw.chars().filter(|ch| !ch.is_control()).collect();
+    let capped: String = visible.trim().chars().take(max).collect();
+    let trimmed = capped.trim_end();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// The metadata of a status leg: its order value, and the `mesh:waiting` reason
-/// when it has one. The counterpart of [`status_order`] and [`status_waiting`].
+/// The `mesh:waiting_user` metadata of a `working` status leg that waits on its user, and none
+/// for one that does not. The counterpart of [`status_waiting_user`].
 #[must_use]
-pub fn status_metadata(waiting: Option<&str>, order_ms: u64) -> serde_json::Value {
-    let mut meta = serde_json::json!({ META_ORDER_MS: order_ms });
-    if let Some(reason) = waiting {
-        meta[META_WAITING] = reason.into();
+#[cfg(test)]
+pub(crate) fn waiting_metadata(
+    // `true` while the worker waits on its own user.
+    waiting_user: bool,
+) -> Option<serde_json::Value> {
+    waiting_user.then(|| serde_json::json!({ META_WAITING_USER: true }))
+}
+
+/// The metadata of a status leg.
+///
+/// It holds the `mesh:seq` of the leg, `mesh:waiting_user` while the worker waits on its user, and
+/// the progress of a check-in as a percentage. The counterpart of [`status_seq`],
+/// [`status_waiting_user`] and [`leg_progress`].
+#[must_use]
+pub fn status_metadata(
+    // `true` while the worker waits on its own user.
+    waiting_user: bool,
+    progress: Option<Progress>,
+    seq: u64,
+) -> serde_json::Value {
+    let mut meta = serde_json::json!({ META_SEQ: seq });
+    if waiting_user {
+        meta[META_WAITING_USER] = true.into();
+    }
+    if let Some(progress) = progress {
+        meta[META_PROGRESS] = progress.percent().into();
     }
     meta
 }
 
-/// The order value of a status leg. Only the cancel that a daemon sends on its own has none.
+/// The `mesh:seq` a status leg carries, when the peer sends one.
 #[must_use]
-pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
-    update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
+pub fn status_seq(update: &TaskStatusUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_SEQ)?.as_u64()
 }
 
-/// The worker's clock now, in milliseconds: the order value of a status leg.
+/// Whether the status leg says the worker waits on its own user (`mesh:waiting_user`).
 #[must_use]
-pub fn leg_order_ms() -> u64 {
-    next_order_ms(wall_clock_ms(), &LAST_ORDER_MS)
+pub fn status_waiting_user(update: &TaskStatusUpdate) -> bool {
+    let flag = update
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get(META_WAITING_USER));
+    flag.and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
-/// The last order value this process handed out. The wall clock can step back,
-/// so the next value is kept above it; a restart resets it, and the clock then
-/// carries the order on.
-static LAST_ORDER_MS: AtomicU64 = AtomicU64::new(0);
-
-/// The order value for a leg sent at `now_ms`: the clock, unless that is not
-/// above the last value handed out, then one more than the last.
-fn next_order_ms(now_ms: u64, last: &AtomicU64) -> u64 {
-    use std::sync::atomic::Ordering::Relaxed;
-    let previous = last
-        .fetch_update(Relaxed, Relaxed, |last| {
-            Some(now_ms.max(last.saturating_add(1)))
-        })
-        .unwrap_or_default();
-    now_ms.max(previous.saturating_add(1))
+/// A text of a peer, as the agent reads it: cleaned, and capped with a note of whether the cap cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CappedText {
+    pub text: String,
+    /// Whether the cap cut the text.
+    pub truncated: bool,
 }
 
-fn wall_clock_ms() -> u64 {
-    let since_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
+/// `raw` without its control characters except the newline (a tab reads as a space), trimmed, and
+/// capped at `max` characters; `None` when nothing is left. The trim comes first, so a run of
+/// spaces in front cannot use up the cap.
+pub(crate) fn capped_text(raw: &str, max: usize) -> Option<CappedText> {
+    let spaced = raw.chars().map(|ch| if ch == '\t' { ' ' } else { ch });
+    let visible: String = spaced
+        .filter(|ch| !ch.is_control() || *ch == '\n')
+        .collect();
+    let mut chars = visible.trim().chars();
+    let kept: String = chars.by_ref().take(max).collect();
+    let truncated = chars.next().is_some();
+    let text = kept.trim_end();
+    (!text.is_empty()).then(|| CappedText {
+        text: text.to_owned(),
+        truncated,
+    })
 }
 
-/// The reason a worker gives for waiting on its own user (`mesh:waiting`), when the status leg carries one.
+/// The note of a status leg, the "what changed" line of a check-in.
 ///
-/// Peer-controlled text that `GetTask` echoes, so it
-/// gets the same control-character strip and length cap as [`task_label`].
+/// Peer-controlled text that `GetTask` and `task_progress` echo, so it gets the control-character
+/// strip and the length cap of [`capped_text`], the rule of the `checkin_due` reminder too.
 #[must_use]
-pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
-    let waiting: &str = update.metadata.as_ref()?.get(META_WAITING)?.as_str()?;
-    let visible = waiting.chars().filter(|ch| !ch.is_control());
-    let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+pub(crate) fn status_text(update: &TaskStatusUpdate) -> Option<CappedText> {
+    let message = update.status.message.as_ref()?;
+    capped_text(
+        &parts_text(&message.parts),
+        super::tuning::TASK_STATUS_TEXT_MAX_CHARS,
+    )
+}
+
+/// Whether `frame` is a `working` leg that breaks the check-in rule.
+///
+/// Such a leg is not a beat and lacks a text or a valid `mesh:progress`. The sender refuses to
+/// emit one, and the receiver refuses to take one in.
+#[must_use]
+pub fn is_incomplete_checkin(frame: &Frame) -> bool {
+    let Ok(payload) = status_payload(frame) else {
+        return false;
+    };
+    payload.status.state == TaskState::Working
+        && !is_beat(&payload)
+        && (status_text(&payload).is_none() || leg_progress(&payload).is_none())
+}
+
+/// A check-in's progress: a whole percentage, 0 to 100.
+///
+/// Built only by a checked parse, so every value is in range. It goes on the
+/// wire as the integer `mesh:progress`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct Progress(u8);
+
+impl Progress {
+    /// The percentage.
+    #[must_use]
+    pub fn percent(self) -> u8 {
+        self.0
+    }
+
+    /// The quarter of the work this progress is in, rounded down: 0 for 0-24,
+    /// 1 for 25-49, 2 for 50-74, 3 for 75-99 and 4 for 100. A sender shows one
+    /// glyph per quarter, so it wakes only when the quarter moves.
+    #[must_use]
+    pub fn quarter(self) -> u8 {
+        if self.0 >= 100 { 4 } else { self.0 / 25 }
+    }
+}
+
+impl TryFrom<u8> for Progress {
+    type Error = String;
+
+    fn try_from(percent: u8) -> Result<Self, Self::Error> {
+        if percent <= 100 {
+            Ok(Self(percent))
+        } else {
+            Err(format!("progress {percent} is not between 0 and 100"))
+        }
+    }
+}
+
+impl From<Progress> for u8 {
+    fn from(progress: Progress) -> Self {
+        progress.0
+    }
+}
+
+impl std::str::FromStr for Progress {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let percent: u8 = text
+            .parse()
+            .map_err(|_| format!("progress `{text}` is not a whole number from 0 to 100"))?;
+        Self::try_from(percent)
+    }
 }
 
 /// The task a **logical** frame belongs to, if any.
@@ -571,17 +707,15 @@ pub(crate) fn test_status_frame(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU64;
-
     use habilis_network::protocol::{MeshId, MessageId, MessageKind};
 
     use super::{
-        Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
-        msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
-        status_waiting,
+        BeatExtras, Frame, Progress, StatusUpdateParams, artifact_seq, artifact_update,
+        beat_metadata_with_extras, broadcast_payload, compose_broadcast, compose_msg, display_text,
+        leg_progress, msg_payload, payload_body, status_metadata, status_seq, status_update,
+        status_waiting_user, waiting_metadata,
     };
-    use crate::a2a::extensions::META_WAITING;
-    use crate::a2a::wire;
+    use crate::a2a::{META_PROGRESS, wire};
 
     fn mesh() -> MeshId {
         MeshId::from("test")
@@ -711,10 +845,10 @@ mod tests {
         );
     }
 
-    /// The producer (`status_metadata`, used by `a2a status --waiting`) and the
-    /// reader (`status_waiting`) agree, and a leg without a reason carries none.
+    /// The writer of a leg (`status_metadata`, which the emit path puts on every status leg) and
+    /// the reader (`status_waiting_user`) agree, and a leg that does not wait carries no flag.
     #[test]
-    fn waiting_reason_round_trips_through_a_status_update() {
+    fn waiting_flag_round_trips_through_a_status_update() {
         let task_id = crate::a2a::TaskId::random();
         let update = |metadata| {
             status_update(
@@ -727,20 +861,18 @@ mod tests {
                 },
             )
         };
-        assert_eq!(
-            status_waiting(&update(Some(status_metadata(Some("asks its user"), 1)))).as_deref(),
-            Some("asks its user"),
+        assert!(
+            status_waiting_user(&update(Some(status_metadata(true, None, 1)))),
             "the status payload is the one sent"
         );
-        assert_eq!(
-            status_waiting(&update(Some(status_metadata(None, 1)))),
-            None,
-            "a status without a waiting reason has none"
+        assert!(
+            !status_waiting_user(&update(Some(status_metadata(false, None, 2)))),
+            "a status that does not wait carries no flag"
         );
     }
 
-    /// A status leg carries its order value next to the reason, and the reader
-    /// still finds the reason. A leg without the order value reads as none.
+    /// A status leg carries its seq next to the flag, and the reader still finds the flag. A leg
+    /// from a peer without the seq reads as none.
     #[test]
     fn a_status_leg_carries_its_order_value_and_its_reason() {
         let task_id = crate::a2a::TaskId::random();
@@ -751,36 +883,153 @@ mod tests {
                     .with_metadata(metadata),
             )
         };
-        let leg = update(status_metadata(Some("asks its user"), 7));
-        assert_eq!(
-            status_order(&leg),
-            Some(7),
-            "the status order is the sequence number"
+        let leg = update(status_metadata(true, None, 7));
+        assert_eq!(status_seq(&leg), Some(7), "the status seq is the one given");
+        assert!(
+            status_waiting_user(&leg),
+            "the waiting flag is the one given"
         );
         assert_eq!(
-            status_waiting(&leg).as_deref(),
-            Some("asks its user"),
-            "the waiting reason is the one given"
-        );
-        assert_eq!(
-            status_order(&update(
-                serde_json::json!({ META_WAITING: "asks its user" })
+            status_seq(&update(
+                waiting_metadata(true).expect("the test metadata is valid")
             )),
             None,
             "the status payload carries its fields"
         );
     }
 
-    /// The wall clock can step back, so two legs of one worker must still get
-    /// rising order values: the later leg keeps the higher one.
+    /// A progress is a whole percentage from 0 to 100; anything else is a parse
+    /// error, and an out-of-range value never reaches the wire.
     #[test]
-    fn a_clock_step_back_keeps_the_order_value_rising() {
-        let last = AtomicU64::new(0);
-        let first = next_order_ms(2_000, &last);
-        let stepped_back = next_order_ms(1_500, &last);
+    fn a_progress_is_a_whole_percentage() {
+        for text in ["0", "55", "100"] {
+            let parsed: Result<Progress, String> = text.parse();
+            assert!(parsed.is_ok(), "{text} is inside the 0 to 100 range");
+        }
+        for text in ["101", "-1", "5.5", "50%", "", " 5", "fast"] {
+            let parsed: Result<Progress, String> = text.parse();
+            assert!(
+                parsed.is_err(),
+                "{text:?} is outside what a progress accepts"
+            );
+        }
+        assert_eq!(
+            status_metadata(false, Progress::try_from(100).ok(), 1)[META_PROGRESS],
+            100,
+            "a progress goes on the wire as a percentage"
+        );
         assert!(
-            stepped_back > first,
-            "a clock step back must not lower the order value: {stepped_back} <= {first}"
+            serde_json::from_str::<Progress>("101").is_err(),
+            "a progress above 100 does not deserialize"
+        );
+    }
+
+    /// A sender shows one glyph per quarter: 0-24, 25-49, 50-74, 75-99, then 100.
+    #[test]
+    fn a_progress_quarter_rounds_down() {
+        for (percent, quarter) in [
+            (0, 0),
+            (24, 0),
+            (25, 1),
+            (49, 1),
+            (50, 2),
+            (74, 2),
+            (75, 3),
+            (99, 3),
+            (100, 4),
+        ] {
+            let progress = Progress::try_from(percent).expect("the test passes a valid percentage");
+            assert_eq!(
+                progress.quarter(),
+                quarter,
+                "quarters round down from {percent}%"
+            );
+        }
+    }
+
+    /// Only a whole percentage in `mesh:progress` counts: a value out of range, another type or
+    /// the retired `mesh:done`/`mesh:total` pair reads as no progress.
+    #[test]
+    fn a_leg_carries_its_progress_as_one_percentage() {
+        let update = |metadata: serde_json::Value| {
+            status_update(
+                &mesh(),
+                StatusUpdateParams::new(
+                    &crate::a2a::TaskId::random(),
+                    crate::a2a::TaskState::Working,
+                )
+                .with_metadata(metadata),
+            )
+        };
+        assert_eq!(
+            leg_progress(&update(serde_json::json!({ META_PROGRESS: 40 }))),
+            Progress::try_from(40).ok(),
+            "a whole percentage in range is the wire shape of progress"
+        );
+        for metadata in [
+            serde_json::json!({ META_PROGRESS: 101 }),
+            serde_json::json!({ META_PROGRESS: -1 }),
+            serde_json::json!({ META_PROGRESS: "40" }),
+            serde_json::json!({ "mesh:done": 40, "mesh:total": 100 }),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(
+                leg_progress(&update(metadata.clone())),
+                None,
+                "{metadata} does not read as a percentage"
+            );
+        }
+    }
+    /// A beat of the worker repeats the seq of its last leg and takes none of its own; a beat of
+    /// the sender has none.
+    #[test]
+    fn a_beat_carries_the_seq_of_the_last_leg_only_when_given() {
+        let with = beat_metadata_with_extras(BeatExtras {
+            seq: Some(4),
+            ..BeatExtras::default()
+        });
+        assert_eq!(
+            with["mesh:seq"], 4,
+            "the worker's beat repeats its last seq"
+        );
+        let without = beat_metadata_with_extras(BeatExtras::default());
+        assert!(
+            without.get("mesh:seq").is_none(),
+            "the sender's beat has no seq"
+        );
+    }
+
+    /// An artifact leg carries the seq it was built with.
+    #[test]
+    fn an_artifact_leg_carries_its_seq() {
+        let task_id = crate::a2a::TaskId::random();
+        let leg = artifact_update(&mesh(), &task_id, "the result", 6);
+        assert_eq!(
+            artifact_seq(&leg),
+            Some(6),
+            "the artifact reads back its seq"
+        );
+    }
+
+    /// A note is trimmed before it is capped, so a run of spaces in front cannot use up the cap
+    /// and leave nothing; control characters go, and a note of nothing else is none.
+    #[test]
+    fn a_note_is_trimmed_before_it_is_capped() {
+        let padded = format!("{}text", " ".repeat(10));
+        assert_eq!(
+            super::clean_text(&padded, 4).as_deref(),
+            Some("text"),
+            "the cap counts the text, not the spaces in front of it"
+        );
+        assert_eq!(
+            super::clean_text("ab\u{7}cd", 3).as_deref(),
+            Some("abc"),
+            "a control character is not a character of the note"
+        );
+        assert_eq!(
+            super::clean_text("\u{7} \u{1b}", 9),
+            None,
+            "nothing is left"
         );
     }
 }

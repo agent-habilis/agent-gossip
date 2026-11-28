@@ -13,19 +13,29 @@ pub const EXT_MESH_SEAL: &str = "https://agent-habilis.dev/a2a/ext/mesh-seal/v1"
 
 /// Metadata key set to `true` on a keepalive status; marks it as plumbing, not a state change.
 pub const META_BEAT: &str = "mesh:beat";
+/// Metadata key for the progress of a check-in or a beat: a whole percentage, 0 to 100.
+pub const META_PROGRESS: &str = "mesh:progress";
 /// Metadata key for the free-text reason that goes with a status update.
 pub const META_REASON: &str = "mesh:reason";
 /// The initiator's one-line name for a task, so both parties label it
 /// identically. Absent on a brief from a peer that does not set it.
 pub const META_LABEL: &str = "mesh:label";
-/// A worker beat's answer to "is my agent reading": whether a bell is armed.
-/// Absent on a beat from a worker that never polled.
-pub(super) const META_BELL: &str = "mesh:bell";
-/// Seconds since the worker agent last polled. Sent with [`META_BELL`].
-pub(super) const META_LAST_POLL: &str = "mesh:last_poll";
-/// Why a working task waits on its worker's own user. Rides a `working`
-/// status; the next status leg clears it.
-pub(super) const META_WAITING: &str = "mesh:waiting";
-/// When the worker sent a status leg, in milliseconds on its clock. Tells two
-/// legs of one wire second apart, and a replay apart from a newer leg.
-pub(super) const META_ORDER_MS: &str = "mesh:order_ms";
+/// Set to `true` on a check-in while the worker waits on its own user. The next status leg
+/// clears it, and a leg that leaves it out says the worker does not wait.
+pub(super) const META_WAITING_USER: &str = "mesh:waiting_user";
+/// Set to `true` on the `Task` that answers an opening whose reply did not come before the
+/// deadline: the task exists on this node, and nothing says that the worker got it yet.
+pub(super) const META_UNCONFIRMED: &str = "mesh:unconfirmed";
+/// The place of a leg in the sequence of its sender, per task: the initiator's opening is 1 and
+/// each follow-up one more, and the worker numbers its status and artifact legs the same way. The
+/// daemon stamps it. A beat of the worker carries the seq of its last leg and does not count; a
+/// beat of the initiator has none. A leg whose seq is not above the highest that the receiver took
+/// in is dropped whole.
+pub(super) const META_SEQ: &str = "mesh:seq";
+/// Seconds since the worker agent last checked in on a task, on a worker beat.
+/// The sender takes the smaller of it and the silence it measured itself.
+pub(super) const META_CHECKIN_AGE: &str = "mesh:checkin_age";
+/// What changed, from the last check-in of a task, in `GetTask` and `ListTasks`.
+pub(super) const META_STATUS_TEXT: &str = "mesh:status_text";
+/// Present and true when the cap cut `mesh:status_text`.
+pub(super) const META_STATUS_TRUNCATED: &str = "mesh:status_truncated";

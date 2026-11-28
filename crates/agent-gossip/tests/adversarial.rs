@@ -20,6 +20,7 @@
 
 use std::time::{Duration, Instant};
 
+use agent_gossip::a2a::status_update_params::Progress;
 use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
 use agent_gossip::harness::test_key::{self, CraftedMsg, SliceParams};
 use agent_gossip::{Channel, OutputEvent};
@@ -466,6 +467,120 @@ async fn status_task_id_mismatch_is_dropped() {
     attacker.leave().await;
 }
 
+/// A `working` leg is a check-in, and a check-in with no text and no progress breaks the rule that
+/// binds the sender too. A crafted client can still put one on the wire: the receiver drops it
+/// before it reaches the task machine or the surface.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_working_leg_with_no_text_or_progress_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("incomplete-checkin").await;
+    attacker.await_peer_card(&victim.nickname).await;
+    let seal_key = seal_key_of_peer(&attacker, &victim).await;
+    let key = test_key::new_key();
+    let victim_key: AuthorKey = victim.key_seen_by(&attacker).await;
+    let crafted = CraftedMsg::sealed_task_status(
+        attacker.session.mesh_id(),
+        test_key::SealedTaskStatusParams::new(
+            "wire-thistle",
+            victim_key,
+            "550e8400-e29b-41d4-a716-446655440000",
+            seal_key,
+        )
+        .with_state(TaskState::Working),
+    );
+    let evil = crafted.sign(&key).bytes();
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    attacker.broadcast("barrier-incomplete").await;
+    assert!(
+        victim.wait_body("barrier-incomplete", MSG_TIMEOUT).await,
+        "barrier lost"
+    );
+    let surfaced_leg = victim
+        .events()
+        .iter()
+        .any(|event| matches!(event, OutputEvent::Task { .. }));
+    assert!(
+        !surfaced_leg,
+        "a working leg with no text and no progress must not reach the surface"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// A question of the worker that the overlay loses is repaired by the beat that follows: the beat
+/// repeats the seq of the last leg of the worker, which is above the one that the sender took in,
+/// so the sender asks the worker for its task, and the snapshot says that the task waits on an
+/// answer. The sender hears of it as a `task_gap` that carries the question.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_beat_repairs_a_question_that_the_overlay_lost() {
+    let mut initiator = InProcNode::create("adv-gap").await;
+    let mut worker = InProcNode::join(&initiator.mesh, "adv-gap-wrk").await;
+    common::warm_up(&initiator, &mut [&mut worker]).await;
+    let created = initiator.create_task(&worker.nickname, "the brief").await;
+    let task_id: TaskId = created["result"]["task"]["id"]
+        .as_str()
+        .expect("a created task always reports its id in the JSON-RPC result")
+        .parse()
+        .expect("task id parses");
+    assert!(
+        worker.wait_task_message(MSG_TIMEOUT).await,
+        "worker never received the brief"
+    );
+    worker
+        .task_checkin(
+            &task_id,
+            "on it",
+            Progress::try_from(10).expect("10 is a percentage"),
+        )
+        .await;
+    assert!(
+        initiator
+            .wait_task_state(TaskState::Working, MSG_TIMEOUT)
+            .await,
+        "initiator never saw the task accepted"
+    );
+
+    // The overlay loses the next leg of the worker, which is the question.
+    initiator
+        .session
+        .drop_task_legs(1)
+        .await
+        .expect("the initiator session stays connected to the mesh for the whole test");
+    worker
+        .task_state(&task_id, TaskState::InputRequired, "which port?")
+        .await;
+
+    // The beat of the worker comes within one keepalive and says that a leg went missing.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let gap = loop {
+        let raised = initiator
+            .events()
+            .iter()
+            .find(|event| matches!(event, OutputEvent::TaskGap { .. }));
+        if let Some(OutputEvent::TaskGap { notice }) = raised {
+            break notice.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no beat repaired the lost question: {:#?}",
+            initiator.events()
+        );
+        tokio::time::sleep(POLL).await;
+    };
+    assert_eq!(
+        gap.text.as_deref(),
+        Some("which port?"),
+        "the gap carries the question that was lost"
+    );
+    assert_eq!(gap.task_id, task_id, "and names its task");
+
+    initiator.leave().await;
+    worker.leave().await;
+}
+
 // ── Chat addressing: the privacy boundary between the two chat tags ────
 //
 // Each chat tag is pinned to one addressing, and the pinning is what keeps a
@@ -683,7 +798,13 @@ async fn a_bystanders_task_status_is_dropped() {
         "worker never received the brief"
     );
     let tid: TaskId = task_id.parse().expect("task id parses");
-    worker.task_status(&tid, TaskState::Working, None).await;
+    worker
+        .task_checkin(
+            &tid,
+            "on it",
+            Progress::try_from(50).expect("50 is a percentage"),
+        )
+        .await;
     assert!(
         initiator
             .wait_task_state(TaskState::Working, MSG_TIMEOUT)

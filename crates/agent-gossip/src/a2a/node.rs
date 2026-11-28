@@ -6,13 +6,15 @@ use habilis_network::embed::{
 };
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
-    AppTag, AuthorKey, DedupKey, Message, MessageBody, MessageKind, Nickname,
+    AppTag, AuthorKey, DedupKey, Message, MessageBody, MessageKind, Nickname, UnixSecs,
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
+use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder};
+use crate::a2a::extensions::META_SEQ;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
 use crate::a2a::rpc_error::{A2aOp, A2aRequest, RpcError};
@@ -54,6 +56,7 @@ impl NodeApp for A2aApp {
             return false;
         }
         let routed = route_content(message, surfaceable, self, context);
+        answer_beats(self, state, context).await;
         if routed.fresh_for_us {
             let receipt = Receipt {
                 ref_id: message.id.as_str().to_owned(),
@@ -71,12 +74,7 @@ impl NodeApp for A2aApp {
         _state: &mut EventLoopState,
         _ctx: &HandlerCtx<'_>,
     ) {
-        // Clone the render sink into a local so it doesn't alias the `&mut
-        // self` passed alongside it. Tasks first, then waiters: a waiter must
-        // never resolve while its task record is still live.
-        let out = self.output.clone();
-        task_record::fail_tasks_for_departed_peer(&mut self.tasks, key, &out);
-        self.fail_a2a_waiters_for_peer((key, nickname));
+        self.peer_left((key, nickname));
     }
 }
 
@@ -106,6 +104,7 @@ impl NodeDriver for A2aApp {
         broadcast_params::retain_sent_legs(self, state);
         task_record::tick_task_sweep(state, self, context, &out).await;
         task_record::tick_task_keepalive(state, self, context).await;
+        task_record::tick_checkins(self);
         // Chase down any stalled big (unlogged) shard groups: ask their authors
         // to re-send the missing shards from their sender-side cache.
         broadcast_params::send_shard_repair_requests(
@@ -224,26 +223,6 @@ impl NodeDriver for A2aApp {
     }
 }
 
-/// A peer's `working` with no text on a task already `working` changes nothing
-/// the agent can act on, and each one would wake the initiator's bell, so it is
-/// kept off the surface like a beat. It still reaches the state machine, which
-/// counts it as the peer's activity. A leg that sets or clears the waiting
-/// reason (`prior_waiting` is the record's current one) is news and surfaces.
-fn is_empty_working_repeat(
-    prior: Option<super::TaskState>,
-    prior_waiting: Option<&str>,
-    message: &Authored,
-) -> bool {
-    use super::TaskState;
-    prior == Some(TaskState::Working)
-        && status_update_params::status_payload(message).is_ok_and(|payload| {
-            !status_update_params::is_beat(&payload)
-                && payload.status.state == TaskState::Working
-                && status_update_params::status_waiting(&payload).as_deref() == prior_waiting
-        })
-        && status_update_params::task_text(message).trim().is_empty()
-}
-
 /// Whether the local agent is reading: `(bell armed, seconds since its last
 /// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
 pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, Option<u64>) {
@@ -265,19 +244,59 @@ pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, 
 /// The agent's own task echoes are quiet for the same reason: it already holds
 /// the id of every leg it sent, and an echo landing right after a re-arm rang
 /// the bell for nothing and made the Stop hook refuse the turn.
+///
+/// A peer's routine check-in (a `working` status) is data, not news: it goes on
+/// the ring without a wake, like a receipt, and the sender's skill updates its
+/// badge on the next batch. It wakes only when its progress moves into another
+/// quarter, so the sender's row can show the move. An alarm that says the worker
+/// waits on its user is shown but does not wake either, since there is nothing
+/// to do.
 pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
     use emission::OutputEvent;
     if is_self_task_echo(event) {
         return false;
     }
-    emission::simple_event::is_visible(event)
-        || matches!(
-            event,
-            OutputEvent::Task { .. }
-                | OutputEvent::TaskMessage { .. }
-                | OutputEvent::TaskTimeout { .. }
-                | OutputEvent::TaskStalled { .. }
-        )
+    match event {
+        OutputEvent::TaskOverdue { notice } => !notice.waiting_user,
+        // A beat is plumbing: it never wakes, whatever else the filter of the poll does.
+        OutputEvent::Task { message, .. } if is_beat_frame(message) => false,
+        OutputEvent::Task {
+            message,
+            quarter_moved,
+            ..
+        } if is_working_checkin(message) => *quarter_moved,
+        OutputEvent::Task { .. }
+        | OutputEvent::TaskMessage { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. } => true,
+        OutputEvent::Message { .. }
+        | OutputEvent::Presence { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Receipt { .. }
+        | OutputEvent::StateChanged { .. }
+        | OutputEvent::EventsLost { .. }
+        | OutputEvent::NicknameHeld { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::Ready { .. } => emission::simple_event::is_visible(event),
+    }
+}
+
+/// Whether `message` is a status beat.
+fn is_beat_frame(message: &Authored) -> bool {
+    status_update_params::status_payload(message)
+        .is_ok_and(|payload| status_update_params::is_beat(&payload))
+}
+
+/// A `working` status that is not a beat: a check-in, or the accept leg.
+fn is_working_checkin(message: &Authored) -> bool {
+    status_update_params::status_payload(message).is_ok_and(|payload| {
+        !status_update_params::is_beat(&payload)
+            && payload.status.state == super::TaskState::Working
+    })
 }
 
 fn is_self_task_echo(event: &emission::OutputEvent) -> bool {
@@ -305,7 +324,9 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
@@ -476,6 +497,40 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
     });
 }
 
+/// Do what the beat of the frame just handled calls for. A beat of a worker that shows a leg that
+/// never arrived makes this node ask the worker for its task, and a beat of a peer that is still at
+/// work on a task that this node ended makes it send the end again. Everything else is plumbing.
+async fn answer_beats(app: &mut A2aApp, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+    for (task_id, peer_key) in app.take_to_ask() {
+        let (reply_tx, mut reply_rx) = oneshot::channel();
+        broadcast_params::broadcast_a2a_call(
+            broadcast_params::BroadcastA2aCallParams {
+                mesh: context.mesh,
+                author: context.author,
+                peer: rpc_error::PeerRef::Key(peer_key),
+                method: "GetTask",
+                params: serde_json::json!({ "id": task_id.as_str() }),
+                timeout: Duration::from_secs(tuning::CALL_TIMEOUT_SECS),
+                responder: A2aResponder::Typed(reply_tx),
+                file: None,
+            },
+            state,
+            app,
+            context.sender,
+        )
+        .await;
+        // An answer already here is a refusal of the call itself (no such peer, no room for the
+        // waiter): the ask never left, so the next beat that shows the leg asks again. A reply
+        // that is late or lost lapses on its own after one call timeout.
+        if reply_rx.try_recv().is_ok() {
+            task_record::forget_ask(&mut app.tasks, &task_id);
+        }
+    }
+    if app.owes_ends() {
+        task_record::send_owed_ends(state, app, context).await;
+    }
+}
+
 /// Process an inbound task leg (a task-related `a2a_status` or `a2a_artifact`)
 /// addressed to us: advance the coarse state machine, then surface it via the
 /// lifecycle layer. The caller checks the addressee — a third-party relay
@@ -486,8 +541,14 @@ fn handle_task_leg(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) -> Routed {
+    #[cfg(feature = "adversarial")]
+    if app.legs_to_drop > 0 && !is_beat_frame(message) {
+        app.legs_to_drop -= 1;
+        return Routed::default();
+    }
     let mut surface = surfaceable;
     let mut replay = false;
+    let mut quarter_moved = false;
     // The receiver's body is already unsealed here, so the task id parses out of it.
     if let Some(task_id) = status_update_params::frame_task_id(message) {
         // …and being the addressee is not enough: the leg must come from the
@@ -503,43 +564,56 @@ fn handle_task_leg(
         {
             return Routed::default();
         }
-        let prior = app.tasks.get(&task_id).map(|rec| rec.state);
-        let prior_waiting = app
-            .tasks
-            .get(&task_id)
-            .and_then(|rec| rec.waiting.as_deref());
-        surface &= !is_empty_working_repeat(prior, prior_waiting, message);
-        if task_record::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
+        // A check-in with no text or no progress breaks the rule that binds the sender too, so it
+        // is neither ingested nor surfaced and moves no clock.
+        if status_update_params::is_incomplete_checkin(message) {
+            tracing::debug!(
+                target: "agent_gossip::a2a",
+                %task_id,
+                author = %message.author,
+                "a working leg with no text or no progress was dropped"
+            );
+            return Routed::default();
+        }
+        let known = app.tasks.contains_key(&task_id);
+        let applied = task_record::apply_leg(
+            &mut app.tasks,
+            &app.closed_tasks,
+            task_record::Leg {
+                task_id: &task_id,
+                peer_key: &message.key(),
+                peer: Some(&message.author),
+                source: task_record::LegSource::Frame(message),
+                mine: false,
+                now: Instant::now(),
+            },
+        );
+        replay = !applied.news;
+        quarter_moved = applied.quarter_moved;
+        let peer_key = message.key();
+        match applied.beat {
+            Some(task_record::BeatAction::Ask) => app.ask_for_task(&task_id, &peer_key),
+            Some(task_record::BeatAction::Resend) => app.owe_end(&task_id, &peer_key),
+            None => {}
+        }
+        if replay {
+            let reason = if known {
+                "replayed task leg kept off the surface"
+            } else {
+                "task leg for a task with no record kept off the surface"
+            };
             tracing::info!(
                 target: "agent_gossip::a2a",
                 %task_id,
                 leg = %message.id,
                 author = %message.author,
-                "replayed task leg kept off the surface"
+                "{reason}"
             );
             surface = false;
-            replay = true;
-        }
-        let now = Instant::now();
-        let reader = task_record::ingest(
-            &mut app.tasks,
-            task_record::IngestLegParams {
-                frame: message,
-                task_id: &task_id,
-                mine: false,
-                now,
-            },
-        );
-        if let Some(reader) = reader
-            && let Some(notice) = task_record::stall_notice(&mut app.tasks, &task_id, reader, now)
-        {
-            app.output.task_stalled(&notice);
-        }
-        if surface {
-            task_record::note_surfaced(&mut app.tasks, &task_id, message);
         }
     }
-    let loggable = handle_task(&app.output, message, surface, context.author);
+    let shown = surface.then_some(emission::TaskOrigin::Peer { quarter_moved });
+    let loggable = handle_task(&app.output, message, shown, context.author);
     // A beat is liveness plumbing and never logged, so it earns no receipt.
     Routed {
         loggable,
@@ -605,16 +679,16 @@ fn handle_msg(
 
 /// A task leg addressed to us: surfaced, and logged if it is a content leg.
 /// The sender surfaces its own copy via its echo path. Returns whether to
-/// **log**. `surfaceable` gates only the *display* (join-horizon), never the
+/// **log**. `shown` is `None` before the join horizon: it gates only the *display*, never the
 /// relay/log.
 fn handle_task(
     out: &emission::Output,
     message: &Authored,
-    surfaceable: bool,
+    shown: Option<emission::TaskOrigin>,
     self_name: &Nickname,
 ) -> bool {
-    if surfaceable {
-        out.print_task(message, false, Some(self_name));
+    if let Some(origin) = shown {
+        out.print_task(message, Some(self_name), origin);
     }
     // Content legs log; a liveness beat (a status marked `mesh:beat`) is
     // plumbing — surfaced as a `task_progress` widget event but never retained.
@@ -656,20 +730,9 @@ async fn handle_a2a_rpc(
     } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.key()) {
         // Only act on a response to a call WE actually issued (a matching
         // outstanding waiter). An unsolicited response is ignored — otherwise
-        // any member could inject phantom initiator-side task records by forging
-        // responses. The waiter adopts the authoritative `Task` a `SendMessage`
-        // returned.
-        app.fulfill_a2a_waiter(
-            corr,
-            (&message.key(), &message.author),
-            message.body.as_str(),
-        );
-        // No test drives this call: the event-loop types have no test constructor. The decision
-        // itself, `late_cancels_full`, has a test at 10 times the cap. If this line goes, the
-        // owed cancels wait for the next task sweep and the list can pass its cap.
-        if app.late_cancels_full() {
-            task_record::send_late_cancels(state, app, context).await;
-        }
+        // any member could move initiator-side task records by forging responses. The waiter
+        // reconciles the authoritative `Task` a reply returned.
+        app.fulfill_a2a_waiter(corr, &message.key(), message.body.as_str());
     }
 }
 
@@ -703,7 +766,12 @@ async fn handle_a2a_req(
                 match served::classify(method, &envelope["params"], &requester_key, app) {
                     Served::Op(op) => rpc_error::handle_op(op, app, state, context).await,
                     Served::Ingest(payload) => {
-                        ingest_remote_message(&payload, (&requester_key, &requester), app, context)
+                        let remote = RemoteRequest {
+                            key: &requester_key,
+                            name: &requester,
+                            sent_at: message.timestamp,
+                        };
+                        ingest_remote_message(&payload, &remote, app, context)
                     }
                     Served::ShardRepair { group, missing } => {
                         // The ask has no reply: the requester parks no waiter and asks again on
@@ -826,7 +894,7 @@ async fn resend_cached_shards(
 }
 
 /// Refusal for an offer the registry has no room for, or `None` to admit.
-fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError> {
+pub(crate) fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError> {
     use crate::a2a::task_record::Admission;
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     // A2A has no "too many tasks" error, so this is an application code in the
@@ -848,71 +916,166 @@ fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError>
     }
 }
 
-/// A `message/send` directed at us over gossip-RPC — we are the task's A2A
-/// **server** (the worker). A message with no `taskId` opens a new task (we
-/// mint the id); one with a `taskId` is a follow-up. Either way we advance our
-/// coarse machine, surface the message to our skill, and return the
-/// authoritative `Task`.
-fn ingest_remote_message(
+/// Who sent a `message/send` over RPC, and when the frame that carried it was sent.
+#[derive(Clone, Copy)]
+struct RemoteRequest<'caller> {
+    key: &'caller AuthorKey,
+    name: &'caller Nickname,
+    sent_at: UnixSecs,
+}
+
+/// The task, whether the leg is new and the label of the brief, as [`apply_remote_leg`] applied it.
+#[derive(Debug)]
+struct RemoteLeg {
+    task_id: crate::a2a::TaskId,
+    news: bool,
+    label: Option<String>,
+    /// Whether the message opens the task.
+    brief: bool,
+}
+
+/// The `mesh:seq` the initiator stamped on a message: 1 on the opening, then one more on each
+/// follow-up. `None` when it is missing or not a positive integer.
+fn message_seq(payload: &crate::a2a::Message) -> Option<u64> {
+    let seq = payload.metadata.as_ref()?.get(META_SEQ)?.as_u64()?;
+    (seq >= 1).then_some(seq)
+}
+
+/// Check that `requester` may drive the task a `message/send` names, and apply the leg to the
+/// registry. The initiator minted the id and stamped `mesh:seq`: seq 1 opens the task, a later
+/// seq is a follow-up that restarts the check-in clock. A relay can replay either, and only the
+/// first copy moves the clock.
+///
+/// A task id that we do not hold, or that another peer holds, answers the same way, so the reply
+/// does not say which ids exist.
+///
+/// # Errors
+/// A message with no `taskId` or `mesh:seq`, a follow-up for a task that is not ours to serve, a
+/// stale opening, or an opening over quota.
+fn apply_remote_leg(
     payload: &crate::a2a::Message,
-    (requester_key, requester): (&AuthorKey, &Nickname),
+    request: &RemoteRequest<'_>,
     app: &mut A2aApp,
-    context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
-    use crate::a2a::task_record::{LegInfo, LegKind};
-    let now = Instant::now();
-    let (task_id, kind) = match &payload.task_id {
-        Some(task_id) => (task_id.clone(), LegKind::Text),
-        None => (crate::a2a::TaskId::random(), LegKind::Offer),
+    now: Instant,
+) -> Result<RemoteLeg, RpcError> {
+    use crate::a2a::task_record::LegKind;
+    let RemoteRequest {
+        key: requester_key,
+        name: requester,
+        sent_at,
+    } = *request;
+    let (Some(task_id), Some(seq)) = (payload.task_id.clone(), message_seq(payload)) else {
+        return Err(RpcError::invalid_params(
+            "SendMessage needs a taskId and a mesh:seq from 1",
+        ));
     };
-    // A follow-up (taskId set) may only be driven by the task's own party. The
-    // requester is signature-verified, but signature ≠ party: without this check
-    // any mesh member could drive and read a task they are not part of.
-    if kind == LegKind::Text {
-        match app.tasks.get(&task_id) {
-            None => {
+    let unknown =
+        || RpcError::invalid_params("SendMessage names a taskId with no task on this peer");
+    let live: Option<AuthorKey> = app.tasks.get(&task_id).map(|rec| rec.peer_key);
+    let closed: Option<AuthorKey> = app.closed_tasks.get(&task_id).map(|gone| gone.peer_key);
+    let holder = live.or(closed);
+    let kind = match (holder, seq) {
+        // The requester is signature-verified, but signature ≠ party: without this check any mesh
+        // member could drive and read a task they are not part of.
+        (Some(holder), _) if holder != *requester_key => return Err(unknown()),
+        // The task of a peer that holds it as the initiator is not ours to serve: only the
+        // initiator sends messages into a task, so this requester drives a task that it serves
+        // itself, and that must not move our counters.
+        (Some(_), _)
+            if app
+                .tasks
+                .get(&task_id)
+                .is_some_and(|rec| rec.role != task_record::TaskRole::Receiver) =>
+        {
+            return Err(unknown());
+        }
+        // The opening again: the caller gets the snapshot and nothing else happens.
+        (Some(_), 1) => {
+            return Ok(RemoteLeg {
+                task_id,
+                news: false,
+                label: None,
+                brief: true,
+            });
+        }
+        (Some(_), _) if app.tasks.contains_key(&task_id) => LegKind::Text,
+        (Some(_) | None, _) if seq > 1 => return Err(unknown()),
+        (Some(_) | None, _) => {
+            // The opening is the one registry entry a remote peer mints directly. Refusing over
+            // the quota keeps `app.tasks` bounded and, just as importantly, keeps the sweep's
+            // per-expiry work bounded: it awaits a sealed unicast per expired task while holding
+            // the event loop, so an unbounded registry is a stall as well as a leak.
+            if task_record::clock_skew(sent_at).is_some() {
                 return Err(RpcError::invalid_params(
-                    "SendMessage names a taskId with no task on this peer",
+                    "the opening is older than the task timeout (or the clocks differ)",
                 ));
             }
-            Some(rec) if rec.peer_key != *requester_key => {
-                return Err(RpcError {
-                    code: -32003,
-                    message: "not a party to the task named by taskId".to_string(),
-                });
+            if let Some(error) = task_admission_error(app, requester_key) {
+                return Err(error);
             }
-            Some(_) => {}
+            LegKind::Offer
         }
-    } else if let Some(error) = task_admission_error(app, requester_key) {
-        // An offer (no taskId) is the one registry entry a remote peer mints
-        // directly. Refusing over the quota keeps `app.tasks` bounded and,
-        // just as importantly, keeps the sweep's per-expiry work bounded: it
-        // awaits a sealed unicast per expired task while holding the event
-        // loop, so an unbounded registry is a stall as well as a leak.
-        return Err(error);
-    }
-    task_record::apply(
+    };
+    let label = status_update_params::task_label(payload);
+    let applied = task_record::apply_leg(
         &mut app.tasks,
-        &LegInfo {
+        &app.closed_tasks,
+        task_record::Leg {
             task_id: &task_id,
             peer_key: requester_key,
             peer: Some(requester),
-            kind,
+            source: task_record::LegSource::Message {
+                seq,
+                opens_task: kind == LegKind::Offer,
+            },
             mine: false,
+            now,
         },
-        now,
     );
-    // Surface the incoming message to our skill (a `task` event, kind:message).
-    let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
+    if kind == LegKind::Offer
+        && let Some(rec) = app.tasks.get_mut(&task_id)
+    {
+        rec.label.clone_from(&label);
+    }
+    let news = applied.news;
+    Ok(RemoteLeg {
+        task_id,
+        news,
+        label,
+        brief: kind == LegKind::Offer,
+    })
+}
+
+/// An incoming task message, as the skill is told about it.
+#[derive(Clone, Copy)]
+struct RemoteMessage<'caller> {
+    payload: &'caller crate::a2a::Message,
+    requester: (&'caller AuthorKey, &'caller Nickname),
+    task_id: &'caller crate::a2a::TaskId,
+    label: Option<&'caller str>,
+    /// Whether the message opens the task.
+    brief: bool,
+}
+
+/// Surface an incoming task message to our skill (a `task` event, kind:message), and keep it for
+/// the worker's reminder.
+fn surface_remote_message(app: &mut A2aApp, remote: &RemoteMessage<'_>, context: &HandlerCtx<'_>) {
+    let RemoteMessage {
+        payload,
+        requester: (requester_key, requester),
+        task_id,
+        label,
+        brief,
+    } = *remote;
+    let rec_state = app.tasks.get(task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
-    let label = status_update_params::task_label(payload);
     let id = payload.message_id.as_str().to_owned();
     let mesh = context.mesh.as_str().to_owned();
     let author = requester.as_str().to_owned();
     let peer = context.author.as_str().to_owned();
     app.output.task_message(emission::OutputEvent::TaskMessage {
         id,
-        ts: habilis_network::protocol::UnixSecs::now(),
+        ts: UnixSecs::now(),
         mesh,
         author,
         author_key: *requester_key,
@@ -920,29 +1083,67 @@ fn ingest_remote_message(
         task_id: task_id.as_str().to_owned(),
         state: rec_state,
         text,
-        label,
+        label: label.map(str::to_owned),
         message: Some(Box::new(payload.clone())),
         is_self: false,
     });
+    // The reminder repeats an unanswered brief or follow-up. A brief counts too: a worker that
+    // never saw it still owes the task a check-in.
+    if let Some(rec) = app.tasks.get_mut(task_id)
+        && rec.role == task_record::TaskRole::Receiver
+    {
+        rec.unanswered = Some(task_record::Unanswered::of(payload, brief));
+    }
+}
+
+fn ingest_remote_message(
+    payload: &crate::a2a::Message,
+    request: &RemoteRequest<'_>,
+    app: &mut A2aApp,
+    context: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, RpcError> {
+    let RemoteLeg {
+        task_id,
+        news,
+        label,
+        brief,
+    } = apply_remote_leg(payload, request, app, Instant::now())?;
+    // A replayed message changes nothing the skill has not seen, so it neither surfaces nor
+    // rings the bell; the caller still gets the task snapshot below.
+    if news {
+        let remote = RemoteMessage {
+            payload,
+            requester: (request.key, request.name),
+            task_id: &task_id,
+            label: label.as_deref(),
+            brief,
+        };
+        surface_remote_message(app, &remote, context);
+    }
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
     // yields `{"task": <Task>}`.
-    app.tasks
-        .get(&task_id)
-        .map(|rec| serde_json::json!({ "task": rpc_error::task_object(&task_id, rec, context.mesh) }))
-        .ok_or_else(|| RpcError::internal("task record missing after ingest"))
+    rpc_error::get_task(app, &task_id, context.mesh).map(|task| serde_json::json!({ "task": task }))
 }
 
 #[cfg(test)]
 mod classify_tests {
+    use std::time::{Duration, Instant};
+
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
         AppFrameParams, AuthorKey, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
+        UnixSecs,
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-    use super::{classify, is_empty_working_repeat, is_replayed_chat, seals, surface_chat, wakes};
+    use super::{
+        RemoteLeg, RemoteRequest, apply_remote_leg, classify, is_replayed_chat, seals,
+        surface_chat, wakes,
+    };
     use crate::a2a::a2a_app::A2aApp;
-    use crate::a2a::{TaskState, status_update_params, wire};
+    use crate::a2a::rpc_error::RpcError;
+    use crate::a2a::task_record::{TaskRecord, TaskRole};
+    use crate::a2a::{TaskId, TaskState, status_update_params, tuning, wire};
     use crate::emission::OutputEvent;
 
     fn mesh() -> MeshId {
@@ -1037,13 +1238,14 @@ mod classify_tests {
             message: Box::new(message),
             is_self,
             to_name: None,
+            quarter_moved: false,
         }
     }
 
     fn task_message(is_self: bool) -> OutputEvent {
         OutputEvent::TaskMessage {
             id: String::from("m"),
-            ts: habilis_network::protocol::UnixSecs::ZERO,
+            ts: UnixSecs::ZERO,
             mesh: String::from("sw"),
             author: String::from("initiator"),
             author_key: key("initiator"),
@@ -1071,6 +1273,12 @@ mod classify_tests {
         ] {
             let own = task_event(status_frame_in(state, to), true);
             assert!(!wakes(&own), "own {state:?} echo is quiet");
+        }
+        for state in [
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+        ] {
             let peer = task_event(status_frame_in(state, to), false);
             assert!(wakes(&peer), "a peer's {state:?} status still wakes");
         }
@@ -1159,7 +1367,7 @@ mod classify_tests {
         let status = status_update_params::status_update(
             &mesh(),
             status_update_params::StatusUpdateParams {
-                task_id: &crate::a2a::TaskId::random(),
+                task_id: &TaskId::random(),
                 state: TaskState::Working,
                 note,
                 metadata,
@@ -1181,66 +1389,338 @@ mod classify_tests {
         view(working_with_raw(note, metadata))
     }
 
-    // Only an empty `working` on a task already `working` is a repeat: the
-    // accept, a progress note, a beat and every other state still surface.
+    // A peer's routine check-in is data: it goes on the ring without a wake, like a
+    // receipt. Only a question, an artifact and a terminal state wake the sender.
     #[test]
-    fn only_an_empty_working_on_a_working_task_is_a_repeat() {
-        let working = Some(TaskState::Working);
+    fn a_peers_working_check_in_does_not_wake_the_bell() {
+        let check_in = working_with(Some("built it"), None);
         assert!(
-            is_empty_working_repeat(working, None, &working_with(None, None)),
-            "a repeated working status is recognized"
+            !wakes(&task_event(check_in, false)),
+            "a routine check-in is data, not news"
+        );
+        let to = Some(key("initiator"));
+        for state in [
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+        ] {
+            assert!(
+                wakes(&task_event(status_frame_in(state, to), false)),
+                "a peer's {state:?} status wakes"
+            );
+        }
+    }
+
+    // The check-in rule binds the receiver too: a `working` leg with no text or no progress is
+    // not taken in, and a beat is not a check-in.
+    #[test]
+    fn a_working_leg_without_text_or_progress_is_incomplete() {
+        let progress = |percent: &str| {
+            status_update_params::status_metadata(
+                false,
+                Some(percent.parse().expect("the test passes a percentage")),
+                1,
+            )
+        };
+        assert!(
+            status_update_params::is_incomplete_checkin(&working_with_raw(None, None)),
+            "a leg with neither text nor progress breaks the rule"
         );
         assert!(
-            !is_empty_working_repeat(Some(TaskState::Submitted), None, &working_with(None, None)),
-            "the accept surfaces"
+            status_update_params::is_incomplete_checkin(&working_with_raw(Some("built"), None)),
+            "a text alone says nothing of how far the work is"
         );
         assert!(
-            !is_empty_working_repeat(working, None, &working_with(Some("tests pass"), None)),
-            "a progress note surfaces"
-        );
-        let beat = working_with(None, Some(status_update_params::beat_metadata()));
-        assert!(
-            !is_empty_working_repeat(working, None, &beat),
-            "a beat keeps its own path"
+            status_update_params::is_incomplete_checkin(&working_with_raw(
+                Some("  "),
+                Some(progress("40"))
+            )),
+            "spaces say nothing of what changed"
         );
         assert!(
-            !is_empty_working_repeat(
-                working,
+            !status_update_params::is_incomplete_checkin(&working_with_raw(
+                Some("built"),
+                Some(progress("40"))
+            )),
+            "both fields present is what the sender emits"
+        );
+        assert!(
+            !status_update_params::is_incomplete_checkin(&working_with_raw(
                 None,
-                &status_frame_in(TaskState::InputRequired, None)
-            ),
-            "a question surfaces"
+                Some(status_update_params::beat_metadata(None))
+            )),
+            "a beat is plumbing every 30 s and carries no text"
         );
     }
 
-    /// The `--waiting` leg and the leg that clears it change what the initiator
-    /// can act on, so each surfaces once. Pre-fix both were empty `working`
-    /// repeats and stayed off the surface, so the initiator agent never saw
-    /// that the worker waits on its user.
+    // A check-in whose progress moves into another quarter wakes the sender, so its
+    // row can show the move; any other working status stays quiet.
     #[test]
-    fn a_waiting_leg_and_its_clear_each_surface_once() {
-        let working = Some(TaskState::Working);
-        let reason = "asks its user";
-        let waiting = working_with(
-            None,
-            Some(status_update_params::status_metadata(Some(reason), 1)),
+    fn a_check_in_wakes_the_bell_only_when_its_quarter_moved() {
+        let check_in = |quarter_moved| OutputEvent::Task {
+            message: Box::new(working_with(Some("built it"), None)),
+            is_self: false,
+            to_name: None,
+            quarter_moved,
+        };
+        assert!(wakes(&check_in(true)), "a quarter move wakes");
+        assert!(!wakes(&check_in(false)), "the same quarter does not");
+        let own = OutputEvent::Task {
+            message: Box::new(working_with(Some("built it"), None)),
+            is_self: true,
+            to_name: None,
+            quarter_moved: true,
+        };
+        assert!(!wakes(&own), "an own echo never wakes");
+    }
+
+    // A beat is plumbing: it does not wake, whether or not the filter of the poll lets it by.
+    #[test]
+    fn a_beat_never_wakes_the_bell() {
+        let beat = OutputEvent::Task {
+            message: Box::new(working_with(
+                None,
+                Some(status_update_params::beat_metadata(None)),
+            )),
+            is_self: false,
+            to_name: None,
+            quarter_moved: true,
+        };
+        assert!(!wakes(&beat), "a beat is liveness, so it rings nothing");
+    }
+
+    // An alarm that says the worker waits on its user is shown, nothing else.
+    #[test]
+    fn an_overdue_alarm_wakes_unless_the_worker_waits_on_its_user() {
+        let overdue = |waiting_user: bool| OutputEvent::TaskOverdue {
+            notice: crate::output_event::OverdueNotice {
+                task_id: TaskId::random(),
+                peer: Nickname::from("worker"),
+                label: None,
+                age_secs: 600,
+                waiting_user,
+                not_picked_up: false,
+            },
+        };
+        assert!(wakes(&overdue(false)), "a plain alarm wakes");
+        assert!(!wakes(&overdue(true)), "waiting on the user does not wake");
+    }
+
+    /// The RPC path of a follow-up: a relay can replay it, and only the first copy restarts the
+    /// check-in clock. The test goes through the same function the daemon calls.
+    #[test]
+    fn a_replayed_rpc_follow_up_does_not_move_the_clock() {
+        let mut app = A2aApp::new();
+        let start = Instant::now();
+        let task_id = TaskId::random();
+        let opened = serve_at(&mut app, &stamped(Some(&task_id), Some(1)), start)
+            .expect("a brief opens the task");
+        let follow_up = stamped(Some(&task_id), Some(2));
+        let first = start + Duration::from_secs(10);
+        let replay = start + Duration::from_secs(100);
+        let leg = serve_at(&mut app, &follow_up, first).expect("the follow-up names an open task");
+        assert!(leg.news, "the first copy is new");
+        let replayed =
+            serve_at(&mut app, &follow_up, replay).expect("a replay is still a valid leg");
+        assert!(!replayed.news, "the second copy is a replay");
+        assert_eq!(
+            app.tasks[&opened.task_id].last_skill_activity, first,
+            "the replay left the clock where the first copy set it"
         );
-        assert!(
-            !is_empty_working_repeat(working, None, &waiting),
-            "the --waiting leg surfaces"
+    }
+
+    /// A `SendMessage` as the initiator's daemon stamps it: the task id it minted and the seq.
+    fn stamped(task_id: Option<&TaskId>, seq: Option<u64>) -> crate::a2a::Message {
+        let mut message = crate::a2a::Message::text(crate::a2a::Role::User, "build it");
+        message.task_id = task_id.cloned();
+        message.metadata = seq.map(|seq| serde_json::json!({ super::META_SEQ: seq }));
+        message
+    }
+
+    /// Apply `message` from `peer` to `app` as an RPC sent `sent_at`, served at `now`.
+    fn serve_sent(
+        app: &mut A2aApp,
+        message: &crate::a2a::Message,
+        (peer, sent_at, now): (&str, UnixSecs, Instant),
+    ) -> Result<RemoteLeg, RpcError> {
+        let request = RemoteRequest {
+            key: &key(peer),
+            name: &Nickname::from(peer),
+            sent_at,
+        };
+        apply_remote_leg(message, &request, app, now)
+    }
+
+    /// Apply `message` from `peer` to `app` as a fresh, in-time RPC.
+    fn serve(
+        app: &mut A2aApp,
+        message: &crate::a2a::Message,
+        peer: &str,
+    ) -> Result<RemoteLeg, RpcError> {
+        let sent = (peer, UnixSecs::now(), Instant::now());
+        serve_sent(app, message, sent)
+    }
+
+    /// Apply `message` from the initiator to `app`, served at `now`.
+    fn serve_at(
+        app: &mut A2aApp,
+        message: &crate::a2a::Message,
+        now: Instant,
+    ) -> Result<RemoteLeg, RpcError> {
+        let sent = ("initiator", UnixSecs::now(), now);
+        serve_sent(app, message, sent)
+    }
+
+    /// The worker serves only what the initiator's daemon stamped: a task id and a `mesh:seq`.
+    #[test]
+    fn a_message_without_a_task_id_or_a_seq_is_refused() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+        for message in [stamped(None, Some(1)), stamped(Some(&task_id), None)] {
+            let error = serve(&mut app, &message, "initiator")
+                .expect_err("a message that lacks the task id or the seq has no place in a task");
+            assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        }
+        assert!(app.tasks.is_empty(), "a refused message opens nothing");
+    }
+
+    /// Seq 1 with an id that nobody holds opens the task under the initiator's id.
+    #[test]
+    fn an_opening_with_an_unheld_id_opens_the_task_under_that_id() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+
+        let opened = serve(&mut app, &stamped(Some(&task_id), Some(1)), "initiator")
+            .expect("an opening with an unheld id is admitted");
+
+        assert!(opened.news, "the first copy of the opening is new");
+        assert!(opened.brief, "the message is the brief");
+        let rec = &app.tasks[&task_id];
+        assert_eq!(
+            rec.state,
+            TaskState::Submitted,
+            "the opening leaves it submitted"
         );
-        assert!(
-            is_empty_working_repeat(working, Some(reason), &waiting),
-            "the same reason again stays off the surface"
+        assert_eq!(rec.peer_seq, 1, "the record took the seq of the opening in");
+    }
+
+    /// A second opening for a held id from the same peer is a replay: it changes nothing.
+    #[test]
+    fn a_second_opening_from_the_same_peer_is_not_news() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+        serve(&mut app, &stamped(Some(&task_id), Some(1)), "initiator")
+            .expect("the first opening is admitted");
+
+        let again = serve(&mut app, &stamped(Some(&task_id), Some(1)), "initiator")
+            .expect("a duplicate opening still gets the snapshot");
+
+        assert!(!again.news, "a duplicate opening is not news");
+        assert_eq!(
+            app.tasks.len(),
+            1,
+            "a duplicate opening opens no second task"
         );
-        assert!(
-            !is_empty_working_repeat(working, Some(reason), &working_with(None, None)),
-            "the clear surfaces"
+    }
+
+    /// A peer that does not hold the task gets the answer of an id that nobody holds, so the
+    /// reply does not say which ids exist.
+    #[test]
+    fn a_task_of_another_peer_answers_like_an_unknown_id() {
+        let mut app = A2aApp::new();
+        let held = TaskId::random();
+        serve(&mut app, &stamped(Some(&held), Some(1)), "initiator")
+            .expect("the opening is admitted");
+        let unknown = TaskId::random();
+        let nobody = serve(&mut app, &stamped(Some(&unknown), Some(2)), "stranger")
+            .expect_err("a follow-up for an unknown id is refused");
+
+        for seq in [1, 2] {
+            let stranger = serve(&mut app, &stamped(Some(&held), Some(seq)), "stranger")
+                .expect_err("a peer that is not the party is refused");
+            assert_eq!(
+                stranger.code, nobody.code,
+                "seq {seq}: the code is the same"
+            );
+            assert_eq!(
+                stranger.message, nobody.message,
+                "seq {seq}: the text is the same"
+            );
+        }
+        assert_eq!(
+            app.tasks[&held].peer,
+            Nickname::from("initiator"),
+            "the owner is unchanged"
         );
-        assert!(
-            is_empty_working_repeat(working, None, &working_with(None, None)),
-            "a plain repeat stays off the surface"
+    }
+
+    /// A requester that the record names as its counterparty may still not drive the task, when
+    /// this node opened it: the answer is that of an unknown id, and no counter moves.
+    #[test]
+    fn a_message_for_a_task_that_we_opened_is_refused_like_an_unknown_id() {
+        let mut app = A2aApp::new();
+        let opened = TaskId::random();
+        app.tasks.insert(
+            opened.clone(),
+            TaskRecord::open(
+                (key("worker"), Nickname::from("worker")),
+                TaskRole::Initiator,
+                TaskState::Submitted,
+                Instant::now(),
+            ),
         );
+        let unknown = serve(
+            &mut app,
+            &stamped(Some(&TaskId::random()), Some(2)),
+            "worker",
+        )
+        .expect_err("an unheld id is refused");
+
+        for seq in [1, 2, u64::MAX] {
+            let refused = serve(&mut app, &stamped(Some(&opened), Some(seq)), "worker")
+                .expect_err("a task that we opened is not ours to serve");
+            assert_eq!(
+                refused.code, unknown.code,
+                "seq {seq}: the code is the same"
+            );
+            assert_eq!(
+                refused.message, unknown.message,
+                "seq {seq}: the text is the same"
+            );
+        }
+        assert_eq!(
+            app.tasks[&opened].seq, 0,
+            "the refused message moved no counter"
+        );
+        assert_eq!(app.tasks[&opened].peer_seq, 0, "and took no seq in");
+    }
+
+    /// Only an opening can create a task: a follow-up for an id that nobody holds is refused.
+    #[test]
+    fn a_follow_up_for_an_unheld_id_is_refused() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+
+        let error = serve(&mut app, &stamped(Some(&task_id), Some(2)), "initiator")
+            .expect_err("seq 2 has no task to follow up");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert!(app.tasks.is_empty(), "a refused follow-up creates no task");
+    }
+
+    /// A relay can hold an opening back for hours: past the task timeout it opens nothing.
+    #[test]
+    fn an_opening_older_than_the_task_timeout_is_refused() {
+        let mut app = A2aApp::new();
+        let task_id = TaskId::random();
+        let old = UnixSecs::now() - Duration::from_secs(tuning::task_timeout_secs() + 5);
+
+        let sent = ("initiator", old, Instant::now());
+        let error = serve_sent(&mut app, &stamped(Some(&task_id), Some(1)), sent)
+            .expect_err("a stale opening is refused");
+
+        assert_eq!(error.code, -32602, "the refusal is an invalid-params error");
+        assert!(app.tasks.is_empty(), "a stale opening creates no task");
     }
 
     fn chat_from(identity: &habilis_network::protocol::Identity) -> Authored {

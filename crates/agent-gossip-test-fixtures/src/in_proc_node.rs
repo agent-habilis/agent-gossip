@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use agent_gossip::a2a::status_update_params;
+use agent_gossip::a2a::WorkerLeg;
+use agent_gossip::a2a::status_update_params::{self, Progress};
 use agent_gossip::api::{
     A2aCallParams, CreateConfig, JoinConfig, JoinError, MeshSession, SessionError,
     TaskArtifactParams, TaskStatusParams, TopicConfig,
@@ -14,7 +15,10 @@ use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
+use crate::{
+    MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name,
+    unconfirmed_task_id,
+};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
 ///
@@ -551,37 +555,79 @@ impl InProcNode {
             if !is_rpc_timeout(&response) || Instant::now() >= deadline {
                 return response;
             }
+            // The task that the attempt left unconfirmed must not outlive the retry. The worker
+            // may not hold it, and then the cancel is refused, which is fine.
+            if let Some(task_id) = unconfirmed_task_id(&response) {
+                let cancel = A2aCallParams::new(
+                    peer.clone(),
+                    "CancelTask".to_owned(),
+                    serde_json::json!({ "id": task_id }),
+                    RPC_ATTEMPT,
+                );
+                let _ = self.session.a2a_call(cancel).await;
+            }
         }
     }
 
-    /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
+    /// Worker-emit a check-in on a task we're serving: `text` says what changed and
+    /// `progress` how far the work is.
     ///
     /// # Panics
     ///
     /// Panics if the send fails.
-    pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
-        let status = match note {
-            Some(text) => TaskStatusParams::new(task_id.clone(), state).with_note(text.to_owned()),
-            None => TaskStatusParams::new(task_id.clone(), state),
-        };
-        self.session
-            .task_status(status)
-            .await
-            .expect("in-process task_status failed");
+    pub async fn task_checkin(&self, task_id: &TaskId, text: &str, progress: Progress) {
+        self.send_leg(
+            task_id,
+            WorkerLeg::parse(
+                TaskState::Working,
+                Some(text.to_owned()),
+                Some(progress),
+                false,
+            )
+            .expect("a check-in with a text and a progress parses"),
+        )
+        .await;
     }
 
-    /// Worker-emit a `working` status that says the worker waits on its user.
+    /// Worker-emit a check-in that says the worker waits on its own user.
     ///
     /// # Panics
     ///
     /// Panics if the send fails.
-    pub async fn task_waiting(&self, task_id: &TaskId, reason: &str) {
-        let status = TaskStatusParams::new(task_id.clone(), TaskState::Working)
-            .with_waiting(reason.to_owned());
+    pub async fn task_waiting_user(&self, task_id: &TaskId, text: &str, progress: Progress) {
+        self.send_leg(
+            task_id,
+            WorkerLeg::parse(
+                TaskState::Working,
+                Some(text.to_owned()),
+                Some(progress),
+                true,
+            )
+            .expect("a check-in with a text and a progress parses"),
+        )
+        .await;
+    }
+
+    /// Worker-emit a status other than `working` on a task we're serving, with `text` as
+    /// its message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `state` is `working`, which is a check-in, or if the send fails.
+    pub async fn task_state(&self, task_id: &TaskId, state: TaskState, text: &str) {
+        self.send_leg(
+            task_id,
+            WorkerLeg::parse(state, Some(text.to_owned()), None, false)
+                .expect("a state other than working needs no progress"),
+        )
+        .await;
+    }
+
+    async fn send_leg(&self, task_id: &TaskId, leg: WorkerLeg) {
         self.session
-            .task_status(status)
+            .task_status(TaskStatusParams::new(task_id.clone(), leg))
             .await
-            .expect("in-process task_waiting failed");
+            .expect("in-process task status failed");
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
@@ -590,10 +636,26 @@ impl InProcNode {
     ///
     /// Panics if the send fails.
     pub async fn task_artifact(&self, task_id: &TaskId, text: &str) {
+        self.try_task_artifact(task_id, text)
+            .await
+            .expect("in-process task_artifact failed");
+    }
+
+    /// As [`Self::task_artifact`], returning the refusal instead of panicking, for a test of
+    /// the rule that an artifact needs a text or a file.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the daemon refuses the artifact or the event loop has stopped.
+    pub async fn try_task_artifact(
+        &self,
+        task_id: &TaskId,
+        text: &str,
+    ) -> Result<(), SessionError> {
         self.session
             .task_artifact(TaskArtifactParams::new(task_id.clone(), text.to_owned()))
             .await
-            .expect("in-process task_artifact failed");
+            .map(|_| ())
     }
 
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
@@ -661,6 +723,18 @@ impl InProcNode {
                 .any(|event| matches!(event, OutputEvent::TaskMessage { .. }))
         })
         .await
+    }
+
+    /// The task id of the first `message`-kind task event surfaced to us.
+    pub fn task_message_task_id(&mut self) -> Option<String> {
+        self.pump();
+        self.drained.iter().find_map(|event| {
+            if let OutputEvent::TaskMessage { task_id, .. } = event {
+                Some(task_id.clone())
+            } else {
+                None
+            }
+        })
     }
 
     /// The `mesh:label` on the first `message`-kind task event surfaced to us —

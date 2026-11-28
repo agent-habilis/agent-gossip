@@ -2,8 +2,8 @@ use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype};
 use serde::Serialize;
 
-use super::{OutputEvent, PingPeer, TaskGoneReason};
-use crate::a2a::{TaskId, status_update_params, wire};
+use super::{CheckinNotice, GapNotice, OutputEvent, OverdueNotice, PingPeer, TaskGoneReason};
+use crate::a2a::{status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
@@ -15,7 +15,7 @@ const DISPLAY_GLYPH: &str = "💬\u{FE0F}";
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
-enum SimpleEvent<'source> {
+pub(super) enum SimpleEvent<'source> {
     Ready {
         version: &'source str,
         gossip: &'source str,
@@ -49,12 +49,20 @@ enum SimpleEvent<'source> {
         task_id: &'source str,
         reason: TaskGoneReason,
     },
-    TaskStalled {
-        task_id: &'source str,
-        peer: &'source str,
-        last_poll_secs_ago: u64,
-        check_secs: u64,
-        /// Pre-formatted line (see [`task_stalled_event`]).
+    TaskOverdue {
+        #[serde(flatten)]
+        notice: &'source OverdueNotice,
+        /// Pre-formatted line (see [`task_overdue_event`]).
+        display: String,
+    },
+    CheckinDue {
+        #[serde(flatten)]
+        notice: &'source CheckinNotice,
+        display: String,
+    },
+    TaskGap {
+        #[serde(flatten)]
+        notice: &'source GapNotice,
         display: String,
     },
     Receipt {
@@ -171,10 +179,13 @@ struct TaskLine<'source> {
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<&'source str>,
-    /// Why the worker waits on its own user, from the leg's `mesh:waiting`.
+    /// `true` while the worker waits on its own user, from the leg's `mesh:waiting_user`.
     /// Absent on every other leg, so the leg that clears it carries no key.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub waiting_user: bool,
+    /// How far the work is, 0 to 100, from a check-in. Absent on a leg with none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub waiting: Option<String>,
+    pub progress: Option<u8>,
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -185,7 +196,8 @@ struct TaskLine<'source> {
 }
 
 /// A `{"event":"task_progress",...}` line for a liveness beat — the
-/// ball-owner's keepalive heartbeat.
+/// ball-owner's keepalive heartbeat. `progress` is `None` when the beat reports indeterminate
+/// progress (no percentage in its metadata).
 #[derive(Serialize)]
 struct TaskProgressLine<'source> {
     pub event: &'static str,
@@ -196,6 +208,8 @@ struct TaskProgressLine<'source> {
     pub to: &'source str,
     pub to_pubkey: &'source str,
     pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<u8>,
     pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
@@ -285,9 +299,15 @@ fn task_display(params: TaskDisplayParams<'_>) -> String {
 }
 
 /// `display` line for a `task_progress` event:
-/// `` 💬️ task progress `<author>` → `<to>`: working ``.
-fn task_progress_display(author: &str, to: &str) -> String {
-    format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working")
+/// `` 💬️ task progress `<author>` → `<to>`: 35% `` (or
+/// `working` when indeterminate).
+fn task_progress_display(author: &str, to: &str, progress: Option<u8>) -> String {
+    match progress {
+        Some(percent) => {
+            format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: {percent}%")
+        }
+        None => format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working"),
+    }
 }
 
 /// `display` line for a presence event: `` 💬️ `<author>` has joined `` /
@@ -301,23 +321,54 @@ fn peer_timeout_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
-/// The `task_stalled` event. Its `display` states the silence as a fact: a
-/// worker with no bell can poll rarely while it works.
-fn task_stalled_event<'a>(
-    task_id: &'a TaskId,
-    peer: &'a Nickname,
-    last_poll_secs_ago: u64,
-    check_secs: u64,
-) -> SimpleEvent<'a> {
-    SimpleEvent::TaskStalled {
-        task_id: task_id.as_str(),
-        peer: peer.as_str(),
-        last_poll_secs_ago,
-        check_secs,
-        display: format!(
-            "{DISPLAY_GLYPH} task stalled · `<{peer}>` has not polled for {} min",
-            last_poll_secs_ago / 60
-        ),
+/// The `task_overdue` event. Its `display` states the silence as a fact; each
+/// bracketed part appears only when it is set.
+pub(super) fn task_overdue_event(notice: &OverdueNotice) -> SimpleEvent<'_> {
+    let OverdueNotice {
+        task_id,
+        peer,
+        label,
+        age_secs,
+        waiting_user,
+        not_picked_up,
+    } = notice;
+    let short_id: String = task_id.as_str().chars().take(8).collect();
+    let name = label.clone().unwrap_or(short_id);
+    let silence = if *age_secs < 60 {
+        format!("{age_secs} s")
+    } else {
+        format!("{} min", age_secs / 60)
+    };
+    let mut parts = vec![format!(
+        "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {silence}"
+    )];
+    if *waiting_user {
+        parts.push(" · waiting on user".to_owned());
+    }
+    if *not_picked_up {
+        parts.push(" · not picked up".to_owned());
+    }
+    SimpleEvent::TaskOverdue {
+        notice,
+        display: parts.concat(),
+    }
+}
+
+/// The `checkin_due` event: the worker's reminder. It is never shown, so its
+/// `display` only keeps the line readable in a raw poll.
+pub(super) fn checkin_due_event(notice: &CheckinNotice) -> SimpleEvent<'_> {
+    SimpleEvent::CheckinDue {
+        notice,
+        display: format!("{DISPLAY_GLYPH} check-in due · `<{}>`", notice.peer),
+    }
+}
+
+/// The `task_gap` event: a leg of the worker was lost on the way. It is never shown, whatever its
+/// state, so its `display` only keeps the line readable in a raw poll. The agent reads `state`.
+pub(super) fn task_gap_event(notice: &GapNotice) -> SimpleEvent<'_> {
+    SimpleEvent::TaskGap {
+        notice,
+        display: format!("{DISPLAY_GLYPH} task gap · `<{}>`", notice.peer),
     }
 }
 
@@ -384,7 +435,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::NicknameHeld { .. }
-        | OutputEvent::TaskStalled { .. } => true,
+        | OutputEvent::TaskOverdue { .. } => true,
         OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
             MessageKind::Presence {
@@ -394,6 +445,8 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }
@@ -518,10 +571,12 @@ pub(super) fn format_task_json(
     if let Ok(payload) = status_update_params::status_payload(message)
         && status_update_params::is_beat(&payload)
     {
+        let progress = status_update_params::leg_progress(&payload)
+            .map(status_update_params::Progress::percent);
         let author = message.author.as_str();
         let to_text = to_label(to, addressee_name);
         let to_pubkey = to.to_string();
-        let display = task_progress_display(author, &to_text);
+        let display = task_progress_display(author, &to_text, progress);
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
                 event: "task_progress",
@@ -532,6 +587,7 @@ pub(super) fn format_task_json(
                 to: &to_text,
                 to_pubkey: &to_pubkey,
                 task_id,
+                progress,
                 display,
                 is_self,
             })
@@ -546,11 +602,17 @@ pub(super) fn format_task_json(
     let to_text = to_label(to, addressee_name);
     let to_pubkey = to.to_string();
     let pubkey = message.key().to_string();
-    // Only a `working` leg carries the reason, as in the record.
-    let waiting = status_update_params::status_payload(message)
+    // Only a `working` leg carries the tag and the progress, as in the record.
+    let checkin = status_update_params::status_payload(message)
         .ok()
-        .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
-        .and_then(|payload| status_update_params::status_waiting(&payload));
+        .filter(|payload| payload.status.state == crate::a2a::TaskState::Working);
+    let waiting_user = checkin
+        .as_ref()
+        .is_some_and(status_update_params::status_waiting_user);
+    let progress: Option<u8> = checkin
+        .as_ref()
+        .and_then(status_update_params::leg_progress)
+        .map(status_update_params::Progress::percent);
     let display = task_display(TaskDisplayParams {
         author,
         to: &to_text,
@@ -575,7 +637,8 @@ pub(super) fn format_task_json(
             // The label rides the opening brief, which arrives over the RPC
             // binding (`OutputEvent::TaskMessage`), never as a frame.
             label: None,
-            waiting,
+            waiting_user,
+            progress,
             display,
             body,
             payload,
@@ -689,6 +752,7 @@ fn formatted_json(event: &OutputEvent) -> Option<String> {
             message,
             is_self,
             to_name,
+            ..
         } => format_task_json(message, *is_self, to_name.as_ref()),
         OutputEvent::TaskMessage {
             id,
@@ -727,7 +791,8 @@ fn formatted_json(event: &OutputEvent) -> Option<String> {
                 kind: "message",
                 state: state.map(crate::a2a::TaskState::friendly_name),
                 label: label.as_deref(),
-                waiting: None,
+                waiting_user: false,
+                progress: None,
                 display,
                 body: text.clone(),
                 payload,
@@ -752,7 +817,9 @@ fn formatted_json(event: &OutputEvent) -> Option<String> {
         } => format_state_json(*channel, event, document.as_deref(), *is_self),
         OutputEvent::Ready { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
@@ -790,18 +857,13 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             })
             .ok()
         }
-        OutputEvent::TaskStalled {
-            task_id,
-            peer,
-            last_poll_secs_ago,
-            check_secs,
-        } => serde_json::to_string(&task_stalled_event(
-            task_id,
-            peer,
-            *last_poll_secs_ago,
-            *check_secs,
-        ))
-        .ok(),
+        OutputEvent::TaskOverdue { notice } => {
+            serde_json::to_string(&task_overdue_event(notice)).ok()
+        }
+        OutputEvent::CheckinDue { notice } => {
+            serde_json::to_string(&checkin_due_event(notice)).ok()
+        }
+        OutputEvent::TaskGap { notice } => serde_json::to_string(&task_gap_event(notice)).ok(),
         OutputEvent::Receipt {
             from,
             ref_id,

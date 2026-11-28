@@ -1,6 +1,7 @@
 use clap::Args;
 
 use super::session_address::SessionAddress;
+use crate::a2a::status_update_params::Progress;
 
 #[derive(Args, Debug)]
 pub(crate) struct StatusArgs {
@@ -12,14 +13,19 @@ pub(crate) struct StatusArgs {
     /// The new A2A state.
     #[arg(long, value_parser = parse_state)]
     pub state: crate::a2a::TaskState,
-    /// Optional message text (becomes the status message — a question, a
-    /// completion summary, a failure reason).
-    #[arg(long)]
+    /// Message text (becomes the status message — a question, a completion
+    /// summary, a failure reason). Required with `--state working`: what
+    /// changed since the last check-in.
+    #[arg(long, alias = "note")]
     pub text: Option<String>,
-    /// Mark the task as waiting on your own user, with the reason. Only
-    /// valid with `--state working`; the next status clears it.
+    /// Percent done, a whole number from 0 to 100. Required with
+    /// `--state working`, rejected with any other state.
     #[arg(long)]
-    pub waiting: Option<String>,
+    pub progress: Option<Progress>,
+    /// Say that the task waits on your own user. Only valid with
+    /// `--state working`; the next check-in clears it.
+    #[arg(long)]
+    pub waiting_on_user: bool,
 }
 
 /// Parse the A2A task state a worker can send, from its friendly (kebab-case)

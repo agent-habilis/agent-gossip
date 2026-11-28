@@ -472,6 +472,100 @@ fn tools_require_session_and_error_when_absent() {
     }
 }
 
+/// A `task_status` that the worker leg refuses fails on the MCP side with the
+/// names of the tool's own arguments, before any task is looked up.
+#[test]
+fn task_status_refuses_an_incomplete_check_in_by_the_names_of_its_arguments() {
+    let mut client = McpClient::spawn();
+    let (_mesh, _nick) = client.create_and_get_mesh(1500);
+    let task_id = "550e8400-e29b-41d4-a716-446655440000";
+    let cases = [
+        (
+            serde_json::json!({ "state": "working", "note": "on it" }),
+            "a working status needs a note and a progress",
+        ),
+        (
+            serde_json::json!({ "state": "working", "progress": 50 }),
+            "a working status needs a note and a progress",
+        ),
+        (
+            serde_json::json!({ "state": "working", "note": "  ", "progress": 50 }),
+            "a working status needs a note and a progress",
+        ),
+        (
+            serde_json::json!({ "state": "input-required", "note": "which?", "progress": 50 }),
+            "progress needs the state working",
+        ),
+        (
+            serde_json::json!({ "state": "completed", "waiting_on_user": true }),
+            "waiting_on_user needs the state working",
+        ),
+        (
+            serde_json::json!({ "state": "working", "note": "on it", "progress": 101 }),
+            "progress",
+        ),
+    ];
+    for (offset, (mut args, expected)) in cases.into_iter().enumerate() {
+        args["task_id"] = serde_json::json!(task_id);
+        let response = client.tool_call(1501 + offset as u64, "task_status", &args);
+        let err = tool_error(&response)
+            .unwrap_or_else(|| panic!("{args} is not a legal status, so it must be refused"));
+        assert!(
+            err.contains(expected),
+            "{args}: the refusal must say {expected:?}, got: {err}"
+        );
+    }
+}
+
+/// A complete check-in, with its progress and the waiting flag, passes the
+/// argument checks. The task is unknown on this node, so the call still
+/// fails, but not on its arguments.
+#[test]
+fn task_status_accepts_a_complete_check_in_past_the_argument_checks() {
+    let mut client = McpClient::spawn();
+    let (_mesh, _nick) = client.create_and_get_mesh(1510);
+    let response = client.tool_call(
+        1511,
+        "task_status",
+        &serde_json::json!({
+            "task_id": "550e8400-e29b-41d4-a716-446655440000",
+            "state": "working",
+            "note": "asked my user about the port",
+            "progress": 40,
+            "waiting_on_user": true,
+        }),
+    );
+    let err = tool_error(&response).unwrap_or_default();
+    assert!(
+        !err.contains("needs"),
+        "a complete check-in must pass the argument checks, got: {err}"
+    );
+}
+
+/// An artifact with no text and no file is refused by the MCP server.
+#[test]
+fn task_artifact_without_a_text_or_a_file_is_refused() {
+    let mut client = McpClient::spawn();
+    let (_mesh, _nick) = client.create_and_get_mesh(1520);
+    for (offset, text) in ["", "   "].into_iter().enumerate() {
+        let response = client.tool_call(
+            1521 + offset as u64,
+            "task_artifact",
+            &serde_json::json!({
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "text": text,
+            }),
+        );
+        let err = tool_error(&response).unwrap_or_else(|| {
+            panic!("an artifact of {text:?} carries nothing, so it must be refused")
+        });
+        assert!(
+            err.contains("an artifact needs a text or a file"),
+            "the refusal must say what is missing, got: {err}"
+        );
+    }
+}
+
 #[test]
 fn mesh_version_works_without_a_session() {
     let mut client = McpClient::spawn();
@@ -1175,7 +1269,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 // ─── task + roster ───────────────────────────────────────────────
 
 /// Creating a task (via the `a2a_call` tool, `message/send`) from the joiner
-/// to the creator: the worker mints the id and returns a submitted `Task`, and
+/// to the creator: the initiator's daemon mints the id and the worker returns a submitted `Task`, and
 /// the creator (worker) surfaces the incoming message on `fetch_messages` as a
 /// `message`-kind `event:"task"` record.
 #[test]
@@ -1203,20 +1297,41 @@ fn task_creation_surfaces_to_worker_via_fetch() {
                 "timeout_secs": 10,
             }),
         );
-        let timed_out = tool_error(&raw).is_some_and(|error| error.contains("timed out"));
+        let unconfirmed: Option<String> = tool_result_json(&raw).and_then(|response| {
+            let task = &response["result"]["task"];
+            (task["metadata"]["mesh:unconfirmed"] == true)
+                .then(|| task["id"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        let timed_out = unconfirmed.is_some()
+            || tool_error(&raw).is_some_and(|error| error.contains("timed out"));
         if !timed_out || Instant::now() >= call_deadline {
             break raw;
+        }
+        // The task that the attempt left unconfirmed must not outlive the retry. The creator may
+        // not hold it, and then the cancel is refused, which is fine.
+        if let Some(task_id) = unconfirmed {
+            let _ = joiner.tool_call(
+                attempt_id + 100,
+                "a2a_call",
+                &serde_json::json!({
+                    "to": creator_nick,
+                    "method": "CancelTask",
+                    "params": { "id": task_id },
+                    "timeout_secs": 5,
+                }),
+            );
         }
         attempt_id += 1;
     };
     let response = tool_result_json(&raw)
         .unwrap_or_else(|| panic!("a2a_call should succeed; raw response: {raw}"));
-    // The worker mints the task id and returns a submitted Task (v1.0
+    // The initiator minted the task id, and the worker returns a submitted Task (v1.0
     // SendMessageResponse oneof: `{"task": <Task>}`).
     assert!(response["result"]["task"].is_object(), "got: {response}");
     let task_id = response["result"]["task"]["id"]
         .as_str()
-        .expect("server-minted task id")
+        .expect("the task of the reply has an id")
         .to_string();
 
     // The creator (worker) fetches and sees the incoming message as a task leg.
