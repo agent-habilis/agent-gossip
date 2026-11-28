@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use habilis_network::ops::blob::{BlobServer, ContentId};
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
-use habilis_network::protocol::{AuthorKey, DedupKey, MeshId, Nickname, ShardGroup, UnixSecs};
+use habilis_network::protocol::{AuthorKey, DedupKey, MeshId, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -470,10 +470,9 @@ impl A2aApp {
     pub(crate) fn fulfill_a2a_waiter(
         &mut self,
         corr: &habilis_network::protocol::CorrId,
-        from: (&AuthorKey, UnixSecs),
+        from_key: &AuthorKey,
         body: &str,
     ) {
-        let (from_key, sent_at) = from;
         let Some(index) = self
             .a2a_waiters
             .iter()
@@ -489,7 +488,7 @@ impl A2aApp {
                 && returned_task(body).is_some_and(|task| task.id == opening.task_id)
         });
         if answered {
-            self.reconcile_returned_task((from_key, sent_at), body);
+            self.reconcile_returned_task(from_key, body);
         } else {
             self.drop_opening(waiter.opening.as_ref());
         }
@@ -556,8 +555,7 @@ impl A2aApp {
     /// `GetTask` result is the bare `Task`) with the record that this node holds. A reply that
     /// returns no task, or a task we hold no record of, changes nothing: only dispatch opens a
     /// record on this side.
-    fn reconcile_returned_task(&mut self, from: (&AuthorKey, UnixSecs), body: &str) {
-        let (peer_key, sent_at) = from;
+    fn reconcile_returned_task(&mut self, peer_key: &AuthorKey, body: &str) {
         let Some(returned) = returned_task(body) else {
             return;
         };
@@ -570,7 +568,6 @@ impl A2aApp {
                 task_id: &returned.id,
                 peer_key,
                 snapshot: returned.snapshot,
-                sent_at,
                 now: Instant::now(),
             },
         );
@@ -816,7 +813,7 @@ mod tests {
 
     use habilis_network::ops::blob::ContentId;
     use habilis_network::protocol::{
-        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname, UnixSecs,
+        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
     };
     use tokio::sync::oneshot;
 
@@ -1299,11 +1296,7 @@ mod tests {
             mesh: MeshId::from("test"),
         });
 
-        app.fulfill_a2a_waiter(
-            &wire::corr_id("corr-key"),
-            (&other_bob_key(), UnixSecs::now()),
-            "{}",
-        );
+        app.fulfill_a2a_waiter(&wire::corr_id("corr-key"), &other_bob_key(), "{}");
 
         assert!(
             rx.try_recv().is_err(),
@@ -1375,7 +1368,7 @@ mod tests {
     }
 
     fn fulfill(app: &mut super::A2aApp, corr: &str, key: &AuthorKey, body: &str) {
-        app.fulfill_a2a_waiter(&wire::corr_id(corr), (key, UnixSecs::now()), body);
+        app.fulfill_a2a_waiter(&wire::corr_id(corr), key, body);
     }
 
     /// The worker refused the opening: the record the call made at dispatch goes, and its file

@@ -200,9 +200,6 @@ pub enum TaskGoneReason {
     Timeout,
     /// The counterparty left the mesh gracefully.
     PeerLeft,
-    /// The worker's beat numbered its legs backwards: it started the task over, so this node
-    /// ended it.
-    WorkerLost,
 }
 
 /// The alarm a sender raises when a worker's agent has not checked in for 2·X. The fields are

@@ -594,10 +594,6 @@ fn handle_task_leg(
         match applied.beat {
             Some(task_record::BeatAction::Ask) => app.ask_for_task(&task_id, &peer_key),
             Some(task_record::BeatAction::Resend) => app.owe_end(&task_id, &peer_key),
-            Some(task_record::BeatAction::Lost) => {
-                let out = &app.output;
-                out.task_timeout(&task_id, emission::TaskGoneReason::WorkerLost);
-            }
             None => {}
         }
         if replay {
@@ -736,11 +732,7 @@ async fn handle_a2a_rpc(
         // outstanding waiter). An unsolicited response is ignored — otherwise
         // any member could move initiator-side task records by forging responses. The waiter
         // reconciles the authoritative `Task` a reply returned.
-        app.fulfill_a2a_waiter(
-            corr,
-            (&message.key(), message.timestamp),
-            message.body.as_str(),
-        );
+        app.fulfill_a2a_waiter(corr, &message.key(), message.body.as_str());
     }
 }
 

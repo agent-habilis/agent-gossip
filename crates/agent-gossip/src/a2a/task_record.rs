@@ -129,9 +129,6 @@ pub(crate) struct TaskRecord {
     /// The highest `mesh:seq` that this node took in from the peer. A leg of the peer is news only
     /// above it: a replay and a leg that arrives behind a newer one are dropped whole.
     pub peer_seq: u64,
-    /// When the leg that set `peer_seq` was sent, by the clock of its sender. A beat that was sent
-    /// before it shows nothing about the worker now.
-    pub peer_seq_at: UnixSecs,
     /// When this node asked the worker about a leg that a beat showed and that never arrived.
     /// One ask is in flight per task: the reply clears it, and one whose reply never came
     /// (refused, timed out, or lost) lapses after one call timeout, so a later beat asks again.
@@ -179,7 +176,6 @@ impl TaskRecord {
             seq: 0,
             applied_seq: 0,
             peer_seq: 0,
-            peer_seq_at: UnixSecs::from(0),
             asked_at: None,
         }
     }
@@ -193,12 +189,29 @@ impl TaskRecord {
         self.last_activity = now;
     }
 
-    /// End the task as canceled by this node without a leg of its own to carry it (the worker lost
-    /// the task, or the peer left). The end takes the next seq, as the cancel of the sweep does, so
+    /// End the task as canceled by this node without a leg of its own to carry it (the peer left). The end takes the next seq, as the cancel of the sweep does, so
     /// that an end sent again later is no repeat of a seq that the peer may already hold.
     pub(crate) fn cancel_without_leg(&mut self, now: Instant) {
         self.close(TaskState::Canceled, now);
         self.take_seq_applied(self.seq.saturating_add(1));
+    }
+
+    /// What the beat of this record adds. Only the worker states an age, a progress and a seq: the
+    /// sender's silence is not a check-in, a progress the sender holds is a copy of the worker's,
+    /// and the sender's beat has no seq. The seq is that of the state held, so a leg in flight
+    /// shows no seq yet.
+    pub(crate) fn beat_extras(&self, now: Instant) -> BeatExtras {
+        let from_worker = self.role == TaskRole::Receiver;
+        BeatExtras {
+            progress: if from_worker {
+                self.shown_progress
+            } else {
+                None
+            },
+            checkin_age_secs: from_worker
+                .then(|| now.duration_since(self.last_skill_activity).as_secs()),
+            seq: from_worker.then_some(self.applied_seq),
+        }
     }
 
     /// Count `seq` as sent and applied at once: a leg that the record takes as it is built.
@@ -338,10 +351,6 @@ pub(crate) enum BeatAction {
     /// The beat reached a task that this node ended by its own leg, which the peer never got: send
     /// the end again.
     Resend,
-    /// The beat of the worker shows that it lost the task: its seq is below the one that this node
-    /// took in from it after the beat was sent, which a worker that holds the task never does. The
-    /// task is over for this node.
-    Lost,
 }
 
 /// What a received leg turned out to be, for the layer that surfaces it.
@@ -373,8 +382,6 @@ struct Facts {
     /// sequence. A beat repeats the seq of the last leg of its worker, and takes no place in the
     /// sequence.
     seq: Option<u64>,
-    /// When the sender sent the leg, by its clock.
-    at: UnixSecs,
     /// The note of a status leg, which is what the worker said last: a check-in's text, or the
     /// question it asked.
     text: Option<status_update_params::CappedText>,
@@ -391,7 +398,6 @@ fn facts_of_frame(frame: &Authored, mine: bool, now: Instant) -> Option<Facts> {
     let mut facts = Facts {
         kind: LegKind::Artifact,
         seq: None,
-        at: frame.timestamp,
         text: None,
         checkin: None,
         beat: None,
@@ -444,7 +450,6 @@ fn facts_of_message(seq: u64, opens_task: bool) -> Facts {
             LegKind::Text
         },
         seq: Some(seq),
-        at: UnixSecs::now(),
         text: None,
         checkin: None,
         beat: None,
@@ -526,7 +531,6 @@ pub(crate) fn apply_leg(
         && let (Some(seq), Some(record)) = (facts.seq, tasks.get_mut(task_id))
     {
         record.peer_seq = seq;
-        record.peer_seq_at = facts.at;
     }
     if reach == Reach::Live
         && mine
@@ -535,16 +539,6 @@ pub(crate) fn apply_leg(
         record.applied_seq = record.applied_seq.max(seq);
     }
     let from_peer_beat = facts.kind == LegKind::Beat && !mine;
-    let lost = from_peer_beat
-        && tasks
-            .get_mut(task_id)
-            .is_some_and(|rec| worker_lost(rec, (facts.seq, facts.at), now));
-    if lost {
-        return Applied {
-            beat: Some(BeatAction::Lost),
-            ..Applied::NONE
-        };
-    }
     let quarter_moved = record_frame_facts(tasks, task_id, &facts, (mine, fresh));
     let finished = closed.get(task_id).is_some();
     let repair = from_peer_beat
@@ -556,25 +550,6 @@ pub(crate) fn apply_leg(
         quarter_moved: quarter_moved && !finished,
         beat: repair.then_some(BeatAction::Ask),
     }
-}
-
-/// Whether a beat of the worker, which repeats the seq of its last leg, shows that the worker
-/// lost the task: a seq below the one that this node took in from the worker, on a beat that was
-/// sent after that leg. A worker that holds the task never numbers backwards, so one that does
-/// started the task over, and its legs would all be dropped as late. The task ends for this node,
-/// and the record says so. A beat that was sent before the leg, and that a relay delivered behind
-/// it, shows nothing.
-fn worker_lost(
-    rec: &mut TaskRecord,
-    (beat_seq, sent_at): (Option<u64>, UnixSecs),
-    now: Instant,
-) -> bool {
-    let behind = beat_seq.is_some_and(|seq| seq < rec.peer_seq) && sent_at > rec.peer_seq_at;
-    if !behind || rec.role != TaskRole::Initiator || rec.state.is_terminal() {
-        return false;
-    }
-    rec.cancel_without_leg(now);
-    true
 }
 
 /// Whether a beat that repeats the seq `beat_seq` shows a leg that this node never took in, on a
@@ -1023,9 +998,6 @@ pub(crate) struct ReconcileParams<'caller> {
     pub(crate) task_id: &'caller TaskId,
     pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) snapshot: Snapshot,
-    /// When the worker sent the reply that carried the snapshot, by the clock of the worker: the
-    /// clock that a beat of the worker is judged by.
-    pub(crate) sent_at: UnixSecs,
     pub(crate) now: Instant,
 }
 
@@ -1050,7 +1022,6 @@ pub(crate) fn reconcile_initiator(
         task_id,
         peer_key,
         snapshot,
-        sent_at,
         now,
     } = params;
     let rec = tasks.get_mut(task_id)?;
@@ -1065,10 +1036,11 @@ pub(crate) fn reconcile_initiator(
     // A reply shows that the worker is alive, and it moves the reaper's clocks and no other.
     rec.last_activity = now;
     rec.last_peer_activity = now;
+    // Any reply ends the ask in flight, whether or not it carries news: the next beat that shows
+    // a missing leg asks again.
     rec.asked_at = None;
     let seq = snapshot.seq.filter(|seq| *seq > rec.peer_seq)?;
     rec.peer_seq = seq;
-    rec.peer_seq_at = sent_at;
     if snapshot.state.is_terminal() {
         rec.close(snapshot.state, now);
     } else {
@@ -1092,7 +1064,7 @@ pub(crate) fn reconcile_initiator(
 /// to its end. A snapshot in review carries no text: what the worker said last is then an older
 /// check-in, and the result that parked the task is the leg that was lost.
 fn gap_notice(task_id: &TaskId, rec: &TaskRecord, snapshot: &Snapshot) -> GapNotice {
-    let capped = snapshot.text.as_ref().filter(|_| !snapshot.review);
+    let capped = snapshot.text.as_ref().filter(|_| !rec.review);
     let text = capped.map(|capped| capped.text.clone());
     GapNotice {
         task_id: task_id.clone(),
@@ -1431,7 +1403,7 @@ fn owed_end_legs(
 }
 
 /// Send the ends that the app owes now, without waiting for the task sweep. The receive path calls
-/// it after each frame that owed one, and when the list reached its cap.
+/// it after each frame that owed one.
 pub(crate) async fn send_owed_ends(
     state: &EventLoopState,
     app: &mut A2aApp,
@@ -1619,20 +1591,7 @@ pub(crate) async fn tick_task_keepalive(
         .filter(|(_, rec)| rec.should_keepalive(now, cadence));
     let due: Vec<KeepaliveDue> = quiet
         .map(|(task_id, rec)| {
-            // Only the worker states an age, a progress and a seq: the sender's silence is not a
-            // check-in, a progress the sender holds is a copy of the worker's, and the sender's
-            // beat has no seq.
-            let from_worker = rec.role == TaskRole::Receiver;
-            let extras = BeatExtras {
-                progress: if from_worker {
-                    rec.shown_progress
-                } else {
-                    None
-                },
-                checkin_age_secs: from_worker
-                    .then(|| now.duration_since(rec.last_skill_activity).as_secs()),
-                seq: from_worker.then_some(rec.applied_seq),
-            };
+            let extras = rec.beat_extras(now);
             (task_id.clone(), rec.peer_key, rec.state, extras)
         })
         .collect();
@@ -3152,7 +3111,6 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter"),
                 snapshot: snapshot_at(TaskState::Working, 9),
-                sent_at: UnixSecs::now(),
                 now: probe,
             },
         );
@@ -3950,7 +3908,6 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key(peer),
                     snapshot: snapshot_at(state, 9),
-                    sent_at: UnixSecs::now(),
                     now: when,
                 },
             );
@@ -4517,7 +4474,6 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter"),
                 snapshot: snapshot_at(TaskState::Failed, 9),
-                sent_at: UnixSecs::now(),
                 now: start,
             },
         );
@@ -4679,7 +4635,6 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key("calm-otter"),
                     snapshot: stated,
-                    sent_at: UnixSecs::now(),
                     now: start,
                 },
             )
@@ -4727,7 +4682,6 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key("calm-otter"),
                     snapshot: stated,
-                    sent_at: UnixSecs::now(),
                     now: start,
                 },
             )
@@ -4840,38 +4794,69 @@ mod tests {
         let _ = start;
     }
 
-    /// A worker that numbers its legs backwards started the task over, and its legs would all be
-    /// dropped as late: its beat ends the task for the sender. A beat that was sent before the leg
-    /// that set the seq, and that a relay delivered behind it, shows nothing.
+    /// A leg in flight has taken its seq and not its state yet. Everything that the record shows
+    /// to the peer, which reads the seq with the state it goes with, shows the seq of the state:
+    /// the beat, the answer to `GetTask`, the end that is owed, and the closed record.
     #[test]
-    fn a_beat_that_numbers_backwards_ends_the_task() {
+    fn every_seq_the_record_shows_is_that_of_the_state_it_holds() {
         let start = Instant::now();
-        let mut tasks = working_task_we_opened(start);
+        let mut tasks = task_we_serve(start);
         {
             let rec = tasks
                 .get_mut(&tid())
                 .expect("the test inserted this task earlier");
-            rec.peer_seq = 5;
-            rec.peer_seq_at = UnixSecs::now() - Duration::from_secs(10);
+            rec.seq = 3;
+            rec.applied_seq = 2;
         }
-        let mut delayed = beat_with_progress(10, 2);
-        delayed.timestamp = UnixSecs::now() - Duration::from_secs(30);
-        assert!(
-            receive(&mut tasks, &delayed).beat != Some(super::BeatAction::Lost),
-            "a beat that was sent before the leg shows nothing"
-        );
-        assert_eq!(tasks[&tid()].state, TaskState::Working, "the task goes on");
 
-        let restarted = beat_with_progress(10, 2);
-        assert!(
-            receive(&mut tasks, &restarted).beat == Some(super::BeatAction::Lost),
-            "a beat sent after the leg, at a lower seq, shows a worker that lost the task"
-        );
         assert_eq!(
-            tasks[&tid()].state,
-            TaskState::Canceled,
-            "the sender ends the task"
+            tasks[&tid()].beat_extras(start).seq,
+            Some(2),
+            "the beat shows the seq of the state held"
         );
+        let mesh = habilis_network::protocol::MeshId::from("test");
+        let object = rpc_error::task_object(&tid(), &tasks[&tid()], &mesh);
+        assert_eq!(
+            object["metadata"]["mesh:seq"], 2,
+            "GetTask shows the seq of the state held"
+        );
+
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .close(TaskState::Completed, start);
+        let owed = vec![(tid(), peer_key("calm-otter"))];
+        assert_eq!(
+            super::owed_end_legs(&tasks, &closed(), &owed),
+            vec![(tid(), peer_key("calm-otter"), TaskState::Completed, 2)],
+            "the end that is owed shows the seq of the state held"
+        );
+
+        let mut reaped = closed();
+        let timeout = Duration::from_secs(1);
+        super::sweep_registry(&mut tasks, &mut reaped, later(start, timeout * 2), timeout);
+        assert_eq!(
+            reaped.get(&tid()).map(|task| task.seq),
+            Some(2),
+            "the closed record keeps the seq of the state held"
+        );
+    }
+
+    /// A beat at a seq below the one held shows nothing: the worker numbers a beat with the seq of
+    /// the last leg whose state it holds, and a leg in flight may reach this node first. The task
+    /// goes on, and no question is asked.
+    #[test]
+    fn a_beat_at_a_seq_below_the_one_held_shows_nothing() {
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .peer_seq = 5;
+
+        let applied = receive(&mut tasks, &beat_with_progress(10, 2));
+        assert_eq!(applied.beat, None, "the beat asks and ends nothing");
+        assert_eq!(tasks[&tid()].state, TaskState::Working, "the task goes on");
     }
 
     /// An ask whose reply never came (the call timed out, or its reply was lost) lapses after one
@@ -4936,7 +4921,6 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter"),
                 snapshot: snapshot_at(TaskState::Working, 1),
-                sent_at: UnixSecs::now(),
                 now: start,
             },
         );
@@ -4962,7 +4946,6 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key("calm-otter"),
                     snapshot: snapshot_at(TaskState::InputRequired, seq),
-                    sent_at: UnixSecs::now(),
                     now: start,
                 },
             )
@@ -4981,38 +4964,6 @@ mod tests {
         );
     }
 
-    /// The seq of a snapshot is stamped with the time that the worker sent the reply, by the clock
-    /// of the worker, which is the clock that its beats are judged by: a worker whose clock is off
-    /// must not be taken for a worker that lost the task.
-    #[test]
-    fn a_snapshot_stamps_its_seq_with_the_time_the_worker_sent_it() {
-        let start = Instant::now();
-        let mut tasks = working_task_we_opened(start);
-        let worker_clock = UnixSecs::now() + Duration::from_secs(90);
-        super::reconcile_initiator(
-            &mut tasks,
-            super::ReconcileParams {
-                task_id: &tid(),
-                peer_key: &peer_key("calm-otter"),
-                snapshot: snapshot_at(TaskState::Working, 4),
-                sent_at: worker_clock,
-                now: start,
-            },
-        );
-        assert_eq!(
-            tasks[&tid()].peer_seq_at,
-            worker_clock,
-            "the stamp is the clock of the worker, not ours"
-        );
-        let mut healthy = beat_with_progress(10, 3);
-        healthy.timestamp = worker_clock - Duration::from_secs(5);
-        assert!(
-            receive(&mut tasks, &healthy).beat != Some(super::BeatAction::Lost),
-            "a beat that the worker sent before its reply shows nothing, whatever the skew"
-        );
-        assert_eq!(tasks[&tid()].state, TaskState::Working, "the task goes on");
-    }
-
     /// A snapshot that ends the task, or that parks it, raises a notice that carries what the
     /// worker said; one that waits on a result to review carries no text, because the last words
     /// are an older check-in.
@@ -5026,7 +4977,6 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key("calm-otter"),
                     snapshot: stated,
-                    sent_at: UnixSecs::now(),
                     now: start,
                 },
             )
@@ -5074,30 +5024,11 @@ mod tests {
         );
     }
 
-    /// A task that ends with no leg of ours (the worker lost it, or the peer left) takes the next
-    /// seq, so that the end sent again later is no repeat of a seq that the peer may hold.
+    /// A task that ends with no leg of ours (the peer left) takes the next seq, so that the end
+    /// sent again later is no repeat of a seq that the peer may hold.
     #[test]
     fn an_end_with_no_leg_takes_the_next_seq() {
         let start = Instant::now();
-        let mut lost = working_task_we_opened(start);
-        {
-            let rec = lost
-                .get_mut(&tid())
-                .expect("the test inserted this task earlier");
-            rec.seq = 3;
-            rec.peer_seq = 5;
-            rec.peer_seq_at = UnixSecs::now() - Duration::from_secs(10);
-        }
-        assert!(
-            receive(&mut lost, &beat_with_progress(10, 2)).beat == Some(super::BeatAction::Lost),
-            "the worker lost the task"
-        );
-        assert_eq!(
-            lost[&tid()].seq,
-            4,
-            "the end sent again must not repeat a seq the peer may hold"
-        );
-
         let mut left = working_task_we_opened(start);
         left.get_mut(&tid())
             .expect("the test inserted this task earlier")
@@ -5474,7 +5405,6 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter-twin"),
                 snapshot: snapshot_at(TaskState::Failed, 9),
-                sent_at: UnixSecs::now(),
                 now: now + Duration::from_mins(5),
             },
         );
