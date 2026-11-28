@@ -132,11 +132,9 @@ pub(crate) struct TaskRecord {
     /// When the leg that set `peer_seq` was sent, by the clock of its sender. A beat that was sent
     /// before it shows nothing about the worker now.
     pub peer_seq_at: UnixSecs,
-    /// The highest `mesh:seq` that a beat of the worker showed and that this node asked the worker
-    /// about, so that one beat seq costs one question.
-    pub asked_seq: u64,
-    /// When this node asked about `asked_seq`. An ask whose reply never came (refused, timed out,
-    /// or lost) lapses after one call timeout, so a later beat asks again.
+    /// When this node asked the worker about a leg that a beat showed and that never arrived.
+    /// One ask is in flight per task: the reply clears it, and one whose reply never came
+    /// (refused, timed out, or lost) lapses after one call timeout, so a later beat asks again.
     pub asked_at: Option<Instant>,
 }
 
@@ -182,7 +180,6 @@ impl TaskRecord {
             applied_seq: 0,
             peer_seq: 0,
             peer_seq_at: UnixSecs::from(0),
-            asked_seq: 0,
             asked_at: None,
         }
     }
@@ -579,19 +576,17 @@ fn worker_lost(
 }
 
 /// Whether a beat that repeats the seq `beat_seq` shows a leg that this node never took in, on a
-/// task that is open, and that this node has not asked about yet. It marks the seq as asked, so one
-/// seq costs one question.
+/// task that is open, with no ask about it in flight. It marks the ask, so a task has one ask in
+/// flight and a worker that beats fast costs one question at a time.
 fn asks_for_repair(rec: &mut TaskRecord, beat_seq: Option<u64>, now: Instant) -> bool {
     let call_timeout = Duration::from_secs(tuning::CALL_TIMEOUT_SECS);
-    let lapsed = rec
+    let in_flight = rec
         .asked_at
-        .is_none_or(|at| now.duration_since(at) >= call_timeout);
-    let shown = beat_seq.filter(|seq| *seq > rec.peer_seq && (*seq > rec.asked_seq || lapsed));
-    let Some(seq) = shown.filter(|_| rec.role == TaskRole::Initiator && !rec.state.is_terminal())
-    else {
+        .is_some_and(|at| now.duration_since(at) < call_timeout);
+    let shows_missing = beat_seq.is_some_and(|seq| seq > rec.peer_seq);
+    if in_flight || !shows_missing || rec.role != TaskRole::Initiator || rec.state.is_terminal() {
         return false;
-    };
-    rec.asked_seq = seq;
+    }
     rec.asked_at = Some(now);
     true
 }
@@ -600,7 +595,6 @@ fn asks_for_repair(rec: &mut TaskRecord, beat_seq: Option<u64>, now: Instant) ->
 /// shows the missing leg asks again.
 pub(crate) fn forget_ask(tasks: &mut HashMap<TaskId, TaskRecord>, task_id: &TaskId) {
     if let Some(rec) = tasks.get_mut(task_id) {
-        rec.asked_seq = 0;
         rec.asked_at = None;
     }
 }
@@ -1069,6 +1063,7 @@ pub(crate) fn reconcile_initiator(
     // A reply shows that the worker is alive, and it moves the reaper's clocks and no other.
     rec.last_activity = now;
     rec.last_peer_activity = now;
+    rec.asked_at = None;
     let seq = snapshot.seq.filter(|seq| *seq > rec.peer_seq)?;
     let asked = rec.state;
     rec.peer_seq = seq;
@@ -4608,10 +4603,10 @@ mod tests {
     }
 
     /// A beat of the worker that repeats a seq above the one taken in shows a leg that never
-    /// arrived: the sender asks the worker for its task, once for each such seq, and never for a
-    /// seq it already holds.
+    /// arrived: the sender asks the worker for its task, once while the ask is in flight, and
+    /// never for a seq it already holds.
     #[test]
-    fn a_beat_that_shows_a_lost_leg_asks_once_per_seq() {
+    fn a_beat_that_shows_a_lost_leg_asks_once() {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
         tasks
@@ -4629,8 +4624,8 @@ mod tests {
             "the same seq is asked about once"
         );
         assert!(
-            receive(&mut tasks, &beat_with_progress(10, 6)).beat == Some(super::BeatAction::Ask),
-            "a higher seq is a new question"
+            receive(&mut tasks, &beat_with_progress(10, 6)).beat != Some(super::BeatAction::Ask),
+            "a higher seq waits for the ask in flight"
         );
         assert!(
             receive(&mut tasks, &beat_with_progress(10, 2)).beat != Some(super::BeatAction::Ask),
@@ -4913,6 +4908,43 @@ mod tests {
         assert!(
             super::asks_for_repair(forgotten, Some(5), lapsed),
             "an ask that never left is asked again by the next beat"
+        );
+    }
+
+    /// A worker that beats at ever higher seqs and never answers costs one ask, not one per beat:
+    /// the waiters of the node are shared by every call, so one task must not fill them. The
+    /// reply clears the ask, and a later beat that still shows a missing leg asks again.
+    #[test]
+    fn a_task_has_one_ask_in_flight() {
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
+        let asks = (1..=64)
+            .filter(|seq| super::asks_for_repair(rec, Some(*seq), start))
+            .count();
+        assert_eq!(
+            asks, 1,
+            "beats at 64 seqs cost one ask while it is in flight"
+        );
+
+        super::reconcile_initiator(
+            &mut tasks,
+            super::ReconcileParams {
+                task_id: &tid(),
+                peer_key: &peer_key("calm-otter"),
+                snapshot: snapshot_at(TaskState::Working, 1),
+                sent_at: UnixSecs::now(),
+                now: start,
+            },
+        );
+        let answered = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
+        assert!(
+            super::asks_for_repair(answered, Some(9), start),
+            "the reply cleared the ask, so a beat that shows a leg beyond it asks again"
         );
     }
 
