@@ -229,8 +229,18 @@ pub struct OverdueNotice {
 
 /// The event of a question that was lost on the way.
 ///
+/// The friendly name of a task state, the one the agent surface speaks.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's `serialize_with` passes the field by reference"
+)]
+fn friendly_state<S: serde::Serializer>(state: &TaskState, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_str(state.friendly_name())
+}
+
 /// The beat of the worker showed a leg that never arrived, and the task that the worker then
-/// reported waits for the answer of the sender. The fields are the keys of the `task_gap` line.
+/// reported waits for the answer of the sender, or is over. The fields are the keys of the
+/// `task_gap` line.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[non_exhaustive]
 pub struct GapNotice {
@@ -238,9 +248,19 @@ pub struct GapNotice {
     pub task_id: TaskId,
     /// The worker.
     pub peer: Nickname,
-    /// What the worker said last, which is the question when the worker asked one.
+    /// The state that the worker reported: `input-required`, or an end.
+    #[serde(serialize_with = "friendly_state")]
+    pub state: TaskState,
+    /// What the worker said last, which is the question when the worker asked one. Absent when the
+    /// task waits on a result to review, because the last words are then an older check-in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// `true` when the cap cut `text`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// `true` when the task waits on a result to review, which the lost leg carried.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub review: bool,
 }
 
 /// The reminder a worker raises when it owes a check-in. The fields are the keys of the

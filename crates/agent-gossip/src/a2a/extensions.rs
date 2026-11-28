@@ -37,3 +37,5 @@ pub(super) const META_SEQ: &str = "mesh:seq";
 pub(super) const META_CHECKIN_AGE: &str = "mesh:checkin_age";
 /// What changed, from the last check-in of a task, in `GetTask` and `ListTasks`.
 pub(super) const META_STATUS_TEXT: &str = "mesh:status_text";
+/// Present and true when the cap cut `mesh:status_text`.
+pub(super) const META_STATUS_TRUNCATED: &str = "mesh:status_truncated";

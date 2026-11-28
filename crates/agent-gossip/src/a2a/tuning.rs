@@ -165,11 +165,12 @@ pub(crate) const TASKS_CAP: usize = 1024;
 /// bounded by the frame size.
 pub(crate) const TASK_LABEL_MAX_CHARS: usize = 120;
 
-/// Longest status text kept per task from a check-in, in characters.
-pub(crate) const TASK_STATUS_TEXT_MAX_CHARS: usize = 280;
-/// The longest unanswered brief or follow-up a `checkin_due` reminder repeats, in characters. One
-/// such text is held per task, and tasks are capped, so the memory it takes has a bound.
-pub(crate) const TASK_UNANSWERED_TEXT_MAX_CHARS: usize = 2000;
+/// Longest status text kept per task from a check-in, in characters. One such text is held per
+/// task, and tasks are capped, so the memory it takes has a bound.
+pub(crate) const TASK_STATUS_TEXT_MAX_CHARS: usize = 2000;
+/// The longest unanswered brief or follow-up a `checkin_due` reminder repeats, in characters. It
+/// follows the status text, so the two read alike.
+pub(crate) const TASK_UNANSWERED_TEXT_MAX_CHARS: usize = TASK_STATUS_TEXT_MAX_CHARS;
 
 /// Chat keys remembered to tell a replayed chat line from a new one. A replay
 /// reaches the app only after the engine's dedup FIFO has seen `SEEN_IDS_CAP`

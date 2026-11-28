@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use habilis_network::ops::blob::{BlobServer, ContentId};
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
-use habilis_network::protocol::{AuthorKey, DedupKey, MeshId, Nickname, ShardGroup};
+use habilis_network::protocol::{AuthorKey, DedupKey, MeshId, Nickname, ShardGroup, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -11,10 +11,12 @@ use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_binding::A2aBinding;
-use crate::a2a::extensions::{META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_WAITING_USER};
+use crate::a2a::extensions::{
+    META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_STATUS_TRUNCATED, META_WAITING_USER,
+};
 use crate::a2a::repair_budget::RepairBudget;
 use crate::a2a::rpc_error::{self, A2aRequest, RpcError};
-use crate::a2a::status_update_params::{Progress, clean_label, clean_text};
+use crate::a2a::status_update_params::{Progress, capped_text, clean_label};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
 use crate::a2a::{META_LABEL, TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
@@ -469,9 +471,10 @@ impl A2aApp {
     pub(crate) fn fulfill_a2a_waiter(
         &mut self,
         corr: &habilis_network::protocol::CorrId,
-        from_key: &AuthorKey,
+        from: (&AuthorKey, UnixSecs),
         body: &str,
     ) {
+        let (from_key, sent_at) = from;
         let Some(index) = self
             .a2a_waiters
             .iter()
@@ -487,7 +490,7 @@ impl A2aApp {
                 && returned_task(body).is_some_and(|task| task.id == opening.task_id)
         });
         if answered {
-            self.reconcile_returned_task(from_key, body);
+            self.reconcile_returned_task((from_key, sent_at), body);
         } else {
             self.drop_opening(waiter.opening.as_ref());
         }
@@ -559,7 +562,8 @@ impl A2aApp {
     /// `GetTask` result is the bare `Task`) with the record that this node holds. A reply that
     /// returns no task, or a task we hold no record of, changes nothing: only dispatch opens a
     /// record on this side.
-    fn reconcile_returned_task(&mut self, peer_key: &AuthorKey, body: &str) {
+    fn reconcile_returned_task(&mut self, from: (&AuthorKey, UnixSecs), body: &str) {
+        let (peer_key, sent_at) = from;
         let Some(returned) = returned_task(body) else {
             return;
         };
@@ -569,12 +573,13 @@ impl A2aApp {
                 task_id: &returned.id,
                 peer_key,
                 snapshot: returned.snapshot,
+                sent_at,
                 now: Instant::now(),
             },
         );
         // The worker echoes the label of the brief, so the alarm can name the task.
         task_record::set_label(&mut self.tasks, &returned.id, peer_key, returned.label);
-        // A question that was lost on the way: the agent of the sender must read it again.
+        // A question or an end that was lost on the way: the agent of the sender must hear it.
         if let Some(gap) = gap {
             self.output.task_gap(&gap);
         }
@@ -733,9 +738,12 @@ fn returned_task(body: &str) -> Option<ReturnedTask> {
         .as_str()
         .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())?;
     let meta = &task["metadata"];
-    let text = meta[META_STATUS_TEXT]
+    let mut text = meta[META_STATUS_TEXT]
         .as_str()
-        .and_then(|text| clean_text(text, tuning::TASK_STATUS_TEXT_MAX_CHARS));
+        .and_then(|text| capped_text(text, tuning::TASK_STATUS_TEXT_MAX_CHARS));
+    if let Some(capped) = text.as_mut() {
+        capped.truncated |= meta[META_STATUS_TRUNCATED].as_bool().unwrap_or(false);
+    }
     let waiting_user = meta[META_WAITING_USER].as_bool().unwrap_or(false);
     let review = meta["mesh:review"].as_bool().unwrap_or(false);
     let snapshot = task_record::Snapshot {
@@ -813,7 +821,7 @@ mod tests {
 
     use habilis_network::ops::blob::ContentId;
     use habilis_network::protocol::{
-        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
+        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname, UnixSecs,
     };
     use tokio::sync::oneshot;
 
@@ -905,7 +913,6 @@ mod tests {
         );
     }
 
-    /// The receive path sends the owed cancels at once when the list is full, so the list never
     /// The receive path sends the owed ends at once when the list is full, so the list never holds
     /// more than the cap, and no end is dropped.
     #[test]
@@ -1325,7 +1332,11 @@ mod tests {
             mesh: MeshId::from("test"),
         });
 
-        app.fulfill_a2a_waiter(&wire::corr_id("corr-key"), &other_bob_key(), "{}");
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-key"),
+            (&other_bob_key(), UnixSecs::now()),
+            "{}",
+        );
 
         assert!(
             rx.try_recv().is_err(),
@@ -1397,7 +1408,7 @@ mod tests {
     }
 
     fn fulfill(app: &mut super::A2aApp, corr: &str, key: &AuthorKey, body: &str) {
-        app.fulfill_a2a_waiter(&wire::corr_id(corr), key, body);
+        app.fulfill_a2a_waiter(&wire::corr_id(corr), (key, UnixSecs::now()), body);
     }
 
     /// The worker refused the opening: the record the call made at dispatch goes, and its file

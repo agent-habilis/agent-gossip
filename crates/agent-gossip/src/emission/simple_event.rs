@@ -363,13 +363,20 @@ pub(super) fn checkin_due_event(notice: &CheckinNotice) -> SimpleEvent<'_> {
     }
 }
 
-/// The `task_gap` event: a question of the worker was lost on the way. It is never shown, so its
-/// `display` only keeps the line readable in a raw poll.
+/// The `task_gap` event: a leg of the worker was lost on the way. A question is answered by the
+/// agent that reads it again, and is never shown, so its `display` only keeps the line readable in
+/// a raw poll. The end of the task is shown, as the status leg that was lost would have been.
 pub(super) fn task_gap_event(notice: &GapNotice) -> SimpleEvent<'_> {
-    SimpleEvent::TaskGap {
-        notice,
-        display: format!("{DISPLAY_GLYPH} task gap · `<{}>`", notice.peer),
-    }
+    let display = if notice.state.is_terminal() {
+        let body = notice.text.as_deref().unwrap_or_default();
+        format!(
+            "{DISPLAY_GLYPH} task status-update {} `<{}>`: {body}",
+            notice.state, notice.peer
+        )
+    } else {
+        format!("{DISPLAY_GLYPH} task gap · `<{}>`", notice.peer)
+    };
+    SimpleEvent::TaskGap { notice, display }
 }
 
 /// `display` line for a `peer_return` event.
@@ -436,6 +443,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::EventsLost { .. }
         | OutputEvent::NicknameHeld { .. }
         | OutputEvent::TaskOverdue { .. } => true,
+        OutputEvent::TaskGap { notice } => notice.state.is_terminal(),
         OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
             MessageKind::Presence {
@@ -446,7 +454,6 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::CheckinDue { .. }
-        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }

@@ -719,12 +719,15 @@ fn task_overdue_waiting_on_user_does_not_wake() {
 #[test]
 fn task_gap_event_json_shape() {
     use super::OutputEvent;
-    use crate::a2a::TaskId;
+    use crate::a2a::{TaskId, TaskState};
     let event = OutputEvent::TaskGap {
         notice: crate::output_event::GapNotice {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            state: TaskState::InputRequired,
             text: Some("which port?".to_owned()),
+            truncated: false,
+            review: false,
         },
     };
     let json = simple_event::event_json(&event).expect("task_gap event produces a JSON line");
@@ -750,13 +753,43 @@ fn task_gap_event_json_shape() {
         notice: crate::output_event::GapNotice {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            state: TaskState::InputRequired,
             text: None,
+            truncated: false,
+            review: true,
         },
     };
     let bare_json = simple_event::event_json(&bare).expect("task_gap event produces a JSON line");
     assert!(
         parse(&bare_json).get("text").is_none(),
         "a gap with no text leaves the key out"
+    );
+}
+
+/// A `task_gap` that carries the end of the task is shown, as the status leg that was lost would
+/// have been.
+#[test]
+fn a_task_gap_that_ends_the_task_is_shown() {
+    use super::OutputEvent;
+    use crate::a2a::{TaskId, TaskState};
+    let event = OutputEvent::TaskGap {
+        notice: crate::output_event::GapNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            state: TaskState::Completed,
+            text: Some("all done".to_owned()),
+            truncated: false,
+            review: false,
+        },
+    };
+    let json = simple_event::event_json(&event).expect("task_gap event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["state"], "completed", "the line names the end");
+    assert!(simple_event::is_visible(&event), "the end is shown");
+    let display = parsed["display"].as_str().expect("the line has a display");
+    assert!(
+        display.contains("completed") && display.contains("all done"),
+        "the display carries the end and its text: {display}"
     );
 }
 

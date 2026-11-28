@@ -18,6 +18,7 @@
 //! `canceled` status so the other side converges.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
@@ -104,6 +105,8 @@ pub(crate) struct TaskRecord {
     pub waiting_user: bool,
     /// What changed, from the last check-in leg, capped. Not replayed.
     pub status_text: Option<String>,
+    /// Whether the cap cut `status_text`.
+    pub status_truncated: bool,
     /// The initiator's one-line name for the task, as the brief carried it.
     pub label: Option<String>,
     /// The brief or follow-up the worker has not answered yet, so a reminder can repeat it.
@@ -127,6 +130,9 @@ pub(crate) struct TaskRecord {
     /// The highest `mesh:seq` that a beat of the worker showed and that this node asked the worker
     /// about, so that one beat seq costs one question.
     pub asked_seq: u64,
+    /// When this node asked about `asked_seq`. An ask whose reply never came (refused, timed out,
+    /// or lost) lapses after one call timeout, so a later beat asks again.
+    pub asked_at: Option<Instant>,
 }
 
 /// What the worker's last beat said about its agent, and when it arrived.
@@ -162,6 +168,7 @@ impl TaskRecord {
             shown_seq: 0,
             waiting_user: false,
             status_text: None,
+            status_truncated: false,
             label: None,
             unanswered: None,
             last_notice: None,
@@ -170,6 +177,7 @@ impl TaskRecord {
             peer_seq: 0,
             peer_seq_at: UnixSecs::from(0),
             asked_seq: 0,
+            asked_at: None,
         }
     }
 
@@ -180,6 +188,14 @@ impl TaskRecord {
         self.review = false;
         self.waiting_user = false;
         self.last_activity = now;
+    }
+
+    /// End the task as canceled by this node without a leg of its own to carry it (the worker lost
+    /// the task, or the peer left). The end takes the next seq, as the cancel of the sweep does, so
+    /// that an end sent again later is no repeat of a seq that the peer may already hold.
+    pub(crate) fn cancel_without_leg(&mut self, now: Instant) {
+        self.close(TaskState::Canceled, now);
+        self.seq = self.seq.saturating_add(1);
     }
 
     /// Whoever owes the next move: the worker on a live task, the initiator once the task
@@ -352,7 +368,7 @@ struct Facts {
     at: UnixSecs,
     /// The note of a status leg, which is what the worker said last: a check-in's text, or the
     /// question it asked.
-    text: Option<String>,
+    text: Option<status_update_params::CappedText>,
     checkin: Option<CheckinFields>,
     beat: Option<(PeerBeat, Option<Progress>)>,
 }
@@ -512,7 +528,7 @@ pub(crate) fn apply_leg(
         && !lost
         && tasks
             .get_mut(task_id)
-            .is_some_and(|rec| asks_for_repair(rec, facts.seq));
+            .is_some_and(|rec| asks_for_repair(rec, facts.seq, now));
     let beat = if lost {
         Some(BeatAction::Lost)
     } else {
@@ -540,21 +556,35 @@ fn worker_lost(
     if !behind || rec.role != TaskRole::Initiator || rec.state.is_terminal() {
         return false;
     }
-    rec.close(TaskState::Canceled, now);
+    rec.cancel_without_leg(now);
     true
 }
 
 /// Whether a beat that repeats the seq `beat_seq` shows a leg that this node never took in, on a
 /// task that is open, and that this node has not asked about yet. It marks the seq as asked, so one
 /// seq costs one question.
-fn asks_for_repair(rec: &mut TaskRecord, beat_seq: Option<u64>) -> bool {
-    let shown = beat_seq.filter(|seq| *seq > rec.peer_seq && *seq > rec.asked_seq);
+fn asks_for_repair(rec: &mut TaskRecord, beat_seq: Option<u64>, now: Instant) -> bool {
+    let call_timeout = Duration::from_secs(tuning::CALL_TIMEOUT_SECS);
+    let lapsed = rec
+        .asked_at
+        .is_none_or(|at| now.duration_since(at) >= call_timeout);
+    let shown = beat_seq.filter(|seq| *seq > rec.peer_seq && (*seq > rec.asked_seq || lapsed));
     let Some(seq) = shown.filter(|_| rec.role == TaskRole::Initiator && !rec.state.is_terminal())
     else {
         return false;
     };
     rec.asked_seq = seq;
+    rec.asked_at = Some(now);
     true
+}
+
+/// Forget that this node asked about `task_id`, because the ask never left: the next beat that
+/// shows the missing leg asks again.
+pub(crate) fn forget_ask(tasks: &mut HashMap<TaskId, TaskRecord>, task_id: &TaskId) {
+    if let Some(rec) = tasks.get_mut(task_id) {
+        rec.asked_seq = 0;
+        rec.asked_at = None;
+    }
 }
 
 /// Whether this node ended the task by a leg of its own, which a peer that still beats never got:
@@ -605,8 +635,9 @@ fn record_frame_facts(
                 .checkin
                 .as_ref()
                 .is_some_and(|checkin| quarter_changed(rec.last_progress, checkin.progress));
-            if facts.text.is_some() {
-                rec.status_text.clone_from(&facts.text);
+            if let Some(capped) = &facts.text {
+                rec.status_text = Some(capped.text.clone());
+                rec.status_truncated = capped.truncated;
             }
             record_checkin(rec, facts.checkin.as_ref(), facts.seq);
         }
@@ -662,15 +693,44 @@ fn is_stale(frame: &Message) -> bool {
     match clock_skew(frame.timestamp) {
         Some(ClockSkew::Behind) => true,
         Some(ClockSkew::Ahead) => {
-            tracing::warn!(
-                target: "agent_gossip::a2a",
-                author = %frame.author,
-                "a beat from a clock that is ahead of ours by more than the tolerance was ignored: \
-                 the clocks of the two hosts differ"
-            );
+            warn_clock_ahead(&frame.author, frame.timestamp);
             true
         }
         None => false,
+    }
+}
+
+/// The least time between two warnings that a clock runs ahead, so that a peer whose clock is off
+/// does not write a line for every beat it sends.
+const CLOCK_AHEAD_WARN_SECS: i64 = 300;
+
+/// The second of the last warning that a clock runs ahead. One value for the whole process bounds
+/// the warnings, whoever sends the beats.
+static LAST_CLOCK_AHEAD_WARNING: AtomicI64 = AtomicI64::new(i64::MIN);
+
+/// Warn that `author`'s clock, which stamped a beat at `sent_at`, runs ahead of ours: the beat was
+/// ignored. At most one warning in [`CLOCK_AHEAD_WARN_SECS`], with the skew it saw.
+fn warn_clock_ahead(author: &Nickname, sent_at: UnixSecs) {
+    let now = UnixSecs::now();
+    let last = LAST_CLOCK_AHEAD_WARNING.load(Ordering::Relaxed);
+    if now.as_secs().saturating_sub(last) < CLOCK_AHEAD_WARN_SECS {
+        return;
+    }
+    let claimed = LAST_CLOCK_AHEAD_WARNING.compare_exchange(
+        last,
+        now.as_secs(),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
+    if claimed.is_ok() {
+        let ahead = sent_at.since(now);
+        tracing::warn!(
+            target: "agent_gossip::a2a",
+            %author,
+            ahead_secs = ahead.as_secs(),
+            "a beat from a clock that is ahead of ours by more than the tolerance was ignored: \
+             the clocks of the two hosts differ"
+        );
     }
 }
 
@@ -940,7 +1000,7 @@ pub(crate) struct Snapshot {
     pub(crate) seq: Option<u64>,
     pub(crate) progress: Option<Progress>,
     /// What the worker said last, which is the question when it asked one.
-    pub(crate) text: Option<String>,
+    pub(crate) text: Option<status_update_params::CappedText>,
     pub(crate) waiting_user: bool,
     pub(crate) review: bool,
 }
@@ -950,6 +1010,9 @@ pub(crate) struct ReconcileParams<'caller> {
     pub(crate) task_id: &'caller TaskId,
     pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) snapshot: Snapshot,
+    /// When the worker sent the reply that carried the snapshot, by the clock of the worker: the
+    /// clock that a beat of the worker is judged by.
+    pub(crate) sent_at: UnixSecs,
     pub(crate) now: Instant,
 }
 
@@ -974,6 +1037,7 @@ pub(crate) fn reconcile_initiator(
         task_id,
         peer_key,
         snapshot,
+        sent_at,
         now,
     } = params;
     let rec = tasks.get_mut(task_id)?;
@@ -991,7 +1055,7 @@ pub(crate) fn reconcile_initiator(
     let seq = snapshot.seq.filter(|seq| *seq > rec.peer_seq)?;
     let asked = rec.state;
     rec.peer_seq = seq;
-    rec.peer_seq_at = UnixSecs::now();
+    rec.peer_seq_at = sent_at;
     if snapshot.state.is_terminal() {
         rec.close(snapshot.state, now);
     } else {
@@ -999,20 +1063,32 @@ pub(crate) fn reconcile_initiator(
         rec.review = snapshot.review;
         rec.waiting_user = snapshot.waiting_user;
     }
-    if snapshot.text.is_some() {
-        rec.status_text.clone_from(&snapshot.text);
+    if let Some(capped) = &snapshot.text {
+        rec.status_text = Some(capped.text.clone());
+        rec.status_truncated = capped.truncated;
     }
     if snapshot.progress.is_some() && seq > rec.shown_seq {
         rec.shown_progress = snapshot.progress;
         rec.shown_seq = seq;
     }
-    (snapshot.state == TaskState::InputRequired && asked != TaskState::InputRequired).then(|| {
-        GapNotice {
-            task_id: task_id.clone(),
-            peer: rec.peer.clone(),
-            text: snapshot.text,
-        }
-    })
+    let parked = snapshot.state == TaskState::InputRequired && asked != TaskState::InputRequired;
+    (parked || snapshot.state.is_terminal()).then(|| gap_notice(task_id, rec, &snapshot))
+}
+
+/// The notice for a snapshot that moved the task where a lost leg would have: into a question, or
+/// to its end. A snapshot in review carries no text: what the worker said last is then an older
+/// check-in, and the result that parked the task is the leg that was lost.
+fn gap_notice(task_id: &TaskId, rec: &TaskRecord, snapshot: &Snapshot) -> GapNotice {
+    let capped = snapshot.text.as_ref().filter(|_| !snapshot.review);
+    let text = capped.map(|capped| capped.text.clone());
+    GapNotice {
+        task_id: task_id.clone(),
+        peer: rec.peer.clone(),
+        state: snapshot.state,
+        text,
+        truncated: capped.is_some_and(|capped| capped.truncated),
+        review: snapshot.review,
+    }
 }
 
 /// Record a follow-up we just sent into a task we opened, with the `mesh:seq` it carried. It
@@ -1063,7 +1139,7 @@ pub(crate) fn give_back_seq(tasks: &mut HashMap<TaskId, TaskRecord>, task_id: &T
     if let Some(rec) = tasks.get_mut(task_id)
         && rec.seq == seq
     {
-        rec.seq = seq.saturating_sub(1);
+        rec.seq = seq - 1;
     }
 }
 
@@ -1503,7 +1579,7 @@ pub(crate) fn fail_tasks_for_departed_peer(
     let now = Instant::now();
     for (task_id, rec) in tasks.iter_mut() {
         if rec.peer_key == *peer_key && !rec.state.is_terminal() {
-            rec.close(TaskState::Canceled, now);
+            rec.cancel_without_leg(now);
             out.task_timeout(task_id, emission::TaskGoneReason::PeerLeft);
             tracing::debug!(%task_id, peer = %peer_key, "task canceled (peer left)");
         }
@@ -1832,6 +1908,14 @@ mod tests {
     fn next_test_seq() -> u64 {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// A text of the worker that the cap did not cut.
+    fn capped(text: &str) -> status_update_params::CappedText {
+        status_update_params::CappedText {
+            text: text.to_owned(),
+            truncated: false,
+        }
     }
 
     /// What the worker's task says when it is in `state` after `seq` legs, with nothing else set.
@@ -2985,6 +3069,7 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter"),
                 snapshot: snapshot_at(TaskState::Working, 9),
+                sent_at: UnixSecs::now(),
                 now: probe,
             },
         );
@@ -3782,6 +3867,7 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key(peer),
                     snapshot: snapshot_at(state, 9),
+                    sent_at: UnixSecs::now(),
                     now: when,
                 },
             );
@@ -4348,6 +4434,7 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter"),
                 snapshot: snapshot_at(TaskState::Failed, 9),
+                sent_at: UnixSecs::now(),
                 now: start,
             },
         );
@@ -4499,7 +4586,7 @@ mod tests {
         let mut tasks = working_task_we_opened(start);
         let snapshot = |seq: u64, percent: u8, text: &str| super::Snapshot {
             progress: Some(progress_of(percent)),
-            text: Some(text.to_owned()),
+            text: Some(capped(text)),
             ..snapshot_at(TaskState::Working, seq)
         };
         let reconcile = |registry: &mut HashMap<TaskId, TaskRecord>, stated| {
@@ -4509,6 +4596,7 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key("calm-otter"),
                     snapshot: stated,
+                    sent_at: UnixSecs::now(),
                     now: start,
                 },
             )
@@ -4547,7 +4635,7 @@ mod tests {
     /// sender is told; a snapshot that leaves the task where it was, or that moves it anywhere
     /// else, is not a gap.
     #[test]
-    fn only_a_lost_question_is_a_gap() {
+    fn only_a_lost_question_or_end_is_a_gap() {
         let start = Instant::now();
         let reconcile = |registry: &mut HashMap<TaskId, TaskRecord>, stated| {
             super::reconcile_initiator(
@@ -4556,12 +4644,13 @@ mod tests {
                     task_id: &tid(),
                     peer_key: &peer_key("calm-otter"),
                     snapshot: stated,
+                    sent_at: UnixSecs::now(),
                     now: start,
                 },
             )
         };
         let question = |seq: u64| super::Snapshot {
-            text: Some("which port?".to_owned()),
+            text: Some(capped("which port?")),
             ..snapshot_at(TaskState::InputRequired, seq)
         };
 
@@ -4588,10 +4677,9 @@ mod tests {
             reconcile(&mut other, snapshot_at(TaskState::Working, 4)).is_none(),
             "a task that works on has lost no question"
         );
-        assert!(
-            reconcile(&mut other, snapshot_at(TaskState::Completed, 5)).is_none(),
-            "a task that ended has lost no question either"
-        );
+        let ended = reconcile(&mut other, snapshot_at(TaskState::Completed, 5))
+            .expect("a task that ended has lost its end, and the agent hears of it");
+        assert_eq!(ended.state, TaskState::Completed, "the notice is that end");
         assert_eq!(
             other[&tid()].state,
             TaskState::Completed,
@@ -4701,6 +4789,170 @@ mod tests {
             TaskState::Canceled,
             "the sender ends the task"
         );
+    }
+
+    /// An ask whose reply never came (the call timed out, or its reply was lost) lapses after one
+    /// call timeout, so a later beat that shows the same missing leg asks again. An ask that never
+    /// left is forgotten at once.
+    #[test]
+    fn an_ask_that_got_no_reply_is_asked_again_once_it_lapses() {
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
+        rec.peer_seq = 2;
+        assert!(
+            super::asks_for_repair(rec, Some(5), start),
+            "the first beat at seq 5 asks"
+        );
+        assert!(
+            !super::asks_for_repair(rec, Some(5), start + Duration::from_secs(1)),
+            "the ask is still waiting for its reply"
+        );
+        let lapsed = start + Duration::from_secs(tuning::CALL_TIMEOUT_SECS);
+        assert!(
+            super::asks_for_repair(rec, Some(5), lapsed),
+            "an ask with no reply after a call timeout is asked again"
+        );
+        assert!(
+            !super::asks_for_repair(rec, Some(5), lapsed),
+            "and then waits again"
+        );
+        super::forget_ask(&mut tasks, &tid());
+        let forgotten = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
+        assert!(
+            super::asks_for_repair(forgotten, Some(5), lapsed),
+            "an ask that never left is asked again by the next beat"
+        );
+    }
+
+    /// The seq of a snapshot is stamped with the time that the worker sent the reply, by the clock
+    /// of the worker, which is the clock that its beats are judged by: a worker whose clock is off
+    /// must not be taken for a worker that lost the task.
+    #[test]
+    fn a_snapshot_stamps_its_seq_with_the_time_the_worker_sent_it() {
+        let start = Instant::now();
+        let mut tasks = working_task_we_opened(start);
+        let worker_clock = UnixSecs::now() + Duration::from_secs(90);
+        super::reconcile_initiator(
+            &mut tasks,
+            super::ReconcileParams {
+                task_id: &tid(),
+                peer_key: &peer_key("calm-otter"),
+                snapshot: snapshot_at(TaskState::Working, 4),
+                sent_at: worker_clock,
+                now: start,
+            },
+        );
+        assert_eq!(
+            tasks[&tid()].peer_seq_at,
+            worker_clock,
+            "the stamp is the clock of the worker, not ours"
+        );
+        let mut healthy = beat_with_progress(10, 3);
+        healthy.timestamp = worker_clock - Duration::from_secs(5);
+        assert!(
+            receive(&mut tasks, &healthy).beat != Some(super::BeatAction::Lost),
+            "a beat that the worker sent before its reply shows nothing, whatever the skew"
+        );
+        assert_eq!(tasks[&tid()].state, TaskState::Working, "the task goes on");
+    }
+
+    /// A snapshot that ends the task, or that parks it, raises a notice that carries what the
+    /// worker said; one that waits on a result to review carries no text, because the last words
+    /// are an older check-in.
+    #[test]
+    fn a_snapshot_that_moves_the_task_raises_a_notice() {
+        let start = Instant::now();
+        let reconcile = |tasks: &mut HashMap<TaskId, TaskRecord>, stated| {
+            super::reconcile_initiator(
+                tasks,
+                super::ReconcileParams {
+                    task_id: &tid(),
+                    peer_key: &peer_key("calm-otter"),
+                    snapshot: stated,
+                    sent_at: UnixSecs::now(),
+                    now: start,
+                },
+            )
+        };
+        let mut done = working_task_we_opened(start);
+        let ended = super::Snapshot {
+            text: Some(status_update_params::CappedText {
+                text: "all\nfine".to_owned(),
+                truncated: true,
+            }),
+            ..snapshot_at(TaskState::Completed, 6)
+        };
+        let notice = reconcile(&mut done, ended).expect("an end that was lost is told");
+        assert_eq!(
+            notice.state,
+            TaskState::Completed,
+            "the notice names the end"
+        );
+        assert_eq!(
+            notice.text.as_deref(),
+            Some("all\nfine"),
+            "newlines are kept"
+        );
+        assert!(notice.truncated, "and the cut is reported");
+        assert_eq!(
+            done[&tid()].state,
+            TaskState::Completed,
+            "the record closed"
+        );
+
+        let mut parked = working_task_we_opened(start);
+        let result = super::Snapshot {
+            text: Some(capped("an older check-in")),
+            review: true,
+            ..snapshot_at(TaskState::InputRequired, 7)
+        };
+        let in_review = reconcile(&mut parked, result).expect("a lost result is told");
+        assert!(
+            in_review.review,
+            "the notice says the task waits on a result"
+        );
+        assert_eq!(
+            in_review.text, None,
+            "the older check-in is not passed off as it"
+        );
+    }
+
+    /// A task that ends with no leg of ours (the worker lost it, or the peer left) takes the next
+    /// seq, so that the end sent again later is no repeat of a seq that the peer may hold.
+    #[test]
+    fn an_end_with_no_leg_takes_the_next_seq() {
+        let start = Instant::now();
+        let mut lost = working_task_we_opened(start);
+        {
+            let rec = lost
+                .get_mut(&tid())
+                .expect("the test inserted this task earlier");
+            rec.seq = 3;
+            rec.peer_seq = 5;
+            rec.peer_seq_at = UnixSecs::now() - Duration::from_secs(10);
+        }
+        assert!(
+            receive(&mut lost, &beat_with_progress(10, 2)).beat == Some(super::BeatAction::Lost),
+            "the worker lost the task"
+        );
+        assert_eq!(
+            lost[&tid()].seq,
+            4,
+            "the end sent again must not repeat a seq the peer may hold"
+        );
+
+        let mut left = working_task_we_opened(start);
+        left.get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .seq = 3;
+        let out = crate::emission::Output::silent();
+        super::fail_tasks_for_departed_peer(&mut left, &peer_key("calm-otter"), &out);
+        assert_eq!(left[&tid()].seq, 4, "an end by a departure takes one too");
     }
 
     /// A relay can replay the last beat of the worker, even within its second: the replay must not
@@ -5070,6 +5322,7 @@ mod tests {
                 task_id: &tid(),
                 peer_key: &peer_key("calm-otter-twin"),
                 snapshot: snapshot_at(TaskState::Failed, 9),
+                sent_at: UnixSecs::now(),
                 now: now + Duration::from_mins(5),
             },
         );

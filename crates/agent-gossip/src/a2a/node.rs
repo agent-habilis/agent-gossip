@@ -502,7 +502,7 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
 /// work on a task that this node ended makes it send the end again. Everything else is plumbing.
 async fn answer_beats(app: &mut A2aApp, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
     for (task_id, peer_key) in app.take_to_ask() {
-        let (reply_tx, _reply_rx) = oneshot::channel();
+        let (reply_tx, mut reply_rx) = oneshot::channel();
         broadcast_params::broadcast_a2a_call(
             broadcast_params::BroadcastA2aCallParams {
                 mesh: context.mesh,
@@ -519,6 +519,12 @@ async fn answer_beats(app: &mut A2aApp, state: &mut EventLoopState, context: &Ha
             context.sender,
         )
         .await;
+        // An answer already here is a refusal of the call itself (no such peer, no room for the
+        // waiter): the ask never left, so the next beat that shows the leg asks again. A reply
+        // that is late or lost lapses on its own after one call timeout.
+        if reply_rx.try_recv().is_ok() {
+            task_record::forget_ask(&mut app.tasks, &task_id);
+        }
     }
     if app.owes_ends() {
         task_record::send_owed_ends(state, app, context).await;
@@ -730,7 +736,11 @@ async fn handle_a2a_rpc(
         // outstanding waiter). An unsolicited response is ignored — otherwise
         // any member could move initiator-side task records by forging responses. The waiter
         // reconciles the authoritative `Task` a reply returned.
-        app.fulfill_a2a_waiter(corr, &message.key(), message.body.as_str());
+        app.fulfill_a2a_waiter(
+            corr,
+            (&message.key(), message.timestamp),
+            message.body.as_str(),
+        );
         // No test drives this call: the event-loop types have no test constructor. The decision
         // itself, `owed_ends_full`, has a test at 10 times the cap. If this line goes, the
         // owed cancels wait for the next task sweep and the list can pass its cap.

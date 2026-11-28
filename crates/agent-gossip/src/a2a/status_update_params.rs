@@ -502,14 +502,40 @@ pub fn status_waiting_user(update: &TaskStatusUpdate) -> bool {
     flag.and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
+/// A text of a peer, as the agent reads it: cleaned, and capped with a note of whether the cap cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CappedText {
+    pub text: String,
+    /// Whether the cap cut the text.
+    pub truncated: bool,
+}
+
+/// `raw` without its control characters except the newline (a tab reads as a space), trimmed, and
+/// capped at `max` characters; `None` when nothing is left. The trim comes first, so a run of
+/// spaces in front cannot use up the cap.
+pub(crate) fn capped_text(raw: &str, max: usize) -> Option<CappedText> {
+    let spaced = raw.chars().map(|ch| if ch == '\t' { ' ' } else { ch });
+    let visible: String = spaced
+        .filter(|ch| !ch.is_control() || *ch == '\n')
+        .collect();
+    let mut chars = visible.trim().chars();
+    let kept: String = chars.by_ref().take(max).collect();
+    let truncated = chars.next().is_some();
+    let text = kept.trim_end();
+    (!text.is_empty()).then(|| CappedText {
+        text: text.to_owned(),
+        truncated,
+    })
+}
+
 /// The note of a status leg, the "what changed" line of a check-in.
 ///
-/// Peer-controlled text that `GetTask` and `task_progress` echo, so it gets the
-/// control-character strip of [`task_label`] and its own length cap.
+/// Peer-controlled text that `GetTask` and `task_progress` echo, so it gets the control-character
+/// strip and the length cap of [`capped_text`], the rule of the `checkin_due` reminder too.
 #[must_use]
-pub fn status_text(update: &TaskStatusUpdate) -> Option<String> {
+pub(crate) fn status_text(update: &TaskStatusUpdate) -> Option<CappedText> {
     let message = update.status.message.as_ref()?;
-    clean_text(
+    capped_text(
         &parts_text(&message.parts),
         super::tuning::TASK_STATUS_TEXT_MAX_CHARS,
     )

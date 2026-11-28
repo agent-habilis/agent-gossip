@@ -5,7 +5,8 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use super::extensions::{
-    META_LABEL, META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_UNCONFIRMED, META_WAITING_USER,
+    META_LABEL, META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_STATUS_TRUNCATED, META_UNCONFIRMED,
+    META_WAITING_USER,
 };
 use super::task_record::{TaskRecord, TaskRole};
 use super::{TaskId, TaskState};
@@ -253,6 +254,9 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
     }
     if let Some(text) = &rec.status_text {
         metadata[META_STATUS_TEXT] = Value::from(text.as_str());
+        if rec.status_truncated {
+            metadata[META_STATUS_TRUNCATED] = Value::from(true);
+        }
     }
     if let Some(progress) = rec.shown_progress {
         metadata[META_PROGRESS] = Value::from(progress.percent());
