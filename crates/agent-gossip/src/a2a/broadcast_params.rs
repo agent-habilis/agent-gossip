@@ -2560,6 +2560,12 @@ pub(crate) async fn handle_session_request(
             false
         }
         #[cfg(feature = "adversarial")]
+        SessionRequest::DropTaskLegs { count, response } => {
+            app.legs_to_drop = count;
+            let _ = response.send(());
+            false
+        }
+        #[cfg(feature = "adversarial")]
         SessionRequest::SealKeyOf { key, response } => {
             let _ = response.send(state.seal_key_of(&key).copied());
             false

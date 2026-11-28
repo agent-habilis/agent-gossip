@@ -149,6 +149,13 @@ pub enum OutputEvent {
         /// What the reminder says.
         notice: CheckinNotice,
     },
+    /// The worker told this sender, by a beat, of a leg that never arrived, and the task that the
+    /// worker then reported is waiting on the sender's answer. Rings its bell only; it is never
+    /// shown.
+    TaskGap {
+        /// What the event says.
+        notice: GapNotice,
+    },
     /// A delivery or read receipt for a message the local node sent.
     Receipt {
         /// The peer that sent the receipt.
@@ -196,6 +203,9 @@ pub enum TaskGoneReason {
     Timeout,
     /// The counterparty left the mesh gracefully.
     PeerLeft,
+    /// The worker's beat numbered its legs backwards: it started the task over, so this node
+    /// ended it.
+    WorkerLost,
 }
 
 /// The alarm a sender raises when a worker's agent has not checked in for 2·X. The fields are
@@ -218,6 +228,22 @@ pub struct OverdueNotice {
     /// `true` when the worker never accepted the task.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub not_picked_up: bool,
+}
+
+/// The event of a question that was lost on the way.
+///
+/// The beat of the worker showed a leg that never arrived, and the task that the worker then
+/// reported waits for the answer of the sender. The fields are the keys of the `task_gap` line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct GapNotice {
+    /// The task that waits for an answer.
+    pub task_id: TaskId,
+    /// The worker.
+    pub peer: Nickname,
+    /// What the worker said last, which is the question when the worker asked one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// The reminder a worker raises when it owes a check-in. The fields are the keys of the

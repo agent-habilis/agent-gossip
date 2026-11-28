@@ -8,10 +8,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::error::TrySendError;
 
 use super::{
-    CheckinNotice, OutputEvent, OutputMode, OverdueNotice, PingPeer, ReadyParams, ReceiptParams,
-    SimpleEvent, StateChangedParams, TaskGoneReason, TaskId, TaskMessageLeg, checkin_due_event,
-    emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
-    ping_report_display, print_message_json, simple_event, task_overdue_event,
+    CheckinNotice, GapNotice, OutputEvent, OutputMode, OverdueNotice, PingPeer, ReadyParams,
+    ReceiptParams, SimpleEvent, StateChangedParams, TaskGoneReason, TaskId, TaskMessageLeg,
+    checkin_due_event, emit, emit_json, format_presence_json, peer_return_display,
+    peer_timeout_display, ping_report_display, print_message_json, simple_event, task_gap_event,
+    task_overdue_event,
 };
 use crate::a2a::{node, wire};
 
@@ -377,6 +378,19 @@ impl Output {
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(&checkin_due_event(notice), false),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// A question of the worker was lost on the way. It rings the bell and is never shown.
+    pub(crate) fn task_gap(&self, notice: &GapNotice) {
+        self.dispatch(
+            || OutputEvent::TaskGap {
+                notice: notice.clone(),
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(&task_gap_event(notice), false),
                 OutputMode::Silent => {}
             },
         );

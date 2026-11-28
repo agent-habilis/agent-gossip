@@ -12,7 +12,9 @@ use habilis_network::protocol::{
 };
 use serde::Serialize;
 
-use super::{CheckinNotice, OutputEvent, OverdueNotice, PingPeer, TaskGoneReason, TaskMessageLeg};
+use super::{
+    CheckinNotice, GapNotice, OutputEvent, OverdueNotice, PingPeer, TaskGoneReason, TaskMessageLeg,
+};
 use crate::a2a::{status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
@@ -71,6 +73,11 @@ pub(super) enum SimpleEvent<'source> {
     CheckinDue {
         #[serde(flatten)]
         notice: &'source CheckinNotice,
+        display: String,
+    },
+    TaskGap {
+        #[serde(flatten)]
+        notice: &'source GapNotice,
         display: String,
     },
     Receipt {
@@ -375,6 +382,15 @@ pub(super) fn checkin_due_event(notice: &CheckinNotice) -> SimpleEvent<'_> {
     }
 }
 
+/// The `task_gap` event: a question of the worker was lost on the way. It is never shown, so its
+/// `display` only keeps the line readable in a raw poll.
+pub(super) fn task_gap_event(notice: &GapNotice) -> SimpleEvent<'_> {
+    SimpleEvent::TaskGap {
+        notice,
+        display: format!("{DISPLAY_GLYPH} task gap · `<{}>`", notice.peer),
+    }
+}
+
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
@@ -449,6 +465,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }
@@ -943,6 +960,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskOverdue { .. }
         | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
@@ -987,6 +1005,7 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::CheckinDue { notice } => {
             serde_json::to_string(&checkin_due_event(notice)).ok()
         }
+        OutputEvent::TaskGap { notice } => serde_json::to_string(&task_gap_event(notice)).ok(),
         OutputEvent::Receipt {
             from,
             ref_id,

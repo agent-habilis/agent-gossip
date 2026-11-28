@@ -123,9 +123,9 @@ pub(crate) const SURFACED_TAP_CAP: usize = 1024;
 /// (`MAX_BLOB_STORE_ENTRIES`, 4096) and owners of one blob (`MAX_BLOB_OWNERS`, 64).
 pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
 
-/// How many cancels owed to workers wait for the next task sweep. A cancel is user work that
-/// the worker needs, so a full list is not dropped: the receive path sends the cancels at once.
-pub(crate) const LATE_CANCELS_CAP: usize = 64;
+/// How many ends owed to peers wait for the next task sweep. An end is a terminal status that a
+/// peer lost, so a full list is not dropped: the receive path sends the ends at once.
+pub(crate) const OWED_ENDS_CAP: usize = 64;
 
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated

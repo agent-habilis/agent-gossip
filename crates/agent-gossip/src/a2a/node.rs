@@ -10,6 +10,7 @@ use habilis_network::protocol::{
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
+use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder};
@@ -55,6 +56,7 @@ impl NodeApp for A2aApp {
             return false;
         }
         let routed = route_content(message, surfaceable, self, context);
+        answer_beats(self, state, context).await;
         if routed.fresh_for_us {
             let receipt = Receipt {
                 ref_id: message.id.as_str().to_owned(),
@@ -298,7 +300,8 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
         OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::CheckinDue { .. } => true,
+        | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. } => true,
         OutputEvent::Message { .. }
         | OutputEvent::Presence { .. }
         | OutputEvent::PingReport { .. }
@@ -356,6 +359,7 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskOverdue { .. }
         | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
@@ -540,6 +544,34 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
     });
 }
 
+/// Do what the beat of the frame just handled calls for. A beat of a worker that shows a leg that
+/// never arrived makes this node ask the worker for its task, and a beat of a peer that is still at
+/// work on a task that this node ended makes it send the end again. Everything else is plumbing.
+async fn answer_beats(app: &mut A2aApp, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+    for (task_id, peer_key) in app.take_to_ask() {
+        let (reply_tx, _reply_rx) = oneshot::channel();
+        broadcast_params::broadcast_a2a_call(
+            broadcast_params::BroadcastA2aCallParams {
+                mesh: context.mesh,
+                author: context.author,
+                peer: rpc_error::PeerRef::Key(peer_key),
+                method: "GetTask",
+                params: serde_json::json!({ "id": task_id.as_str() }),
+                timeout: Duration::from_secs(tuning::CALL_TIMEOUT_SECS),
+                responder: A2aResponder::Typed(reply_tx),
+                file: None,
+            },
+            state,
+            app,
+            context.sender,
+        )
+        .await;
+    }
+    if app.owes_ends() {
+        task_record::send_owed_ends(state, app, context).await;
+    }
+}
+
 /// The value cluster [`handle_task_leg`] needs beyond its `app`/`ctx` handles
 /// — the input of [`route_content`]'s task-leg arm.
 #[derive(Clone, Copy)]
@@ -558,6 +590,11 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         to,
         surfaceable,
     } = leg;
+    #[cfg(feature = "adversarial")]
+    if app.legs_to_drop > 0 && *to == context.our_pubkey && !is_beat_frame(message) {
+        app.legs_to_drop -= 1;
+        return Routed::default();
+    }
     let mut surface = surfaceable;
     let mut replay = false;
     let mut quarter_moved = false;
@@ -605,6 +642,16 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         );
         replay = !applied.news;
         quarter_moved = applied.quarter_moved;
+        let peer_key = message.key();
+        match applied.beat {
+            Some(task_record::BeatAction::Ask) => app.ask_for_task(&task_id, &peer_key),
+            Some(task_record::BeatAction::Resend) => app.owe_end(&task_id, &peer_key),
+            Some(task_record::BeatAction::Lost) => {
+                let out = &app.output;
+                out.task_timeout(&task_id, emission::TaskGoneReason::WorkerLost);
+            }
+            None => {}
+        }
         if replay {
             let reason = if known {
                 "replayed task leg kept off the surface"
@@ -815,10 +862,10 @@ async fn handle_a2a_rpc(
         // reconciles the authoritative `Task` a reply returned.
         app.fulfill_a2a_waiter(corr, &message.key(), message.body.as_str());
         // No test drives this call: the event-loop types have no test constructor. The decision
-        // itself, `late_cancels_full`, has a test at 10 times the cap. If this line goes, the
+        // itself, `owed_ends_full`, has a test at 10 times the cap. If this line goes, the
         // owed cancels wait for the next task sweep and the list can pass its cap.
-        if app.late_cancels_full() {
-            task_record::send_late_cancels(state, app, context).await;
+        if app.owed_ends_full() {
+            task_record::send_owed_ends(state, app, context).await;
         }
     }
 }

@@ -327,6 +327,7 @@ mod tests {
             | OutputEvent::TaskTimeout { .. }
             | OutputEvent::TaskOverdue { .. }
             | OutputEvent::CheckinDue { .. }
+            | OutputEvent::TaskGap { .. }
             | OutputEvent::Receipt { .. } => None,
         }
     }

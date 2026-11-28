@@ -347,6 +347,16 @@ impl InProcessSession {
             .await
     }
 
+    /// Drop the next `count` task legs that arrive here. Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn drop_task_legs(&self, count: usize) -> Result<(), SessionError> {
+        self.call(|response| SessionRequest::DropTaskLegs { count, response })
+            .await
+    }
+
     /// The seal key of the member `key`, or `None` while the engine does not hold it.
     /// Adversarial-suite only.
     ///

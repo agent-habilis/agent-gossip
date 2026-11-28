@@ -18,8 +18,10 @@ use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_binding::A2aBinding;
+use crate::a2a::extensions::{META_PROGRESS, META_SEQ, META_STATUS_TEXT, META_WAITING_USER};
 use crate::a2a::repair_budget::RepairBudget;
 use crate::a2a::rpc_error::{self, A2aRequest, RpcError};
+use crate::a2a::status_update_params::{Progress, clean_label, clean_text};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
 use crate::a2a::{META_LABEL, TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
@@ -140,10 +142,15 @@ pub(crate) struct A2aApp {
     /// `ORPHAN_BLOBS_CAP`: past it the oldest is forgotten, and the caps of the blob store evict
     /// its blob.
     orphan_blobs: VecDeque<ContentId>,
-    /// Cancels owed to workers. The receive path sends them at once when the list reaches
-    /// `LATE_CANCELS_CAP`, and the next task sweep drains the whole Vec, so it holds one sweep's
-    /// pushes at most. The reason says why each is owed.
-    late_cancels: Vec<(TaskId, AuthorKey, &'static str)>,
+    /// Ends owed to peers: a task that this node ended by a leg of its own, whose peer still beats
+    /// as if it never got that leg. The receive path sends them after the frame that owed one, and
+    /// when the list reaches `OWED_ENDS_CAP`, and the task sweep drains the whole Vec, so it holds
+    /// one frame's pushes at most.
+    owed_ends: Vec<(TaskId, AuthorKey)>,
+    /// Tasks whose worker showed, by a beat, a leg that never arrived, with the key of the worker:
+    /// the receive path asks each worker for its task after the frame that showed it, so the Vec
+    /// holds one frame's pushes at most.
+    to_ask: Vec<(TaskId, AuthorKey)>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -182,6 +189,10 @@ pub(crate) struct A2aApp {
     /// proves that a repair ask was served, whatever else delivers the body.
     #[cfg(feature = "adversarial")]
     pub(crate) shards_resent: usize,
+    /// How many task legs that arrive are still to be dropped. Adversarial-suite only: it stands
+    /// for a frame that the overlay loses after its sender counted it as sent.
+    #[cfg(feature = "adversarial")]
+    pub(crate) legs_to_drop: usize,
 }
 
 /// Own frames that enter the dev log and the shard cache once `sent` resolves to true.
@@ -244,7 +255,8 @@ impl A2aApp {
             a2a_waiters: Vec::new(),
             blob_server: None,
             orphan_blobs: VecDeque::new(),
-            late_cancels: Vec::new(),
+            owed_ends: Vec::new(),
+            to_ask: Vec::new(),
             a2a_port: None,
             a2a_token: None,
             output,
@@ -257,6 +269,8 @@ impl A2aApp {
             repair_budget: RepairBudget::new(Instant::now()),
             #[cfg(feature = "adversarial")]
             shards_resent: 0,
+            #[cfg(feature = "adversarial")]
+            legs_to_drop: 0,
         }
     }
 
@@ -271,7 +285,8 @@ impl A2aApp {
             a2a_waiters: Vec::new(),
             blob_server: None,
             orphan_blobs: VecDeque::new(),
-            late_cancels: Vec::new(),
+            owed_ends: Vec::new(),
+            to_ask: Vec::new(),
             a2a_port: None,
             a2a_token: None,
             output,
@@ -284,6 +299,8 @@ impl A2aApp {
             repair_budget: RepairBudget::new(Instant::now()),
             #[cfg(feature = "adversarial")]
             shards_resent: 0,
+            #[cfg(feature = "adversarial")]
+            legs_to_drop: 0,
         }
     }
 
@@ -527,13 +544,35 @@ impl A2aApp {
             .any(|waiter| waiter.corr == *corr && waiter.peer_key == *peer_key)
     }
 
-    /// Whether the cancels owed to workers reached [`tuning::LATE_CANCELS_CAP`]: the caller sends them at once.
-    pub(crate) fn late_cancels_full(&self) -> bool {
-        self.late_cancels.len() >= tuning::LATE_CANCELS_CAP
+    /// Owe `peer_key` the end of `task_id`. A task that is already owed is not listed twice.
+    pub(crate) fn owe_end(&mut self, task_id: &TaskId, peer_key: &AuthorKey) {
+        if !self.owed_ends.iter().any(|(owed, _)| owed == task_id) {
+            self.owed_ends.push((task_id.clone(), *peer_key));
+        }
     }
 
-    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, AuthorKey, &'static str)> {
-        std::mem::take(&mut self.late_cancels)
+    /// Whether the ends owed to peers reached [`tuning::OWED_ENDS_CAP`]: the caller sends them at once.
+    pub(crate) fn owed_ends_full(&self) -> bool {
+        self.owed_ends.len() >= tuning::OWED_ENDS_CAP
+    }
+
+    /// Whether any end is owed.
+    pub(crate) fn owes_ends(&self) -> bool {
+        !self.owed_ends.is_empty()
+    }
+
+    pub(crate) fn take_owed_ends(&mut self) -> Vec<(TaskId, AuthorKey)> {
+        std::mem::take(&mut self.owed_ends)
+    }
+
+    /// Ask the worker `peer_key` for `task_id` after this frame.
+    pub(crate) fn ask_for_task(&mut self, task_id: &TaskId, peer_key: &AuthorKey) {
+        self.to_ask.push((task_id.clone(), *peer_key));
+    }
+
+    /// The tasks that the receive path asks their workers about now.
+    pub(crate) fn take_to_ask(&mut self) -> Vec<(TaskId, AuthorKey)> {
+        std::mem::take(&mut self.to_ask)
     }
 
     /// The blob groups the task sweep must evict: the groups of openings that never reached a
@@ -551,17 +590,21 @@ impl A2aApp {
         let Some(returned) = returned_task(body) else {
             return;
         };
-        task_record::reconcile_initiator(
+        let gap = task_record::reconcile_initiator(
             &mut self.tasks,
             task_record::ReconcileParams {
                 task_id: &returned.id,
                 peer_key,
-                task_state: returned.state,
+                snapshot: returned.snapshot,
                 now: Instant::now(),
             },
         );
         // The worker echoes the label of the brief, so the alarm can name the task.
         task_record::set_label(&mut self.tasks, &returned.id, peer_key, returned.label);
+        // A question that was lost on the way: the agent of the sender must read it again.
+        if let Some(gap) = gap {
+            self.output.task_gap(&gap);
+        }
     }
 
     /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
@@ -696,10 +739,11 @@ impl A2aResponder {
     }
 }
 
-/// The `Task` that a reply returned: its id, its state and the label that the worker echoes.
+/// The `Task` that a reply returned: its id, what it says about the task, and the label that the
+/// worker echoes.
 struct ReturnedTask {
     id: TaskId,
-    state: crate::a2a::TaskState,
+    snapshot: task_record::Snapshot,
     label: Option<String>,
 }
 
@@ -718,10 +762,32 @@ fn returned_task(body: &str) -> Option<ReturnedTask> {
     let state = task["status"]["state"]
         .as_str()
         .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())?;
-    let label = task["metadata"][META_LABEL]
+    let meta = &task["metadata"];
+    let text = meta[META_STATUS_TEXT]
         .as_str()
-        .and_then(super::status_update_params::clean_label);
-    Some(ReturnedTask { id, state, label })
+        .and_then(|text| clean_text(text, tuning::TASK_STATUS_TEXT_MAX_CHARS));
+    let waiting_user = meta[META_WAITING_USER].as_bool().unwrap_or(false);
+    let review = meta["mesh:review"].as_bool().unwrap_or(false);
+    let snapshot = task_record::Snapshot {
+        state,
+        seq: meta[META_SEQ].as_u64(),
+        progress: progress_of(meta),
+        text,
+        waiting_user,
+        review,
+    };
+    let label = meta[META_LABEL].as_str().and_then(clean_label);
+    Some(ReturnedTask {
+        id,
+        snapshot,
+        label,
+    })
+}
+
+/// The progress that a task's metadata states: a whole percentage from 0 to 100.
+fn progress_of(meta: &serde_json::Value) -> Option<Progress> {
+    let percent = u8::try_from(meta[META_PROGRESS].as_u64()?).ok()?;
+    Progress::try_from(percent).ok()
 }
 
 /// Whether a peer's JSON-RPC response `body` is an error.
@@ -873,32 +939,43 @@ mod tests {
     }
 
     /// The receive path sends the owed cancels at once when the list is full, so the list never
-    /// holds more than the cap, and no cancel is dropped.
+    /// The receive path sends the owed ends at once when the list is full, so the list never holds
+    /// more than the cap, and no end is dropped.
     #[test]
-    fn the_owed_cancels_never_pass_the_cap_and_none_is_lost() {
+    fn the_owed_ends_never_pass_the_cap_and_none_is_lost() {
         let mut app = super::A2aApp::new();
         let mut sent = 0;
         let mut longest = 0;
-        for _ in 0..10 * tuning::LATE_CANCELS_CAP {
-            app.late_cancels
-                .push((TaskId::random(), bob_key(), "call-timed-out"));
-            longest = longest.max(app.late_cancels.len());
-            if app.late_cancels_full() {
-                sent += app.take_late_cancels().len();
+        for _ in 0..10 * tuning::OWED_ENDS_CAP {
+            app.owe_end(&TaskId::random(), &bob_key());
+            longest = longest.max(app.owed_ends.len());
+            if app.owed_ends_full() {
+                sent += app.take_owed_ends().len();
             }
         }
-        sent += app.take_late_cancels().len();
+        sent += app.take_owed_ends().len();
 
         assert_eq!(
             longest,
-            tuning::LATE_CANCELS_CAP,
+            tuning::OWED_ENDS_CAP,
             "10 times the cap was owed: the list must not hold more than the cap"
         );
         assert_eq!(
             sent,
-            10 * tuning::LATE_CANCELS_CAP,
-            "every owed cancel must be sent, none dropped for want of room"
+            10 * tuning::OWED_ENDS_CAP,
+            "every owed end must be sent, none dropped for want of room"
         );
+    }
+
+    /// A task is owed once, however many beats of the peer ask for its end.
+    #[test]
+    fn a_task_is_owed_its_end_once() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        for _ in 0..5 {
+            app.owe_end(&task_id, &bob_key());
+        }
+        assert_eq!(app.take_owed_ends().len(), 1, "one beat or five, one end");
     }
 
     #[test]
@@ -1337,8 +1414,17 @@ mod tests {
     }
 
     fn task_reply(task_id: &TaskId, state: &str) -> String {
+        task_reply_at(task_id, state, 100)
+    }
+
+    /// The reply of a worker that holds `task_id` in `state` after `seq` legs.
+    fn task_reply_at(task_id: &TaskId, state: &str, seq: u64) -> String {
         serde_json::json!({
-            "result": { "task": { "id": task_id, "status": { "state": state } } }
+            "result": { "task": {
+                "id": task_id,
+                "status": { "state": state },
+                "metadata": { "mesh:seq": seq },
+            } }
         })
         .to_string()
     }
@@ -1407,6 +1493,63 @@ mod tests {
         }
     }
 
+    /// The snapshot that a `GetTask` returns moves a record whose legs were lost, and a lost
+    /// question reaches the sender as a `task_gap` that carries the text of the question.
+    #[test]
+    fn a_snapshot_that_moves_the_task_into_a_question_raises_a_task_gap() {
+        let mut app = super::A2aApp::new_with_io(super::SurfacedIo::new(Output::silent()));
+        let task_id = dispatch_opening(&mut app, "corr-gap");
+        let reply = serde_json::json!({
+            "result": {
+                "id": task_id,
+                "status": { "state": "TASK_STATE_INPUT_REQUIRED" },
+                "metadata": { "mesh:seq": 4, "mesh:status_text": "which port?" },
+            }
+        })
+        .to_string();
+
+        fulfill(&mut app, "corr-gap", &bob_key(), &reply);
+
+        assert_eq!(
+            app.tasks[&task_id].state,
+            TaskState::InputRequired,
+            "the snapshot moved the record to where the worker is"
+        );
+        app.drain_surfaced_ring();
+        let gaps: Vec<Option<String>> = app
+            .surfaced
+            .poll_since(None)
+            .events
+            .iter()
+            .filter_map(|item| match &item.event {
+                OutputEvent::TaskGap { notice } => Some(notice.text.clone()),
+                OutputEvent::NicknameHeld { .. }
+                | OutputEvent::Ready { .. }
+                | OutputEvent::Message { .. }
+                | OutputEvent::Presence { .. }
+                | OutputEvent::PeerTimeout { .. }
+                | OutputEvent::PeerReturn { .. }
+                | OutputEvent::MsgPosted { .. }
+                | OutputEvent::Info { .. }
+                | OutputEvent::EventsLost { .. }
+                | OutputEvent::Error { .. }
+                | OutputEvent::PingReport { .. }
+                | OutputEvent::Task { .. }
+                | OutputEvent::TaskMessage { .. }
+                | OutputEvent::TaskTimeout { .. }
+                | OutputEvent::TaskOverdue { .. }
+                | OutputEvent::CheckinDue { .. }
+                | OutputEvent::Receipt { .. }
+                | OutputEvent::StateChanged { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            gaps,
+            vec![Some("which port?".to_owned())],
+            "the sender is told once, with the question"
+        );
+    }
+
     /// A worker that accepts the opening keeps the record, whatever state it reports.
     #[test]
     fn a_task_reply_keeps_the_record_of_an_opening() {
@@ -1442,7 +1585,7 @@ mod tests {
             "the record of a timed-out opening stays"
         );
         assert!(
-            app.take_late_cancels().is_empty(),
+            app.take_owed_ends().is_empty(),
             "no cancel is owed for a task that the worker may be running"
         );
         assert!(
@@ -1576,7 +1719,7 @@ mod tests {
             &mut app,
             "corr-open",
             &bob_key(),
-            &task_reply(&task_id, "TASK_STATE_WORKING"),
+            &task_reply_at(&task_id, "TASK_STATE_WORKING", 50),
         );
         let mut to_carol = waiter("corr-carol");
         to_carol.peer_key = carol_key();
@@ -1586,7 +1729,7 @@ mod tests {
         fulfill(&mut app, "corr-carol", &carol_key(), &done);
         assert_eq!(
             app.tasks[&task_id].state,
-            TaskState::Submitted,
+            TaskState::Working,
             "carol holds no say over the task of bob"
         );
 

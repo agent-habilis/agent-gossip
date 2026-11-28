@@ -263,6 +263,7 @@ fn event_bytes(event: &OutputEvent) -> usize {
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskOverdue { .. }
         | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::Receipt { .. } => 0,
     }
@@ -485,6 +486,7 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskOverdue { .. }
         | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
     }
@@ -538,6 +540,7 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskOverdue { .. }
         | OutputEvent::CheckinDue { .. }
+        | OutputEvent::TaskGap { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
     }

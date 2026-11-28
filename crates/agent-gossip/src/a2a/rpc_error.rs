@@ -305,7 +305,7 @@ pub(crate) fn get_task(app: &A2aApp, task_id: &TaskId, mesh: &MeshId) -> Result<
                 "id": task_id.as_str(),
                 "contextId": mesh.as_str(),
                 "status": { "state": closed.state },
-                "metadata": { "mesh:peer": closed.peer.as_str() },
+                "metadata": { "mesh:peer": closed.peer.as_str(), META_SEQ: closed.seq },
             })
         })
         .ok_or_else(|| RpcError::task_not_found(task_id))
@@ -545,6 +545,8 @@ mod cancel_tests {
                 peer_key: key(),
                 peer: Nickname::from("bob"),
                 state: TaskState::Failed,
+                seq: 3,
+                owes_end: false,
             },
         );
 

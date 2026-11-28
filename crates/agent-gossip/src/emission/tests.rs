@@ -725,6 +725,51 @@ fn task_overdue_waiting_on_user_does_not_wake() {
     assert!(node::is_pollable(&event), "poll must serve it");
 }
 
+/// The `task_gap` event rings the bell, is served by poll and is never shown.
+#[test]
+fn task_gap_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskGap {
+        notice: crate::output_event::GapNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            text: Some("which port?".to_owned()),
+        },
+    };
+    let json = simple_event::event_json(&event).expect("task_gap event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_gap", "the event field is task_gap");
+    assert_eq!(
+        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+        "the line names the task"
+    );
+    assert_eq!(parsed["peer"], "calm-otter", "and the worker");
+    assert_eq!(parsed["text"], "which port?", "and the question");
+    assert!(
+        !simple_event::is_visible(&event),
+        "the user is not shown it"
+    );
+    assert!(
+        node::wakes(&event),
+        "the sender's agent is woken to read it"
+    );
+    assert!(node::is_pollable(&event), "poll must serve it");
+
+    let bare = OutputEvent::TaskGap {
+        notice: crate::output_event::GapNotice {
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            peer: habilis_network::protocol::Nickname::from("calm-otter"),
+            text: None,
+        },
+    };
+    let bare_json = simple_event::event_json(&bare).expect("task_gap event produces a JSON line");
+    assert!(
+        parse(&bare_json).get("text").is_none(),
+        "a gap with no text leaves the key out"
+    );
+}
+
 /// The worker's reminder rings the bell and is never shown.
 #[test]
 fn checkin_due_event_json_shape() {

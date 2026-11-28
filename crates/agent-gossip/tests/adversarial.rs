@@ -526,6 +526,75 @@ async fn a_working_leg_with_no_text_or_progress_is_dropped() {
     attacker.leave().await;
 }
 
+/// A question of the worker that the overlay loses is repaired by the beat that follows: the beat
+/// repeats the seq of the last leg of the worker, which is above the one that the sender took in,
+/// so the sender asks the worker for its task, and the snapshot says that the task waits on an
+/// answer. The sender hears of it as a `task_gap` that carries the question.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_beat_repairs_a_question_that_the_overlay_lost() {
+    let mut initiator = InProcNode::create("adv-gap").await;
+    let mut worker = InProcNode::join(&initiator.mesh, "adv-gap-wrk").await;
+    common::warm_up(&initiator, &mut [&mut worker]).await;
+    let created = initiator.create_task(&worker.nickname, "the brief").await;
+    let task_id: TaskId = created["result"]["task"]["id"]
+        .as_str()
+        .expect("a created task always reports its id in the JSON-RPC result")
+        .parse()
+        .expect("task id parses");
+    assert!(
+        worker.wait_task_message(T).await,
+        "worker never received the brief"
+    );
+    worker
+        .task_checkin(
+            &task_id,
+            "on it",
+            Progress::try_from(10).expect("10 is a percentage"),
+        )
+        .await;
+    assert!(
+        initiator.wait_task_state(TaskState::Working, T).await,
+        "initiator never saw the task accepted"
+    );
+
+    // The overlay loses the next leg of the worker, which is the question.
+    initiator
+        .session
+        .drop_task_legs(1)
+        .await
+        .expect("the initiator session stays connected to the mesh for the whole test");
+    worker
+        .task_state(&task_id, TaskState::InputRequired, "which port?")
+        .await;
+
+    // The beat of the worker comes within one keepalive and says that a leg went missing.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let gap = loop {
+        let raised = initiator
+            .events()
+            .iter()
+            .find(|event| matches!(event, OutputEvent::TaskGap { .. }));
+        if let Some(OutputEvent::TaskGap { notice }) = raised {
+            break notice.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no beat repaired the lost question: {:#?}",
+            initiator.events()
+        );
+        tokio::time::sleep(POLL).await;
+    };
+    assert_eq!(
+        gap.text.as_deref(),
+        Some("which port?"),
+        "the gap carries the question that was lost"
+    );
+    assert_eq!(gap.task_id, task_id, "and names its task");
+
+    initiator.leave().await;
+    worker.leave().await;
+}
+
 // ── Chat addressing: the privacy boundary between the two chat tags ────
 //
 // Each chat tag is pinned to one addressing, and the pinning is what keeps a

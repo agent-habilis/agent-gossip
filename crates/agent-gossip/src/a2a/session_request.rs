@@ -119,6 +119,13 @@ pub(crate) enum SessionRequest {
     /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only.
     #[cfg(feature = "adversarial")]
     ShardsResent { response: oneshot::Sender<usize> },
+    /// Drop the next `count` task legs that arrive (a beat is not a leg), as a lossy overlay would.
+    /// Adversarial-suite only.
+    #[cfg(feature = "adversarial")]
+    DropTaskLegs {
+        count: usize,
+        response: oneshot::Sender<()>,
+    },
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]
