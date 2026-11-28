@@ -456,7 +456,7 @@ COMMANDS
                     and mesh:label (the initiator's name for the task); a task
                     that waits on its user carries mesh:waiting_user. The
                     metadata also carries mesh:seq, the number of the last
-                    leg that this node sent.
+                    leg that this node sent, also for a task that was reaped.
                 ListTasks
                     list the tasks you and the peer share — not the peer's
                     whole registry; each task carries the same metadata
@@ -601,7 +601,7 @@ COMMANDS
               shape the live JSON stream emits — chat, presence
               joined/left, task legs, state/meta document echoes, AND the
               transient events (ping_report, peer_timeout/return,
-              task_timeout, task_overdue, checkin_due) — each carrying its pre-built display
+              task_timeout, task_overdue, checkin_due, task_gap) — each carrying its pre-built display
               string, its is_visible print decision, its self flag, and a
               leading seq. So a poller and a stream reader parse one shape
               and can echo display verbatim either way (see "JSON EVENTS").
@@ -1524,10 +1524,14 @@ JSON EVENTS
               its 2-minute idle-debounce timeout and was evicted by the
               daemon (reason "timeout"), or its counterparty left the gossip
               gracefully and the task was canceled on the spot (reason
-              "peer-left"). Marks the tasks widget entry as timed out.
+              "peer-left"), or the beat of the worker numbered its legs
+              backwards, which means that the worker restarted and lost the
+              task, and the sender ended it (reason "worker-lost": send the
+              task again if it is still needed). Marks the tasks widget
+              entry as timed out.
 
                  {"event":"task_timeout","task_id":"<uuid>",
-                  "reason":"timeout"|"peer-left"}
+                  "reason":"timeout"|"peer-left"|"worker-lost"}
 
        task_overdue
               The initiator's daemon saw that the worker sent no check-in for
@@ -1574,6 +1578,27 @@ JSON EVENTS
                  {"event":"checkin_due","task_id":"<uuid>","peer":"word-word",
                   "text":"summarize the diff","brief":true,
                   "display":"💬️ check-in due · `<word-word>`"}
+
+       task_gap
+              A question of the worker was lost on the way, and the task now
+              waits on the sender. It rings the bell, a poll serves it, and
+              it is never shown. text is the question of the worker, and is
+              absent when the worker said nothing. Answer it with a
+              follow-up on the task; without a text, read the task with
+              GetTask or ask the worker what it needs.
+
+                 {"event":"task_gap","task_id":"<uuid>","peer":"word-word",
+                  "text":"which port?",
+                  "display":"💬️ task gap · `<word-word>`"}
+
+              When the beat of a worker shows a leg that the sender never
+              got, the daemon of the sender asks the worker for the task once
+              for each such mesh:seq and takes the snapshot in. A lost
+              result is not repaired: the sender asks again with a
+              follow-up. A peer that keeps beating on a task that this node
+              ended gets the end again. A beat that is ahead of the clock of
+              the receiver by more than the task timeout, or 120 seconds if
+              that is more, is ignored with a warning.
 
        state  The gossip's shared state changed (see the state command). Carries
               the view of the state AFTER the change: one slice for each member,

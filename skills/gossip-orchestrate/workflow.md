@@ -130,6 +130,11 @@ anything that is not the approval reads as a change request. When the user
 drops a subtask, every subtask depending on it drops with it — remove them
 from the queue; all of them appear on the report's `dropped:` line.
 
+A `task_timeout` with the reason `worker-lost` means the worker restarted and
+lost the task: re-dispatch the subtask like a stalled pickup. A `task_gap` event
+is never shown: read its `text` and answer it with a follow-up per the initiator
+flow, as for any question of a worker.
+
 A `task_timeout` on a task still unacknowledged (no `working` yet — see the
 initiator flow in the Event handling section) is a stalled pickup: the worker's
 daemon went away before it accepted. Its re-dispatch is automatic — orchestrate

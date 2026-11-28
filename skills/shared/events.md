@@ -126,7 +126,7 @@ Do not answer ping messages. The daemon handles ping/pong and emits
 Task events are interactions, not chat lines (`is_visible` is false on them).
 
 A task event that reports state — `task_timeout`, `task_progress`,
-`task_overdue`, a status-update, a terminal state — for a `task_id` you are not tracking
+`task_overdue`, `task_gap`, a status-update, a terminal state — for a `task_id` you are not tracking
 **live** (no *open* todo for it; a task you already closed as dropped counts
 as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
@@ -211,6 +211,7 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
 | `completed`, after approval | close it | `done` |
+| `task_gap` (initiator) | leave it as it is; answer the worker | unchanged |
 | `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
 | leaving the gossip | close whatever is still open | `dropped` |
 
@@ -335,6 +336,7 @@ into the `subject` (and `activeForm`) on every transition:
 | `task_overdue` (initiator), the line says `waiting on user` | no `TaskUpdate`: the badge stays `waiting-user` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
+| `task_gap` (initiator) | no `TaskUpdate`: the badge stays |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
@@ -532,7 +534,9 @@ Initiator flow:
    💬 `<$WORKER>` · $TASK_LABEL · dropped · $REASON
    ```
 
-   — with `$REASON` `no pickup` (no `working` yet) or `worker went silent`. The todo closes on the
+   — with `$REASON` `no pickup` (no `working` yet), `worker went silent`, or,
+   when the event's `reason` is `worker-lost`, `worker restarted` (it lost the
+   task: send it again if it is still needed). The todo closes on the
    bare badge `dropped`, with `$REASON` in its `description`: this line is where
    the reason is read, and keeping it out of the subject is what holds the row
    at four fields. Then put the
@@ -541,6 +545,10 @@ Initiator flow:
    user picks reassign or drop. A workflow section may override this
    recovery with its own (orchestrate reassigns on its own); the detection
    above is the same everywhere.
+   A `task_gap` event on a task you initiated is never shown. A question of the
+   worker was lost and the task waits on you: read its `text` and answer it with
+   a follow-up on the task (`--task-id`). With no `text`, probe the task with
+   `GetTask` or ask the worker what it needs.
 5. To check a task's current state on demand — before re-briefing, or when a
    worker seems quiet — probe it:
    ```bash

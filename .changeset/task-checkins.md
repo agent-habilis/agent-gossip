@@ -19,6 +19,10 @@ Every leg of a task now carries `mesh:seq`, each party on its own counter. A leg
 `mesh:seq`, a replayed leg, and a leg behind a newer one are dropped whole: if a task ends or
 waits for review with no result in sight, ask the worker again with a follow-up on the task.
 
+A new event `task_gap` tells the sender that a question of the worker was lost and the task
+waits on it. `task_timeout` has a new reason, `worker-lost`: the worker restarted and lost the
+task.
+
 Breaking for callers:
 
 - The JSON status event key `waiting` (a string) is now `waiting_user` (a boolean).
