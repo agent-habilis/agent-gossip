@@ -406,7 +406,10 @@ COMMANDS
                     answer before the deadline returns the Task in state
                     submitted with metadata mesh:unconfirmed true, not an
                     error: keep following that id, the initiator's sweep
-                    cancels it if no worker leg arrives) or a follow-up into a task
+                    cancels it if no worker leg arrives. The trade-off: a
+                    worker error that arrives after the deadline, such as a
+                    full quota, is not seen, and the task is cancelled at the
+                    task timeout) or a follow-up into a task
                     (--task-id: an answer / approval / change; a follow-up
                     to a task that is already closed is not surfaced to the
                     worker, and a follow-up that reuses a messageId gets the
@@ -1515,10 +1518,10 @@ JSON EVENTS
               2·X (10 minutes by default) after its last activity, and then
               sees it again every X. It states a fact and cancels nothing.
               Each part of the display after the age appears only when set:
-              `waiting on user` when the worker set --waiting-on-user, and
-              `not picked up` when the worker never accepted. The event is visible: print its
-              display line. It rings the bell, except when the worker waits
-              on `user`: then it goes on the ring without a wake. It fires
+              "waiting on user" when the worker set --waiting-on-user, and
+              "not picked up" when the worker never accepted. The event is
+              visible: print its display line. It rings the bell, except when
+              the worker waits on its user: then it goes on the ring without a wake. It fires
               from the age of the last check-in alone, also before the first
               beat of the worker.
 

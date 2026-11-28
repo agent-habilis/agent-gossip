@@ -15,5 +15,13 @@ The initiator's daemon now mints the task id, and each message carries a
 `mesh:seq` (1 on the opening). A `SendMessage` opening that times out returns the task
 in state submitted with `mesh:unconfirmed` instead of an error.
 
+Breaking for callers:
+
+- The JSON status event key `waiting` (a string) is now `waiting_user` (a boolean).
+- The MCP `task_status` argument `waiting` (a string) is now `waiting_on_user` (a boolean),
+  and a `working` status needs `note` and `progress`.
+- In the Rust API, `TaskStatusParams` holds one `WorkerLeg` in place of `state`, `note` and
+  `waiting`, built with `TaskStatusParams::new(task_id, leg)`.
+
 Run `agent-gossip plug` after you upgrade: an old skill sends a bare `working`
 at accept, and the daemon refuses it.

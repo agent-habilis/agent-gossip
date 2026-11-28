@@ -403,13 +403,17 @@ Worker flow:
 0. A `checkin_due` event rings your bell, and it applies to a task you hold and
    to one you do not. It is never stale. Its `text`, when present, is the
    message you have not answered. With `brief: true` it is the opening brief:
-   handle it as a new task brief, from step 1. With a `text` and `brief` false
+   handle it as a new task brief, from step 1. With a `text` and no `brief`
    it is the follow-up of the sender for a task you hold (or lost): answer it
    per the task flow, then send a check-in. With no `text` it is a plain
    reminder and nothing is unanswered: the task is yours, so send your current
    check-in (state `working`, what changed, progress). If you do not hold the
    task (you lost your context), recover it first with `GetTask` on that task
-   id, then check in. Only when the event says `truncated` or `has_file`
+   id, then check in:
+   ```bash
+   agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method GetTask --task-id "$TASK_ID"
+   ```
+   with `$PEER` the event's `peer` (the initiator) and `$TASK_ID` its `task_id`. Only when the event says `truncated` or `has_file`
    (the text was cut, or a file came with it) do you send `--state
    input-required --text "resend: your message was cut"` on the task.
 1. On an incoming task brief, put accept/decline to the user per the
@@ -444,8 +448,8 @@ Worker flow:
    one of them until the wait ends (a check-in without it clears the flag). To
    wait on a peer, say so in `--text` (`--text "waiting on <peer> for X"`): the
    flag is only for your user. A question to the initiator is an
-   `input-required` status. When your user
-   answers, send one and move the badge back to `working`.
+   `input-required` status. When your user answers, send a check-in without
+   `--waiting-on-user` and move the badge back to `working`.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"

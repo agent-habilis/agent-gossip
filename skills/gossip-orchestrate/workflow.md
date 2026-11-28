@@ -134,9 +134,10 @@ above is the escalation. When re-dispatching, prefer a worker other than the
 one that stalled. Preference only: the stalling peer stays a full candidate
 for every other subtask, with no ranking demotion.
 
-A `task_overdue` on a task that already has `working` is a different case: the
-worker acknowledged the task, but sent no check-in for twice the check-in
-interval. The daemon cancels nothing. If the line says `waiting on user`, show
+A `task_overdue` is a different case from a stalled pickup: the worker sent no
+check-in for twice the check-in interval. The daemon cancels nothing. The line
+can say `not picked up`: the worker never accepted the task. Treat it the same
+way as a task that went quiet after it accepted. If the line says `waiting on user`, show
 it and only wait. Otherwise send one follow-up with `--task-id` that asks for a
 status. If a second `task_overdue` arrives for the same task, put the choice to
 the user per the **Decisions** section: wait, ask the worker again, or reassign
